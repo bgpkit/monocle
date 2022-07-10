@@ -16,8 +16,8 @@ name = "monocle"
 path = "src/monocle.rs"
 
 [dependencies]
-bgpkit-broker = "0.4.0"
-bgpkit-parser = "0.7.3"
+bgpkit-broker = "0.4.1"
+bgpkit-parser = "0.7.5"
 clap = { version = "3.2.8", features = ["derive"] }
 itertools="0.10.3"
 rayon = "1.5.1"

@@ -16,7 +16,7 @@ pub fn parser_with_filters(
     as_path: &Option<String>,
 ) -> BgpkitParser {
 
-    let mut parser = BgpkitParser::new(file_path).unwrap();
+    let mut parser = BgpkitParser::new(file_path).unwrap().disable_warnings();
 
     if let Some(v) = as_path {
         parser = parser.add_filter("as_path", v.to_string().as_str()).unwrap();
