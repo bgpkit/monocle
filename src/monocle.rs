@@ -1,14 +1,13 @@
+use clap::{Args, Parser, Subcommand};
 use serde_json::json;
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use clap::{Parser, Subcommand};
 
-use std::sync::mpsc::channel;
-use rayon::prelude::*;
 use bgpkit_parser::*;
-use ipnetwork::IpNetwork;
 use monocle::parser_with_filters;
+use rayon::prelude::*;
+use std::sync::mpsc::channel;
 
 #[allow(dead_code)]
 fn try_parallel() {
@@ -39,12 +38,55 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Args, Debug)]
+struct MsgFilters {
+    /// Filter by origin AS Number
+    #[clap(short = 'o', long)]
+    origin_asn: Option<u32>,
+
+    /// Filter by network prefix
+    #[clap(short = 'p', long)]
+    prefix: Option<String>,
+
+    /// Include super-prefix when filtering
+    #[clap(short = 's', long)]
+    include_super: bool,
+
+    /// Include sub-prefix when filtering
+    #[clap(short = 'S', long)]
+    include_sub: bool,
+
+    /// Filter by peer IP address
+    #[clap(short = 'j', long)]
+    peer_ip: Vec<IpAddr>,
+
+    /// Filter by peer ASN
+    #[clap(short = 'J', long)]
+    peer_asn: Option<u32>,
+
+    /// Filter by elem type: announce (a) or withdraw (w)
+    #[clap(short = 'm', long)]
+    elem_type: Option<String>,
+
+    /// Filter by start unix timestamp inclusive
+    #[clap(short = 't', long)]
+    start_ts: Option<f64>,
+
+    /// Filter by end unix timestamp inclusive
+    #[clap(short = 'T', long)]
+    end_ts: Option<f64>,
+
+    /// Filter by AS path regex string
+    #[clap(short = 'a', long)]
+    as_path: Option<String>,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Adds files to myapp
     Parse {
         /// File path to a MRT file, local or remote.
-        #[clap(name="FILE", parse(from_os_str))]
+        #[clap(name = "FILE", parse(from_os_str))]
         file_path: PathBuf,
 
         /// Output as JSON objects
@@ -55,45 +97,9 @@ enum Commands {
         #[clap(long)]
         pretty: bool,
 
-        /// Filter by origin AS Number
-        #[clap(short = 'o', long)]
-        origin_asn: Option<u32>,
-
-        /// Filter by network prefix
-        #[clap(short = 'p', long)]
-        prefix: Option<IpNetwork>,
-
-        /// Include super-prefix when filtering
-        #[clap(short = 's', long)]
-        include_super: bool,
-
-        /// Include sub-prefix when filtering
-        #[clap(short = 'S', long)]
-        include_sub: bool,
-
-        /// Filter by peer IP address
-        #[clap(short = 'j', long)]
-        peer_ip: Vec<IpAddr>,
-
-        /// Filter by peer ASN
-        #[clap(short = 'J', long)]
-        peer_asn: Option<u32>,
-
-        /// Filter by elem type: announce (a) or withdraw (w)
-        #[clap(short = 'm', long)]
-        elem_type: Option<String>,
-
-        /// Filter by start unix timestamp inclusive
-        #[clap(short = 't', long)]
-        start_ts: Option<f64>,
-
-        /// Filter by end unix timestamp inclusive
-        #[clap(short = 'T', long)]
-        end_ts: Option<f64>,
-
         /// Filter by AS path regex string
-        #[clap(short = 'a', long)]
-        as_path: Option<String>,
+        #[clap(flatten)]
+        filters: MsgFilters,
     },
 }
 
@@ -104,13 +110,24 @@ fn main() {
     // matches just as you would the top level cmd
     match cli.command {
         Commands::Parse {
-            file_path, json, pretty,
-            origin_asn, prefix, include_super,
-            include_sub, peer_ip, peer_asn, elem_type,
-            start_ts, end_ts, as_path
+            file_path,
+            json,
+            pretty,
+            filters,
         } => {
-
-            let parser = parser_with_filters(file_path.to_str().unwrap(), &origin_asn, &prefix, include_super, include_sub, &peer_ip, &peer_asn, &elem_type, &start_ts, &end_ts, &as_path);
+            let parser = parser_with_filters(
+                file_path.to_str().unwrap(),
+                &filters.origin_asn,
+                &filters.prefix,
+                &filters.include_super,
+                &filters.include_sub,
+                &filters.peer_ip,
+                &filters.peer_asn,
+                &filters.elem_type,
+                &filters.start_ts,
+                &filters.end_ts,
+                &filters.as_path,
+            );
 
             let mut stdout = std::io::stdout();
             for elem in parser {

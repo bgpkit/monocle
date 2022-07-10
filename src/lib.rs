@@ -1,14 +1,13 @@
 use std::net::IpAddr;
 use bgpkit_parser::BgpkitParser;
-use ipnetwork::IpNetwork;
 use itertools::Itertools;
 
 pub fn parser_with_filters(
     file_path: &str,
     origin_asn: &Option<u32>,
-    prefix: &Option<IpNetwork>,
-    include_super: bool,
-    include_sub: bool,
+    prefix: &Option<String>,
+    include_super: &bool,
+    include_sub: &bool,
     peer_ip: &Vec<IpAddr>,
     peer_asn: &Option<u32>,
     elem_type: &Option<String>,
@@ -32,7 +31,7 @@ pub fn parser_with_filters(
             (false, true) => "prefix_sub",
             (true, true) => "prefix_super_sub",
         };
-        parser = parser.add_filter(filter_type, v.to_string().as_str()).unwrap();
+        parser = parser.add_filter(filter_type, v.as_str()).unwrap();
     }
     if !peer_ip.is_empty(){
         let v = peer_ip.iter().map(|p| p.to_string()).join(",").to_string();
