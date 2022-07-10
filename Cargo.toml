@@ -4,6 +4,7 @@ version = "0.0.1"
 authors = ["Mingwei Zhang <mingwei@bgpkit.com>"]
 edition = "2021"
 readme = "README.md"
+license = "MIT"
 repository = "https://github.com/bgpkit/monocle"
 documentation = "https://docs.rs/monocle"
 description = """
