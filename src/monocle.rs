@@ -123,7 +123,7 @@ struct SearchFilters {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Adds files to myapp
+    /// Parse individual MRT files given a file path, local or remote.
     Parse {
         /// File path to a MRT file, local or remote.
         #[clap(name = "FILE", parse(from_os_str))]
@@ -141,8 +141,9 @@ enum Commands {
         #[clap(flatten)]
         filters: ParseFilters,
     },
-    Search {
 
+    /// Search BGP messages from all available public MRT files.
+    Search {
         /// Print debug information
         #[clap(short = 'd', long)]
         debug: bool,
@@ -155,6 +156,7 @@ enum Commands {
         #[clap(flatten)]
         filters: SearchFilters,
     },
+    /// Investigative toolbox
     Scouter {
         /// Measure the power of your enemy
         #[clap()]
