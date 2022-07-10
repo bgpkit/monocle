@@ -101,6 +101,11 @@ enum Commands {
         #[clap(flatten)]
         filters: MsgFilters,
     },
+    Scouter {
+        /// Measure the power of your enemy
+        #[clap()]
+        power: bool
+    }
 }
 
 fn main() {
@@ -148,6 +153,13 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+        },
+        Commands::Scouter {
+            power: _
+        } => {
+            // https://dragonball.fandom.com/wiki/It%27s_Over_9000!
+            println!("It's Over 9000!");
+            println!("What!? 9000!? There's no way that can be right! Can it!?");
         }
     }
 }
