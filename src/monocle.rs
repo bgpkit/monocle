@@ -11,6 +11,13 @@ use std::thread;
 use bgpkit_broker::QueryParams;
 use tracing::{info, Level};
 
+use anyhow::{anyhow, Result};
+use chrono::NaiveDateTime;
+
+trait Validate{
+    fn validate(&self) -> Result<()>;
+}
+
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 #[clap(propagate_version = true)]
@@ -51,11 +58,11 @@ struct ParseFilters {
 
     /// Filter by start unix timestamp inclusive
     #[clap(short = 't', long)]
-    start_ts: Option<f64>,
+    start_ts: Option<String>,
 
     /// Filter by end unix timestamp inclusive
     #[clap(short = 'T', long)]
-    end_ts: Option<f64>,
+    end_ts: Option<String>,
 
     /// Filter by AS path regex string
     #[clap(short = 'a', long)]
@@ -70,11 +77,11 @@ struct SearchFilters {
 
     /// Filter by start unix timestamp inclusive
     #[clap(short = 't', long)]
-    start_ts: f64,
+    start_ts: String,
 
     /// Filter by end unix timestamp inclusive
     #[clap(short = 'T', long)]
-    end_ts: f64,
+    end_ts: String,
 
     /*
     OPTIONAL ARGUMENTS
@@ -121,6 +128,40 @@ struct SearchFilters {
     as_path: Option<String>,
 }
 
+impl Validate for ParseFilters {
+    fn validate(&self) -> Result<()> {
+        if let Some(ts) = &self.start_ts {
+            if ! (ts.parse::<f64>().is_ok() || NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S").is_ok()){
+                // not a number or a rfc3339 string
+                return Err(anyhow!("start-ts must be either a unix-timestamp or a RFC3339-compliant string"))
+            }
+        }
+        if let Some(ts) = &self.end_ts {
+            if ! (ts.parse::<f64>().is_ok() || NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S").is_ok()){
+                // not a number or a rfc3339 string
+                return Err(anyhow!("end-ts must be either a unix-timestamp or a RFC3339-compliant string"))
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Validate for SearchFilters {
+    fn validate(&self) -> Result<()> {
+        if ! (self.start_ts.as_str().parse::<f64>().is_ok() || NaiveDateTime::parse_from_str(self.start_ts.as_str(), "%Y-%m-%dT%H:%M:%S").is_ok()){
+            // not a number or a rfc3339 string
+            return Err(anyhow!("start-ts must be either a unix-timestamp or a RFC3339-compliant string: {}", self.start_ts))
+        }
+        if ! (self.end_ts.as_str().parse::<f64>().is_ok() || NaiveDateTime::parse_from_str(self.end_ts.as_str(), "%Y-%m-%dT%H:%M:%S").is_ok()){
+            // not a number or a rfc3339 string
+            return Err(anyhow!("end-ts must be either a unix-timestamp or a RFC3339-compliant string: {}", self.end_ts))
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Parse individual MRT files given a file path, local or remote.
@@ -145,11 +186,11 @@ enum Commands {
     /// Search BGP messages from all available public MRT files.
     Search {
         /// Print debug information
-        #[clap(short = 'd', long)]
+        #[clap(long)]
         debug: bool,
 
         /// Dry-run, do not download or parse.
-        #[clap(short = 'd', long)]
+        #[clap(long)]
         dry_run: bool,
 
         /// Filter by AS path regex string
@@ -176,6 +217,11 @@ fn main() {
             pretty,
             filters,
         } => {
+            if let Err(e) = filters.validate() {
+                eprintln!("{}", e.to_string());
+                return
+            }
+
             let parser = parser_with_filters(
                 file_path.to_str().unwrap(),
                 &filters.origin_asn,
@@ -185,10 +231,10 @@ fn main() {
                 &filters.peer_ip,
                 &filters.peer_asn,
                 &filters.elem_type,
-                &filters.start_ts,
-                &filters.end_ts,
+                &filters.start_ts.clone(),
+                &filters.end_ts.clone(),
                 &filters.as_path,
-            );
+            ).unwrap();
 
             let mut stdout = std::io::stdout();
             for elem in parser {
@@ -211,6 +257,10 @@ fn main() {
             }
         },
         Commands::Search { debug, dry_run, filters } => {
+            if let Err(e) = filters.validate() {
+                eprintln!("{}", e.to_string());
+                return
+            }
 
             if debug {
                 tracing_subscriber::fmt()
@@ -237,9 +287,12 @@ fn main() {
 
             let items = broker.query_all(
                 &params
-            ).unwrap();
+            ).expect("broker query error: please check filters are valid");
 
-            let total_size: i64 = items.iter().map(|x|x.rough_size).sum::<i64>();
+            let total_size: i64 = items.iter().map(|x|{
+                info!("{},{},{}", x.collector_id.as_str(), x.url.as_str(), x.rough_size);
+                x.rough_size
+            }).sum::<i64>();
             info!("total of {} files, {} bytes to parse", items.len(), total_size);
 
             if dry_run {
@@ -269,10 +322,10 @@ fn main() {
                     &filters.peer_ip,
                     &filters.peer_asn,
                     &filters.elem_type,
-                    &Some(filters.start_ts),
-                    &Some(filters.end_ts),
+                    &Some(filters.start_ts.clone()),
+                    &Some(filters.end_ts.clone()),
                     &filters.as_path,
-                );
+                ).unwrap();
 
                 for elem in parser {
                     s.send(elem).unwrap()
