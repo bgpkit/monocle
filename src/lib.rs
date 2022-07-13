@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 use bgpkit_parser::BgpkitParser;
 use itertools::Itertools;
+use anyhow::Result;
 
 pub fn parser_with_filters(
     file_path: &str,
@@ -11,10 +12,10 @@ pub fn parser_with_filters(
     peer_ip: &Vec<IpAddr>,
     peer_asn: &Option<u32>,
     elem_type: &Option<String>,
-    start_ts: &Option<f64>,
-    end_ts: &Option<f64>,
+    start_ts: &Option<String>,
+    end_ts: &Option<String>,
     as_path: &Option<String>,
-) -> BgpkitParser {
+) -> Result<BgpkitParser> {
 
     let mut parser = BgpkitParser::new(file_path).unwrap().disable_warnings();
 
@@ -49,5 +50,5 @@ pub fn parser_with_filters(
     if let Some(v) = end_ts {
         parser = parser.add_filter("end_ts", v.to_string().as_str()).unwrap();
     }
-    return parser
+    return Ok(parser)
 }
