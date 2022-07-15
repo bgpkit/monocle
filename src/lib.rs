@@ -1,7 +1,9 @@
 use std::net::IpAddr;
 use bgpkit_parser::BgpkitParser;
 use itertools::Itertools;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use tabled::{Table, Tabled};
 
 pub fn parser_with_filters(
     file_path: &str,
@@ -51,4 +53,35 @@ pub fn parser_with_filters(
         parser = parser.add_filter("end_ts", v.to_string().as_str()).unwrap();
     }
     return Ok(parser)
+}
+
+#[derive(Tabled)]
+struct BgpTime{
+    unix: i64,
+    rfc3339: String,
+}
+
+pub fn time_to_table(time_string: &Option<String>) -> Result<String> {
+    let unix = match time_string {
+        None => {
+            Utc::now().timestamp()
+        },
+        Some(ts) => {
+            match chrono::DateTime::parse_from_rfc3339(ts.as_str()) {
+                Ok(ts) => {
+                    ts.timestamp()
+                }
+                Err(_) => {
+                    match ts.parse::<i64>(){
+                        Ok(ts) => ts,
+                        Err(_) => return Err(anyhow!("Input time must be either Unix timestamp or time string compliant with RFC3339"))
+                    }
+                }
+            }
+        }
+    };
+
+    let rfc3339 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(unix, 0), Utc).to_rfc3339();
+
+    Ok( Table::new(vec![BgpTime{ unix, rfc3339 }]).to_string() )
 }

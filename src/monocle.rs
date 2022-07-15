@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::parser_with_filters;
+use monocle::{parser_with_filters, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::channel;
 use std::thread;
@@ -197,6 +197,12 @@ enum Commands {
         #[clap(flatten)]
         filters: SearchFilters,
     },
+    /// Time conversion utilities
+    Time {
+        /// Time stamp or time string to convert
+        #[clap()]
+        time: Option<String>,
+    },
     /// Investigative toolbox
     Scouter {
         /// Measure the power of your enemy
@@ -338,6 +344,16 @@ fn main() {
 
             /*
              */
+        }
+        Commands::Time { time} => {
+            match time_to_table(&time) {
+                Ok(t) => {
+                    println!("{}", t)
+                }
+                Err(e) => {
+                    eprintln!("{}", e)
+                }
+            }
         }
         Commands::Scouter {
             power: _
