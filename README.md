@@ -17,6 +17,7 @@ cargo install monocle
 Subcommands:
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
+- `time`: utility to convert time between unix timestamp and RFC3339 string
 
 Top-level help menu:
 ```text
@@ -36,6 +37,7 @@ SUBCOMMANDS:
     parse      Parse individual MRT files given a file path, local or remote
     scouter    Investigative toolbox
     search     Search BGP messages from all available public MRT files
+    time       Time conversion utilities
 ```
 
 ### `monocle parse`
@@ -95,6 +97,51 @@ OPTIONS:
     -t, --start-ts <START_TS>        Filter by start unix timestamp inclusive
     -T, --end-ts <END_TS>            Filter by end unix timestamp inclusive
     -V, --version                    Print version information
+```
+
+### `monocle time`
+
+```text
+➜  ~ monocle time --help              
+monocle-time 0.0.3
+Time conversion utilities
+
+USAGE:
+    monocle time [TIME]
+
+ARGS:
+    <TIME>    Time stamp or time string to convert
+
+OPTIONS:
+    -h, --help       Print help information
+    -V, --version    Print version information
+```
+
+Example runs:
+```text
+➜  monocle time
++------------+---------------------------+
+|    unix    |          rfc3339          |
++------------+---------------------------+
+| 1657850362 | 2022-07-15T01:59:22+00:00 |
++------------+---------------------------+
+
+➜  monocle time 0                               
++------+---------------------------+
+| unix |          rfc3339          |
++------+---------------------------+
+|  0   | 1970-01-01T00:00:00+00:00 |
++------+---------------------------+
+
+➜  monocle time 2022-01-01T00:00:00Z
++------------+---------------------------+
+|    unix    |          rfc3339          |
++------------+---------------------------+
+| 1640995200 | 2022-01-01T00:00:00+00:00 |
++------------+---------------------------+
+
+➜  monocle time 2022-01-01T00:00:00 
+Input time must be either Unix timestamp or time string compliant with RFC3339
 ```
 
 ## Built with ❤️ by BGPKIT Team
