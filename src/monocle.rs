@@ -4,15 +4,16 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{parser_with_filters, time_to_table};
+use monocle::{parser_with_filters, string_to_time, time_to_table};
 use rayon::prelude::*;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use bgpkit_broker::QueryParams;
 use tracing::{info, Level};
 
 use anyhow::{anyhow, Result};
-use chrono::NaiveDateTime;
+use bgpkit_parser::BgpElem;
+use chrono::DateTime;
 
 trait Validate{
     fn validate(&self) -> Result<()>;
@@ -131,13 +132,13 @@ struct SearchFilters {
 impl Validate for ParseFilters {
     fn validate(&self) -> Result<()> {
         if let Some(ts) = &self.start_ts {
-            if ! (ts.parse::<f64>().is_ok() || NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S").is_ok()){
+            if ! (ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()){
                 // not a number or a rfc3339 string
                 return Err(anyhow!("start-ts must be either a unix-timestamp or a RFC3339-compliant string"))
             }
         }
         if let Some(ts) = &self.end_ts {
-            if ! (ts.parse::<f64>().is_ok() || NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S").is_ok()){
+            if ! (ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()){
                 // not a number or a rfc3339 string
                 return Err(anyhow!("end-ts must be either a unix-timestamp or a RFC3339-compliant string"))
             }
@@ -149,11 +150,11 @@ impl Validate for ParseFilters {
 
 impl Validate for SearchFilters {
     fn validate(&self) -> Result<()> {
-        if ! (self.start_ts.as_str().parse::<f64>().is_ok() || NaiveDateTime::parse_from_str(self.start_ts.as_str(), "%Y-%m-%dT%H:%M:%S").is_ok()){
+        if ! (self.start_ts.as_str().parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(self.start_ts.as_str()).is_ok()){
             // not a number or a rfc3339 string
             return Err(anyhow!("start-ts must be either a unix-timestamp or a RFC3339-compliant string: {}", self.start_ts))
         }
-        if ! (self.end_ts.as_str().parse::<f64>().is_ok() || NaiveDateTime::parse_from_str(self.end_ts.as_str(), "%Y-%m-%dT%H:%M:%S").is_ok()){
+        if ! (self.end_ts.as_str().parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(self.end_ts.as_str()).is_ok()){
             // not a number or a rfc3339 string
             return Err(anyhow!("end-ts must be either a unix-timestamp or a RFC3339-compliant string: {}", self.end_ts))
         }
@@ -193,6 +194,14 @@ enum Commands {
         #[clap(long)]
         dry_run: bool,
 
+        /// Output as JSON objects
+        #[clap(long)]
+        json: bool,
+
+        /// Pretty-print JSON output
+        #[clap(long)]
+        pretty: bool,
+
         /// Filter by AS path regex string
         #[clap(flatten)]
         filters: SearchFilters,
@@ -208,6 +217,19 @@ enum Commands {
         /// Measure the power of your enemy
         #[clap()]
         power: bool
+    }
+}
+
+fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool) -> String {
+    if json {
+        let val = json!(elem);
+        if pretty {
+            serde_json::to_string_pretty(&val).unwrap()
+        } else {
+            val.to_string()
+        }
+    } else {
+        elem.to_string()
     }
 }
 
@@ -244,16 +266,7 @@ fn main() {
 
             let mut stdout = std::io::stdout();
             for elem in parser {
-                let output_str = if json {
-                    let val = json!(elem);
-                    if pretty {
-                        serde_json::to_string_pretty(&val).unwrap()
-                    } else {
-                        val.to_string()
-                    }
-                } else {
-                    elem.to_string()
-                };
+                let output_str = elem_to_string(&elem, json, pretty);
                 if let Err(e) = writeln!(stdout, "{}", &output_str) {
                     if e.kind() != std::io::ErrorKind::BrokenPipe {
                         eprintln!("{}", e);
@@ -262,7 +275,7 @@ fn main() {
                 }
             }
         },
-        Commands::Search { debug, dry_run, filters } => {
+        Commands::Search { debug, dry_run, json, pretty, filters } => {
             if let Err(e) = filters.validate() {
                 eprintln!("{}", e.to_string());
                 return
@@ -276,9 +289,11 @@ fn main() {
             }
 
             let broker = bgpkit_broker::BgpkitBroker::new("https://api.broker.bgpkit.com/v2");
+            let ts_start = string_to_time(filters.start_ts.as_str()).unwrap().to_string();
+            let ts_end = string_to_time(filters.end_ts.as_str()).unwrap().to_string();
             let mut params = QueryParams{
-                ts_start: Some(filters.start_ts.to_string()),
-                ts_end: Some(filters.end_ts.to_string()),
+                ts_start: Some(ts_start),
+                ts_end: Some(ts_end),
                 data_type: Some("update".to_string()),
                 page_size: 1000,
                 ..Default::default()
@@ -306,12 +321,13 @@ fn main() {
                 return
             }
 
-            let (sender, receiver) = channel();
+            let (sender, receiver): (Sender<BgpElem>, Receiver<BgpElem>) = channel();
 
             // dedicated thread for handling output of results
             let writer_thread = thread::spawn(move || {
                 for elem in receiver {
-                    println!("{}", elem);
+                    let output_str = elem_to_string(&elem, json, pretty);
+                    println!("{}", output_str);
                 }
             });
 
