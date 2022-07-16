@@ -32,3 +32,6 @@ anyhow = "1.0"
 tabled = "0.7"
 config = {version = "0.13.1", features = ["toml"]}
 dirs = "4"
+rusqlite = { version = "0.28.0", features = ["bundled"] }
+reqwest = {version = "0.11", features = ["blocking"]}
+flate2 = "1"
