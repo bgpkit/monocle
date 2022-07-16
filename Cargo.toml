@@ -30,3 +30,5 @@ serde_json = "1.0"
 chrono = "0.4"
 anyhow = "1.0"
 tabled = "0.7"
+config = {version = "0.13.1", features = ["toml"]}
+dirs = "4"
