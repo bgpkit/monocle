@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use std::path::Path;
 use config::Config;
 
 pub struct MonocleConfig {
     pub config: HashMap<String, String>,
 }
+
+const EMPTY_CONFIG: &str = "# monocle configuration file\n";
 
 impl MonocleConfig {
     pub fn load(path: &Option<String>) -> MonocleConfig {
@@ -12,12 +15,20 @@ impl MonocleConfig {
         // Add in toml configuration file
         match path {
             Some(p) => {
-                builder = builder.add_source(config::File::with_name(p.as_str()));
+                if Path::new(p.as_str()).exists(){
+                    builder = builder.add_source(config::File::with_name(p.as_str()));
+                } else {
+                    std::fs::write(p.as_str(), EMPTY_CONFIG).expect("Unable to create config file");
+                }
             }
             None => {
                 // by default use $HOME/.monocle.toml as the configuration file path
-                let home = format!("{}/.monocle.toml", dirs::home_dir().unwrap().to_str().unwrap());
-                builder = builder.add_source(config::File::with_name(home.as_str()));
+                let p = format!("{}/.monocle.toml", dirs::home_dir().unwrap().to_str().unwrap());
+                if Path::new(p.as_str()).exists(){
+                    builder = builder.add_source(config::File::with_name(p.as_str()));
+                } else {
+                    std::fs::write(p.as_str(), EMPTY_CONFIG).expect("Unable to create config file");
+                }
             }
         }
         // Add in settings from the environment (with a prefix of APP)
