@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{parser_with_filters, string_to_time, time_to_table};
+use monocle::{MonocleConfig, parser_with_filters, string_to_time, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -23,6 +23,10 @@ trait Validate{
 #[clap(author, version, about, long_about = None)]
 #[clap(propagate_version = true)]
 struct Cli {
+    /// configuration file path, by default $HOME/.monocle.toml is used
+    #[clap(short, long)]
+    config: Option<String>,
+
     #[clap(subcommand)]
     command: Commands,
 }
@@ -235,6 +239,8 @@ fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool) -> String {
 
 fn main() {
     let cli = Cli::parse();
+
+    let _config = MonocleConfig::load(&cli.config);
 
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd

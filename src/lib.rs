@@ -1,9 +1,13 @@
+mod config;
+
 use std::net::IpAddr;
 use bgpkit_parser::BgpkitParser;
 use itertools::Itertools;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use tabled::{Table, Tabled};
+
+pub use crate::config::MonocleConfig;
 
 pub fn parser_with_filters(
     file_path: &str,
