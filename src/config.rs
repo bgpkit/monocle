@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 use config::Config;
-use tracing::info;
 
 pub struct MonocleConfig {
     /// path to the directory to hold Monocle's data

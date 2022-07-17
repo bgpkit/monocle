@@ -912,6 +912,7 @@ dependencies = [
  "ipnetwork",
  "itertools",
  "rayon",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",

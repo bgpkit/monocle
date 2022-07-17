@@ -222,6 +222,9 @@ enum Commands {
         /// search by ASN only
         asn_only: bool,
 
+        /// refresh local as2org database
+        update: bool,
+
         /// Print debug information
         #[clap(long)]
         debug: bool,
@@ -380,10 +383,7 @@ fn main() {
             // wait for the output thread to stop
             writer_thread.join().unwrap();
         }
-        Commands::As { query, name_only, asn_only , debug} => {
-            // TODO: use configuration file to get data location
-            // TODO: crawl the newest data file and save the data file url in sqlite db.
-
+        Commands::As { query, name_only, asn_only ,update, debug} => {
             if debug {
                 tracing_subscriber::fmt()
                     // filter spans/events with level TRACE or higher.
@@ -393,9 +393,15 @@ fn main() {
 
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
+
+            if update{
+                // if update flag is set, clear existing as2org data and re-download later
+                as2org.clear_db();
+            }
+
             if as2org.is_db_empty() {
                 println!("bootstrapping as2org data now... (it will take about one minute)");
-                as2org.parse_as2org("https://publicdata.caida.org/datasets/as-organizations/20220701.as-org2info.jsonl.gz").unwrap();
+                as2org.parse_insert_as2org(None).unwrap();
                 println!("bootstrapping as2org data finished");
             }
 

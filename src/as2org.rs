@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader, Read};
 use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, Result};
 use flate2::read::GzDecoder;
+use regex::Regex;
 use rusqlite::Statement;
 use tabled::Tabled;
 use tracing::info;
@@ -213,7 +214,7 @@ impl As2org {
         Ok(())
     }
 
-    fn clear_db(&self) {
+    pub fn clear_db(&self) {
         self.db.conn.execute(r#"
         DELETE FROM as2org_as
         "#, []
@@ -224,10 +225,15 @@ impl As2org {
         ).unwrap();
     }
 
-    pub fn parse_as2org(&self, url: &str) -> Result<()>{
+    /// parse as2org data and insert into monocle sqlite database
+    pub fn parse_insert_as2org(&self, url: Option<&str>) -> Result<()>{
         self.clear_db();
-        info!("start parsing as2org file at {}", url);
-        let entries = As2org::parse_as2org_file(url)?;
+        let url = match url {
+            Some(u) => u.to_string(),
+            None => As2org::get_most_recent_data()
+        };
+        info!("start parsing as2org file at {}", url.as_str());
+        let entries = As2org::parse_as2org_file(url.as_str())?;
         info!("parsing as2org file done. inserting to sqlite db now");
         for entry in &entries {
             match entry {
@@ -326,6 +332,18 @@ impl As2org {
         }
         Ok(res)
     }
+
+    pub fn get_most_recent_data() -> String {
+        let data_link: Regex = Regex::new(r#".*(........\.as-org2info\.jsonl\.gz).*"#).unwrap();
+        let content = reqwest::blocking::get("https://publicdata.caida.org/datasets/as-organizations/").unwrap().text().unwrap();
+        let res: Vec<String> = data_link.captures_iter(content.as_str()).filter_map(|cap| {
+            let link = cap[1].to_owned();
+            Some(link)
+        }).collect();
+        let file = res.last().unwrap().to_string();
+
+        format!("https://publicdata.caida.org/datasets/as-organizations/{}", file)
+    }
 }
 
 
@@ -352,7 +370,7 @@ mod tests {
     fn test_creating_db() {
         let as2org = As2org::new(&Some("./test.sqlite3".to_string())).unwrap();
         // approximately one minute insert time
-        let _res = as2org.parse_as2org("tests/test-as2org.jsonl.gz");
+        let _res = as2org.parse_insert_as2org(Some("tests/test-as2org.jsonl.gz"));
 
         as2org.clear_db();
     }
@@ -362,7 +380,7 @@ mod tests {
         let as2org = As2org::new(&Some("./test.sqlite3".to_string())).unwrap();
         as2org.clear_db();
         assert_eq!(as2org.is_db_empty(), true);
-        as2org.parse_as2org("tests/test-as2org.jsonl.gz").unwrap();
+        as2org.parse_insert_as2org(Some("tests/test-as2org.jsonl.gz")).unwrap();
 
         let res = as2org.search("400644", &SearchType::AsnOnly);
         assert!(res.is_ok());
@@ -399,5 +417,10 @@ mod tests {
         assert_eq!(data[0].org_size, 1);
 
         as2org.clear_db();
+    }
+
+    #[test]
+    fn test_crawling() {
+        println!("{}", As2org::get_most_recent_data());
     }
 }
