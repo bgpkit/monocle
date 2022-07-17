@@ -7,6 +7,7 @@ use anyhow::{anyhow, Result};
 use flate2::read::GzDecoder;
 use rusqlite::Statement;
 use tabled::Tabled;
+use tracing::info;
 use crate::MonocleDatabase;
 
 
@@ -225,7 +226,9 @@ impl As2org {
 
     pub fn parse_as2org(&self, url: &str) -> Result<()>{
         self.clear_db();
+        info!("start parsing as2org file at {}", url);
         let entries = As2org::parse_as2org_file(url)?;
+        info!("parsing as2org file done. inserting to sqlite db now");
         for entry in &entries {
             match entry {
                 DataEntry::Org(e) => {
@@ -236,6 +239,7 @@ impl As2org {
                 }
             }
         }
+        info!("as2org data loading finished");
         Ok(())
     }
 

@@ -221,6 +221,10 @@ enum Commands {
 
         /// search by ASN only
         asn_only: bool,
+
+        /// Print debug information
+        #[clap(long)]
+        debug: bool,
     },
     /// Time conversion utilities
     Time {
@@ -252,7 +256,7 @@ fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool) -> String {
 fn main() {
     let cli = Cli::parse();
 
-    let _config = MonocleConfig::load(&cli.config);
+    let config = MonocleConfig::new(&cli.config);
 
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
@@ -376,13 +380,23 @@ fn main() {
             // wait for the output thread to stop
             writer_thread.join().unwrap();
         }
-        Commands::As { query, name_only, asn_only } => {
+        Commands::As { query, name_only, asn_only , debug} => {
             // TODO: use configuration file to get data location
             // TODO: crawl the newest data file and save the data file url in sqlite db.
 
-            let as2org = As2org::new(&Some("monocle-test.sqlite3".to_string())).unwrap();
+            if debug {
+                tracing_subscriber::fmt()
+                    // filter spans/events with level TRACE or higher.
+                    .with_max_level(Level::INFO)
+                    .init();
+            }
+
+            let data_dir = config.data_dir.as_str();
+            let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
             if as2org.is_db_empty() {
+                println!("bootstrapping as2org data now... (it will take about one minute)");
                 as2org.parse_as2org("https://publicdata.caida.org/datasets/as-organizations/20220701.as-org2info.jsonl.gz").unwrap();
+                println!("bootstrapping as2org data finished");
             }
 
             let search_type: SearchType = match (name_only, asn_only) {
