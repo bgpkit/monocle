@@ -6,6 +6,7 @@ use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, Result};
 use flate2::read::GzDecoder;
 use rusqlite::Statement;
+use tabled::Tabled;
 use crate::MonocleDatabase;
 
 
@@ -91,7 +92,7 @@ pub struct As2org {
 #[derive(Debug)]
 pub enum SearchType {
     AsnOnly,
-    OrgOnly,
+    NameOnly,
     Guess,
 }
 
@@ -101,7 +102,7 @@ impl Default for SearchType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Tabled)]
 pub struct SearchResult {
     asn: u32,
     as_name: String,
@@ -135,20 +136,19 @@ impl As2org {
         Ok(As2org{ db })
     }
 
+    pub fn is_db_empty(&self) -> bool {
+        let count: u32 = self.db.conn.query_row("select count(*) from as2org_as", [],
+            |row| row.get(0),
+        ).unwrap();
+        count == 0
+    }
+
     fn initialize_db(db: &mut MonocleDatabase) {
         db.conn.execute(r#"
         create table if not exists as2org_as (
         asn INTEGER PRIMARY KEY,
         name TEXT,
         org_id TEXT,
-        source TEXT
-        );
-        "#,[]).unwrap();
-        db.conn.execute(r#"
-        create table if not exists as2org_org (
-        org_id TEXT PRIMARY KEY,
-        name TEXT,
-        country TEXT,
         source TEXT
         );
         "#,[]).unwrap();
@@ -250,10 +250,10 @@ impl As2org {
                 )?;
                 res = stmt_to_results(&mut stmt)?;
             }
-            SearchType::OrgOnly => {
+            SearchType::NameOnly => {
                 let mut stmt = self.db.conn.prepare(
                     format!(
-                        "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{}%' order by count desc", query).as_str()
+                        "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{}%' or as_name like '%{}%' order by count desc", query, query).as_str()
                 )?;
                 res = stmt_to_results(&mut stmt)?;
             }
@@ -345,25 +345,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parsing_file() {
-        let res = As2org::parse_as2org_file("tests/test-as2org.jsonl.gz");
-        if !res.is_ok() {
-            dbg!(&res);
-        }
-        assert!(res.is_ok());
-        assert_eq!(res.unwrap().len(), 2);
-    }
-
-    #[test]
     fn test_creating_db() {
         let as2org = As2org::new(&Some("./test.sqlite3".to_string())).unwrap();
         // approximately one minute insert time
         let _res = as2org.parse_as2org("tests/test-as2org.jsonl.gz");
+
+        as2org.clear_db();
     }
 
     #[test]
     fn test_search() {
         let as2org = As2org::new(&Some("./test.sqlite3".to_string())).unwrap();
+        as2org.clear_db();
+        assert_eq!(as2org.is_db_empty(), true);
         as2org.parse_as2org("tests/test-as2org.jsonl.gz").unwrap();
 
         let res = as2org.search("400644", &SearchType::AsnOnly);
@@ -377,7 +371,7 @@ mod tests {
         let data = res.unwrap();
         assert_eq!(data.len(), 0);
 
-        let res = as2org.search("bgpkit", &SearchType::OrgOnly);
+        let res = as2org.search("bgpkit", &SearchType::NameOnly);
         assert!(res.is_ok());
         let data = res.unwrap();
         assert_eq!(data.len(), 1);
@@ -399,5 +393,7 @@ mod tests {
         assert_eq!(data[0].org_id, "BL-1057-ARIN");
         assert_eq!(data[0].org_country, "US");
         assert_eq!(data[0].org_size, 1);
+
+        as2org.clear_db();
     }
 }

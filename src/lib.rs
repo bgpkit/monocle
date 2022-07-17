@@ -11,6 +11,7 @@ use tabled::{Table, Tabled};
 
 pub use crate::config::MonocleConfig;
 pub use crate::database::MonocleDatabase;
+pub use crate::as2org::*;
 
 pub fn parser_with_filters(
     file_path: &str,

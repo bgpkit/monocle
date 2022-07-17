@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{MonocleConfig, parser_with_filters, string_to_time, time_to_table};
+use monocle::{As2org, MonocleConfig, parser_with_filters, SearchType, string_to_time, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -14,6 +14,7 @@ use tracing::{info, Level};
 use anyhow::{anyhow, Result};
 use bgpkit_parser::BgpElem;
 use chrono::DateTime;
+use tabled::Table;
 
 trait Validate{
     fn validate(&self) -> Result<()>;
@@ -210,6 +211,17 @@ enum Commands {
         #[clap(flatten)]
         filters: SearchFilters,
     },
+    /// offline ASN and organization name lookup
+    As {
+        /// search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
+        query: String,
+
+        /// search AS and Org name only
+        name_only: bool,
+
+        /// search by ASN only
+        asn_only: bool,
+    },
     /// Time conversion utilities
     Time {
         /// Time stamp or time string to convert
@@ -363,9 +375,34 @@ fn main() {
 
             // wait for the output thread to stop
             writer_thread.join().unwrap();
+        }
+        Commands::As { query, name_only, asn_only } => {
+            // TODO: use configuration file to get data location
+            // TODO: crawl the newest data file and save the data file url in sqlite db.
 
-            /*
-             */
+            let as2org = As2org::new(&Some("monocle-test.sqlite3".to_string())).unwrap();
+            if as2org.is_db_empty() {
+                as2org.parse_as2org("https://publicdata.caida.org/datasets/as-organizations/20220701.as-org2info.jsonl.gz").unwrap();
+            }
+
+            let search_type: SearchType = match (name_only, asn_only) {
+                (true, false) => {
+                    SearchType::NameOnly
+                }
+                (false, true) => {
+                    SearchType::AsnOnly
+                }
+                (false, false) => {
+                    SearchType::Guess
+                }
+                (true, true) => {
+                    eprintln!("name-only and asn-only cannot be both true");
+                    return
+                }
+            };
+
+            let res = as2org.search(query.as_str(), &search_type).unwrap();
+            println!("{}", Table::new(res).to_string());
         }
         Commands::Time { time} => {
             match time_to_table(&time) {
