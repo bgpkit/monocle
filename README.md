@@ -159,6 +159,10 @@ Input time must be either Unix timestamp or time string compliant with RFC3339
 
 Search AS/organization-level information with ASN or organization name.
 
+Data source:
+- The CAIDA AS Organizations Dataset, http://www.caida.org/data/as-organizations
+- Please also cite the data source above if you use this tool for your public work.
+
 ```text
 ➜  ~ monocle whois --help
 monocle-whois 0.0.4
