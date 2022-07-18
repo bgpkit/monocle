@@ -7,7 +7,11 @@ pub struct MonocleConfig {
     pub data_dir: String,
 }
 
-const EMPTY_CONFIG: &str = "# monocle configuration file\n";
+const EMPTY_CONFIG: &str = r#"### monocle configuration file
+
+### directory for cached data used by monocle
+# data_dir="~/.monocle"
+"#;
 
 impl MonocleConfig {
     /// function to create and initialize a new configuration
