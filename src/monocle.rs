@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{MonocleConfig, parser_with_filters, string_to_time, time_to_table};
+use monocle::{As2org, MonocleConfig, parser_with_filters, SearchType, string_to_time, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -14,6 +14,7 @@ use tracing::{info, Level};
 use anyhow::{anyhow, Result};
 use bgpkit_parser::BgpElem;
 use chrono::DateTime;
+use tabled::Table;
 
 trait Validate{
     fn validate(&self) -> Result<()>;
@@ -26,6 +27,10 @@ struct Cli {
     /// configuration file path, by default $HOME/.monocle.toml is used
     #[clap(short, long)]
     config: Option<String>,
+
+    /// Print debug information
+    #[clap(long)]
+    debug: bool,
 
     #[clap(subcommand)]
     command: Commands,
@@ -190,10 +195,6 @@ enum Commands {
 
     /// Search BGP messages from all available public MRT files.
     Search {
-        /// Print debug information
-        #[clap(long)]
-        debug: bool,
-
         /// Dry-run, do not download or parse.
         #[clap(long)]
         dry_run: bool,
@@ -210,12 +211,30 @@ enum Commands {
         #[clap(flatten)]
         filters: SearchFilters,
     },
+    /// ASN and organization lookup utility.
+    Whois {
+        /// Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
+        query: String,
+
+        /// Search AS and Org name only
+        #[clap(short, long)]
+        name_only: bool,
+
+        /// Search by ASN only
+        #[clap(short, long)]
+        asn_only: bool,
+
+        /// Refresh local as2org database
+        #[clap(short, long)]
+        update: bool,
+    },
     /// Time conversion utilities
     Time {
         /// Time stamp or time string to convert
         #[clap()]
         time: Option<String>,
     },
+    #[cfg(feature = "webp")]
     /// Investigative toolbox
     Scouter {
         /// Measure the power of your enemy
@@ -240,7 +259,15 @@ fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool) -> String {
 fn main() {
     let cli = Cli::parse();
 
-    let _config = MonocleConfig::load(&cli.config);
+    let config = MonocleConfig::new(&cli.config);
+
+    if cli.debug {
+        tracing_subscriber::fmt()
+            // filter spans/events with level TRACE or higher.
+            .with_max_level(Level::INFO)
+            .init();
+    }
+
 
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
@@ -281,17 +308,10 @@ fn main() {
                 }
             }
         },
-        Commands::Search { debug, dry_run, json, pretty, filters } => {
+        Commands::Search { dry_run, json, pretty, filters } => {
             if let Err(e) = filters.validate() {
                 eprintln!("{}", e.to_string());
                 return
-            }
-
-            if debug {
-                tracing_subscriber::fmt()
-                    // filter spans/events with level TRACE or higher.
-                    .with_max_level(Level::INFO)
-                    .init();
             }
 
             let broker = bgpkit_broker::BgpkitBroker::new("https://api.broker.bgpkit.com/v2");
@@ -363,9 +383,40 @@ fn main() {
 
             // wait for the output thread to stop
             writer_thread.join().unwrap();
+        }
+        Commands::Whois { query, name_only, asn_only ,update} => {
+            let data_dir = config.data_dir.as_str();
+            let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
 
-            /*
-             */
+            if update{
+                // if update flag is set, clear existing as2org data and re-download later
+                as2org.clear_db();
+            }
+
+            if as2org.is_db_empty() {
+                println!("bootstrapping as2org data now... (it will take about one minute)");
+                as2org.parse_insert_as2org(None).unwrap();
+                println!("bootstrapping as2org data finished");
+            }
+
+            let search_type: SearchType = match (name_only, asn_only) {
+                (true, false) => {
+                    SearchType::NameOnly
+                }
+                (false, true) => {
+                    SearchType::AsnOnly
+                }
+                (false, false) => {
+                    SearchType::Guess
+                }
+                (true, true) => {
+                    eprintln!("name-only and asn-only cannot be both true");
+                    return
+                }
+            };
+
+            let res = as2org.search(query.as_str(), &search_type).unwrap();
+            println!("{}", Table::new(res).to_string());
         }
         Commands::Time { time} => {
             match time_to_table(&time) {
@@ -377,6 +428,7 @@ fn main() {
                 }
             }
         }
+        #[cfg(feature = "webp")]
         Commands::Scouter {
             power: _
         } => {
