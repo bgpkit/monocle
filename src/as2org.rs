@@ -1,6 +1,10 @@
+/// AS2Org data handling utility.
+///
+/// Data source:
+/// The CAIDA AS Organizations Dataset,
+///      http://www.caida.org/data/as-organizations
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
-/// AS2Org data handling
 
 use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, Result};
@@ -52,9 +56,9 @@ pub struct JsonOrg {
 /// ----------
 /// AS fields
 /// ----------
-/// aut     : the AS number
+/// asn     : the AS number
 /// changed : the changed date provided by its WHOIS entry
-/// aut_name    : the name provide for the individual AS number
+/// name    : the name provide for the individual AS number
 /// org_id  : maps to an organization entry
 /// opaque_id   : opaque identifier used by RIR extended delegation format
 /// source  : the RIR or NIR database which was contained this entry

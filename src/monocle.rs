@@ -28,6 +28,10 @@ struct Cli {
     #[clap(short, long)]
     config: Option<String>,
 
+    /// Print debug information
+    #[clap(long)]
+    debug: bool,
+
     #[clap(subcommand)]
     command: Commands,
 }
@@ -191,10 +195,6 @@ enum Commands {
 
     /// Search BGP messages from all available public MRT files.
     Search {
-        /// Print debug information
-        #[clap(long)]
-        debug: bool,
-
         /// Dry-run, do not download or parse.
         #[clap(long)]
         dry_run: bool,
@@ -211,23 +211,22 @@ enum Commands {
         #[clap(flatten)]
         filters: SearchFilters,
     },
-    /// offline ASN and organization name lookup
-    As {
-        /// search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
+    /// ASN and organization lookup utility.
+    Whois {
+        /// Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
         query: String,
 
-        /// search AS and Org name only
+        /// Search AS and Org name only
+        #[clap(short, long)]
         name_only: bool,
 
-        /// search by ASN only
+        /// Search by ASN only
+        #[clap(short, long)]
         asn_only: bool,
 
-        /// refresh local as2org database
+        /// Refresh local as2org database
+        #[clap(short, long)]
         update: bool,
-
-        /// Print debug information
-        #[clap(long)]
-        debug: bool,
     },
     /// Time conversion utilities
     Time {
@@ -235,6 +234,7 @@ enum Commands {
         #[clap()]
         time: Option<String>,
     },
+    #[cfg(feature = "webp")]
     /// Investigative toolbox
     Scouter {
         /// Measure the power of your enemy
@@ -260,6 +260,14 @@ fn main() {
     let cli = Cli::parse();
 
     let config = MonocleConfig::new(&cli.config);
+
+    if cli.debug {
+        tracing_subscriber::fmt()
+            // filter spans/events with level TRACE or higher.
+            .with_max_level(Level::INFO)
+            .init();
+    }
+
 
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
@@ -300,17 +308,10 @@ fn main() {
                 }
             }
         },
-        Commands::Search { debug, dry_run, json, pretty, filters } => {
+        Commands::Search { dry_run, json, pretty, filters } => {
             if let Err(e) = filters.validate() {
                 eprintln!("{}", e.to_string());
                 return
-            }
-
-            if debug {
-                tracing_subscriber::fmt()
-                    // filter spans/events with level TRACE or higher.
-                    .with_max_level(Level::INFO)
-                    .init();
             }
 
             let broker = bgpkit_broker::BgpkitBroker::new("https://api.broker.bgpkit.com/v2");
@@ -383,14 +384,7 @@ fn main() {
             // wait for the output thread to stop
             writer_thread.join().unwrap();
         }
-        Commands::As { query, name_only, asn_only ,update, debug} => {
-            if debug {
-                tracing_subscriber::fmt()
-                    // filter spans/events with level TRACE or higher.
-                    .with_max_level(Level::INFO)
-                    .init();
-            }
-
+        Commands::Whois { query, name_only, asn_only ,update} => {
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
 
@@ -434,6 +428,7 @@ fn main() {
                 }
             }
         }
+        #[cfg(feature = "webp")]
         Commands::Scouter {
             power: _
         } => {
