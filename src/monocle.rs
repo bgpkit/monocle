@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{As2org, MonocleConfig, parser_with_filters, SearchType, string_to_time, time_to_table};
+use monocle::{As2org, MonocleConfig, parser_with_filters, SearchResult, SearchType, string_to_time, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -214,7 +214,7 @@ enum Commands {
     /// ASN and organization lookup utility.
     Whois {
         /// Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
-        query: String,
+        query: Vec<String>,
 
         /// Search AS and Org name only
         #[clap(short, long)]
@@ -227,6 +227,10 @@ enum Commands {
         /// Refresh local as2org database
         #[clap(short, long)]
         update: bool,
+
+        /// Output to markdown table
+        #[clap(short, long)]
+        markdown: bool,
     },
     /// Time conversion utilities
     Time {
@@ -384,7 +388,7 @@ fn main() {
             // wait for the output thread to stop
             writer_thread.join().unwrap();
         }
-        Commands::Whois { query, name_only, asn_only ,update} => {
+        Commands::Whois { query, name_only, asn_only ,update, markdown} => {
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
 
@@ -415,8 +419,18 @@ fn main() {
                 }
             };
 
-            let res = as2org.search(query.as_str(), &search_type).unwrap();
-            println!("{}", Table::new(res).with(Style::github_markdown()));
+            let res = query.into_iter().flat_map(|q| {
+                as2org.search(q.as_str(), &search_type).unwrap()
+            }).collect::<Vec<SearchResult>>();
+
+            match markdown {
+                true => {
+                    println!("{}", Table::new(res).with(Style::markdown()));
+                }
+                false => {
+                    println!("{}", Table::new(res).with(Style::rounded()));
+                }
+            }
         }
         Commands::Time { time} => {
             match time_to_table(&time) {
@@ -428,7 +442,7 @@ fn main() {
                 }
             }
         }
-        #[cfg(feature = "webp")]
+        #[cfg(feature = "scouter")]
         Commands::Scouter {
             power: _
         } => {
