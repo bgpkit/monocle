@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{As2org, MonocleConfig, parser_with_filters, SearchType, string_to_time, time_to_table};
+use monocle::{As2org, MonocleConfig, parser_with_filters, SearchResult, SearchType, string_to_time, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -214,7 +214,7 @@ enum Commands {
     /// ASN and organization lookup utility.
     Whois {
         /// Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
-        query: String,
+        query: Vec<String>,
 
         /// Search AS and Org name only
         #[clap(short, long)]
@@ -415,7 +415,9 @@ fn main() {
                 }
             };
 
-            let res = as2org.search(query.as_str(), &search_type).unwrap();
+            let res = query.into_iter().flat_map(|q| {
+                as2org.search(q.as_str(), &search_type).unwrap()
+            }).collect::<Vec<SearchResult>>();
             println!("{}", Table::new(res).to_string());
         }
         Commands::Time { time} => {
@@ -428,7 +430,7 @@ fn main() {
                 }
             }
         }
-        #[cfg(feature = "webp")]
+        #[cfg(feature = "scouter")]
         Commands::Scouter {
             power: _
         } => {
