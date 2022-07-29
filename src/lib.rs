@@ -8,7 +8,7 @@ use itertools::Itertools;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use chrono_humanize::HumanTime;
-use tabled::{Table, Tabled};
+use tabled::{Style, Table, Tabled};
 
 pub use crate::config::MonocleConfig;
 pub use crate::database::MonocleDatabase;
@@ -106,5 +106,5 @@ pub fn time_to_table(time_string: &Option<String>) -> Result<String> {
 
     let rfc3339 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(unix, 0), Utc).to_rfc3339();
 
-    Ok( Table::new(vec![BgpTime{ unix, rfc3339, human}]).to_string() )
+    Ok( Table::new(vec![BgpTime{ unix, rfc3339, human}]).with(Style::rounded()).to_string())
 }
