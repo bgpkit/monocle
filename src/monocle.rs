@@ -227,6 +227,10 @@ enum Commands {
         /// Refresh local as2org database
         #[clap(short, long)]
         update: bool,
+
+        /// Output to markdown table
+        #[clap(short, long)]
+        markdown: bool,
     },
     /// Time conversion utilities
     Time {
@@ -384,7 +388,7 @@ fn main() {
             // wait for the output thread to stop
             writer_thread.join().unwrap();
         }
-        Commands::Whois { query, name_only, asn_only ,update} => {
+        Commands::Whois { query, name_only, asn_only ,update, markdown} => {
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
 
@@ -418,7 +422,15 @@ fn main() {
             let res = query.into_iter().flat_map(|q| {
                 as2org.search(q.as_str(), &search_type).unwrap()
             }).collect::<Vec<SearchResult>>();
-            println!("{}", Table::new(res).with(Style::github_markdown());
+
+            match markdown {
+                true => {
+                    println!("{}", Table::new(res).with(Style::github_markdown()));
+                }
+                false => {
+                    println!("{}", Table::new(res).with(Style::rounded()));
+                }
+            }
         }
         Commands::Time { time} => {
             match time_to_table(&time) {
