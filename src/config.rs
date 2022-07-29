@@ -39,7 +39,7 @@ impl MonocleConfig {
                 if Path::new(p.as_str()).exists(){
                     builder = builder.add_source(config::File::with_name(p.as_str()));
                 } else {
-                    std::fs::write(p.as_str(), EMPTY_CONFIG).expect(format!("Unable to create config file {}", p.as_str()).as_str());
+                    std::fs::write(p.as_str(), EMPTY_CONFIG).unwrap_or_else(|_| panic!("Unable to create config file {}", p.as_str()));
                 }
             }
         }

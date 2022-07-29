@@ -7,6 +7,7 @@ use bgpkit_parser::BgpkitParser;
 use itertools::Itertools;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono_humanize::HumanTime;
 use tabled::{Table, Tabled};
 
 pub use crate::config::MonocleConfig;
@@ -45,7 +46,7 @@ pub fn parser_with_filters(
         parser = parser.add_filter(filter_type, v.as_str()).unwrap();
     }
     if !peer_ip.is_empty(){
-        let v = peer_ip.iter().map(|p| p.to_string()).join(",").to_string();
+        let v = peer_ip.iter().map(|p| p.to_string()).join(",");
         parser = parser.add_filter("peer_ips", v.as_str()).unwrap();
     }
     if let Some(v) = peer_asn {
@@ -62,13 +63,14 @@ pub fn parser_with_filters(
         let ts = string_to_time(v.as_str())?;
         parser = parser.add_filter("end_ts", ts.to_string().as_str()).unwrap();
     }
-    return Ok(parser)
+    Ok(parser)
 }
 
 #[derive(Tabled)]
 struct BgpTime{
     unix: i64,
     rfc3339: String,
+    human: String,
 }
 
 pub fn string_to_time(time_string: &str) -> Result<i64> {
@@ -88,16 +90,21 @@ pub fn string_to_time(time_string: &str) -> Result<i64> {
 }
 
 pub fn time_to_table(time_string: &Option<String>) -> Result<String> {
+    let now_ts = Utc::now().timestamp();
     let unix = match time_string {
         None => {
-            Utc::now().timestamp()
+            now_ts
         },
         Some(ts) => {
             string_to_time(ts.as_str())?
         }
     };
 
+    let ht = HumanTime::from(chrono::Local::now() - chrono::Duration::seconds(now_ts - unix));
+    let human = ht.to_string();
+
+
     let rfc3339 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(unix, 0), Utc).to_rfc3339();
 
-    Ok( Table::new(vec![BgpTime{ unix, rfc3339 }]).to_string() )
+    Ok( Table::new(vec![BgpTime{ unix, rfc3339, human}]).to_string() )
 }
