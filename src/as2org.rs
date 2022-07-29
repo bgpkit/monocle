@@ -383,7 +383,7 @@ mod tests {
     fn test_search() {
         let as2org = As2org::new(&Some("./test.sqlite3".to_string())).unwrap();
         as2org.clear_db();
-        assert_eq!(as2org.is_db_empty(), true);
+        assert!(as2org.is_db_empty());
         as2org.parse_insert_as2org(Some("tests/test-as2org.jsonl.gz")).unwrap();
 
         let res = as2org.search("400644", &SearchType::AsnOnly);

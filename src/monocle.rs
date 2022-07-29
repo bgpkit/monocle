@@ -283,7 +283,7 @@ fn main() {
             filters,
         } => {
             if let Err(e) = filters.validate() {
-                eprintln!("{}", e.to_string());
+                eprintln!("{}", e);
                 return
             }
 
@@ -314,7 +314,7 @@ fn main() {
         },
         Commands::Search { dry_run, json, pretty, filters } => {
             if let Err(e) = filters.validate() {
-                eprintln!("{}", e.to_string());
+                eprintln!("{}", e);
                 return
             }
 
