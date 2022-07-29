@@ -283,7 +283,7 @@ impl As2org {
                     Err(_) => {
                         let mut stmt = self.db.conn.prepare(
                             format!(
-                                "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{}%' order by count desc", query).as_str()
+                                "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{}%' or as_name like '%{}%' or org_id like '%{}%' order by count desc", query, query, query).as_str()
                         )?;
                         res = stmt_to_results(&mut stmt)?;
                     }

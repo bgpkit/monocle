@@ -14,7 +14,7 @@ use tracing::{info, Level};
 use anyhow::{anyhow, Result};
 use bgpkit_parser::BgpElem;
 use chrono::DateTime;
-use tabled::Table;
+use tabled::{Style, Table};
 
 trait Validate{
     fn validate(&self) -> Result<()>;
@@ -416,7 +416,7 @@ fn main() {
             };
 
             let res = as2org.search(query.as_str(), &search_type).unwrap();
-            println!("{}", Table::new(res).to_string());
+            println!("{}", Table::new(res).with(Style::github_markdown()));
         }
         Commands::Time { time} => {
             match time_to_table(&time) {
