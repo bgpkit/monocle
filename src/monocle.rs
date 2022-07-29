@@ -425,7 +425,7 @@ fn main() {
 
             match markdown {
                 true => {
-                    println!("{}", Table::new(res).with(Style::github_markdown()));
+                    println!("{}", Table::new(res).with(Style::markdown()));
                 }
                 false => {
                     println!("{}", Table::new(res).with(Style::rounded()));

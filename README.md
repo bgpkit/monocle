@@ -169,35 +169,64 @@ monocle-whois 0.0.4
 ASN and organization lookup utility
 
 USAGE:
-    monocle whois [OPTIONS] <QUERY>
+    monocle whois [OPTIONS] [QUERY]...
 
 ARGS:
-    <QUERY>    Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
+    <QUERY>...    Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
 
 OPTIONS:
     -a, --asn-only     Search by ASN only
     -h, --help         Print help information
+    -m, --markdown     Output to markdown table
     -n, --name-only    Search AS and Org name only
     -u, --update       Refresh local as2org database
     -V, --version      Print version information
+
 ```
 
 Example queries:
 ```text
 ➜  ~ monocle whois 400644
-+--------+------------+------------+--------------+-------------+----------+
-|  asn   |  as_name   |  org_name  |    org_id    | org_country | org_size |
-+--------+------------+------------+--------------+-------------+----------+
-| 400644 | BGPKIT-LLC | BGPKIT LLC | BL-1057-ARIN |     US      |    1     |
-+--------+------------+------------+--------------+-------------+----------+
+╭────────┬────────────┬────────────┬──────────────┬─────────────┬──────────╮
+│ asn    │ as_name    │ org_name   │ org_id       │ org_country │ org_size │
+├────────┼────────────┼────────────┼──────────────┼─────────────┼──────────┤
+│ 400644 │ BGPKIT-LLC │ BGPKIT LLC │ BL-1057-ARIN │ US          │ 1        │
+╰────────┴────────────┴────────────┴──────────────┴─────────────┴──────────╯
 
 ➜  ~ monocle whois bgpkit
-+--------+------------+------------+--------------+-------------+----------+
-|  asn   |  as_name   |  org_name  |    org_id    | org_country | org_size |
-+--------+------------+------------+--------------+-------------+----------+
-| 400644 | BGPKIT-LLC | BGPKIT LLC | BL-1057-ARIN |     US      |    1     |
-+--------+------------+------------+--------------+-------------+----------+
+╭────────┬────────────┬────────────┬──────────────┬─────────────┬──────────╮
+│ asn    │ as_name    │ org_name   │ org_id       │ org_country │ org_size │
+├────────┼────────────┼────────────┼──────────────┼─────────────┼──────────┤
+│ 400644 │ BGPKIT-LLC │ BGPKIT LLC │ BL-1057-ARIN │ US          │ 1        │
+╰────────┴────────────┴────────────┴──────────────┴─────────────┴──────────╯
 ```
+
+You can specify multiple queries:
+
+```text
+➜  monocle whois 13335 bgpkit               
+╭────────┬───────────────┬──────────────────┬──────────────┬─────────────┬──────────╮
+│ asn    │ as_name       │ org_name         │ org_id       │ org_country │ org_size │
+├────────┼───────────────┼──────────────────┼──────────────┼─────────────┼──────────┤
+│ 13335  │ CLOUDFLARENET │ Cloudflare, Inc. │ CLOUD14-ARIN │ US          │ 5        │
+│ 400644 │ BGPKIT-LLC    │ BGPKIT LLC       │ BL-1057-ARIN │ US          │ 1        │
+╰────────┴───────────────┴──────────────────┴──────────────┴─────────────┴──────────╯
+```
+
+Use `--markdown` to output the table in markdown format:
+```text
+➜  monocle whois 13335 bgpkit --markdown
+| asn    | as_name       | org_name         | org_id       | org_country | org_size |
+|--------|---------------|------------------|--------------|-------------|----------|
+| 13335  | CLOUDFLARENET | Cloudflare, Inc. | CLOUD14-ARIN | US          | 5        |
+| 400644 | BGPKIT-LLC    | BGPKIT LLC       | BL-1057-ARIN | US          | 1        |
+```
+
+| asn    | as_name       | org_name         | org_id       | org_country | org_size |
+|--------|---------------|------------------|--------------|-------------|----------|
+| 13335  | CLOUDFLARENET | Cloudflare, Inc. | CLOUD14-ARIN | US          | 5        |
+| 400644 | BGPKIT-LLC    | BGPKIT LLC       | BL-1057-ARIN | US          | 1        |
+
 
 ## Built with ❤️ by BGPKIT Team
 
