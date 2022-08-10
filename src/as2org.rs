@@ -3,12 +3,10 @@
 /// Data source:
 /// The CAIDA AS Organizations Dataset,
 ///      http://www.caida.org/data/as-organizations
-use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::BufRead;
 
 use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, Result};
-use flate2::read::GzDecoder;
 use regex::Regex;
 use rusqlite::Statement;
 use tabled::Tabled;
@@ -297,17 +295,7 @@ impl As2org {
     pub fn parse_as2org_file(path: &str) -> Result<Vec<DataEntry>> {
         let mut res: Vec<DataEntry> = vec![];
 
-        let raw_reader: Box<dyn Read> = match path.starts_with("http") {
-            true => {
-                let response = reqwest::blocking::get(path)?;
-                Box::new(response)
-            }
-            false => {
-                Box::new(File::open(path)?)
-            }
-        };
-
-        let reader = BufReader::new(GzDecoder::new(raw_reader));
+        let reader = oneio::get_reader(path)?;
         for line in reader.lines() {
             let line = line?;
             if line.contains(r#""type":"ASN""#) {
@@ -340,9 +328,8 @@ impl As2org {
     pub fn get_most_recent_data() -> String {
         let data_link: Regex = Regex::new(r#".*(........\.as-org2info\.jsonl\.gz).*"#).unwrap();
         let content = reqwest::blocking::get("https://publicdata.caida.org/datasets/as-organizations/").unwrap().text().unwrap();
-        let res: Vec<String> = data_link.captures_iter(content.as_str()).filter_map(|cap| {
-            let link = cap[1].to_owned();
-            Some(link)
+        let res: Vec<String> = data_link.captures_iter(content.as_str()).map(|cap| {
+            cap[1].to_owned()
         }).collect();
         let file = res.last().unwrap().to_string();
 
