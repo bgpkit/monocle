@@ -1,6 +1,7 @@
 mod config;
 mod as2org;
 mod database;
+mod msg_store;
 
 use std::net::IpAddr;
 use bgpkit_parser::BgpkitParser;
@@ -13,6 +14,7 @@ use tabled::{Style, Table, Tabled};
 pub use crate::config::MonocleConfig;
 pub use crate::database::MonocleDatabase;
 pub use crate::as2org::*;
+pub use crate::msg_store::MsgStore;
 
 pub fn parser_with_filters(
     file_path: &str,
