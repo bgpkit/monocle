@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{As2org, MonocleConfig, parser_with_filters, SearchResult, SearchType, string_to_time, time_to_table};
+use monocle::{As2org, MonocleConfig, MsgStore, parser_with_filters, SearchResult, SearchType, string_to_time, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -207,6 +207,14 @@ enum Commands {
         #[clap(long)]
         pretty: bool,
 
+        /// SQLite output file path
+        #[clap(long)]
+        sqlite_path: Option<PathBuf>,
+
+        /// SQLite reset database content if exists
+        #[clap(long)]
+        sqlite_reset: bool,
+
         /// Filter by AS path regex string
         #[clap(flatten)]
         filters: SearchFilters,
@@ -312,11 +320,22 @@ fn main() {
                 }
             }
         },
-        Commands::Search { dry_run, json, pretty, filters } => {
+        Commands::Search { dry_run, json, pretty, sqlite_path, sqlite_reset, filters } => {
             if let Err(e) = filters.validate() {
                 eprintln!("{}", e);
                 return
             }
+
+            let mut show_progress = false;
+            let mut sqlite_path_str = "".to_string();
+            let sqlite_db = match sqlite_path {
+                Some(path) => {
+                    show_progress = true;
+                    sqlite_path_str = path.to_str().unwrap().to_string();
+                    Some(MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset))
+                }
+                None => {None}
+            };
 
             let broker = bgpkit_broker::BgpkitBroker::new("https://api.broker.bgpkit.com/v2");
             let ts_start = string_to_time(filters.start_ts.as_str()).unwrap().to_string();
@@ -340,6 +359,8 @@ fn main() {
                 &params
             ).expect("broker query error: please check filters are valid");
 
+            let total_items = items.len();
+
             let total_size: i64 = items.iter().map(|x|{
                 info!("{},{},{}", x.collector_id.as_str(), x.url.as_str(), x.rough_size);
                 x.rough_size
@@ -352,18 +373,57 @@ fn main() {
             }
 
             let (sender, receiver): (Sender<BgpElem>, Receiver<BgpElem>) = channel();
+            // progress bar
+            let (pb_sender, pb_receiver): (Sender<u8>, Receiver<u8>) = channel();
 
             // dedicated thread for handling output of results
             let writer_thread = thread::spawn(move || {
-                for elem in receiver {
-                    let output_str = elem_to_string(&elem, json, pretty);
-                    println!("{}", output_str);
+                match sqlite_db {
+                    Some(db) => {
+                        let mut msg_cache = vec![];
+                        let mut msg_count = 0;
+                        for elem in receiver {
+                            msg_count += 1;
+                            msg_cache.push(elem);
+                            if msg_cache.len()>=500 {
+                                db.insert_elems(&msg_cache);
+                                msg_cache.clear();
+                            }
+                        }
+                        if msg_cache.len()>0 {
+                            db.insert_elems(&msg_cache);
+                        }
+
+                        println!("processed {} files, found {} messages, written into file {}", total_items, msg_count, sqlite_path_str);
+                    }
+                    None => {
+                        for elem in receiver {
+                            let output_str = elem_to_string(&elem, json, pretty);
+                            println!("{}", output_str);
+                        }
+                    }
+                }
+            });
+
+            // dedicated thread for progress bar
+            let progress_thread = thread::spawn(move || {
+                if !show_progress {
+                    return
+                }
+
+                let sty = indicatif::ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta}")
+                    .unwrap()
+                    .progress_chars("##-");
+                let pb = indicatif::ProgressBar::new(total_items as u64);
+                pb.set_style(sty);
+                for _ in pb_receiver.iter() {
+                    pb.inc(1);
                 }
             });
 
             let urls = items.iter().map(|x| x.url.to_string()).collect::<Vec<String>>();
 
-            urls.into_par_iter().for_each_with(sender, |s, url| {
+            urls.into_par_iter().for_each_with((sender, pb_sender), |(s, pb_sender), url| {
                 info!("start parsing {}", url.as_str());
                 let parser = parser_with_filters(
                     url.as_str(),
@@ -382,11 +442,16 @@ fn main() {
                 for elem in parser {
                     s.send(elem).unwrap()
                 }
+
+                if show_progress{
+                    pb_sender.send(0).unwrap();
+                }
                 info!("finished parsing {}", url.as_str());
             });
 
             // wait for the output thread to stop
             writer_thread.join().unwrap();
+            progress_thread.join().unwrap();
         }
         Commands::Whois { query, name_only, asn_only ,update, markdown} => {
             let data_dir = config.data_dir.as_str();
