@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{As2org, MonocleConfig, MsgStore, parser_with_filters, SearchResult, SearchResultConcise, SearchType, string_to_time, time_to_table};
+use monocle::{As2org, CountryLookup, MonocleConfig, MsgStore, parser_with_filters, SearchResult, SearchResultConcise, SearchType, string_to_time, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -242,6 +242,9 @@ enum Commands {
 
         #[clap(short, long)]
         concise: bool,
+
+        #[clap(short, long)]
+        full_country: bool,
     },
     /// Time conversion utilities
     Time {
@@ -393,7 +396,7 @@ fn main() {
                                 msg_cache.clear();
                             }
                         }
-                        if msg_cache.len()>0 {
+                        if !msg_cache.is_empty() {
                             db.insert_elems(&msg_cache);
                         }
 
@@ -456,7 +459,7 @@ fn main() {
             writer_thread.join().unwrap();
             progress_thread.join().unwrap();
         }
-        Commands::Whois { query, name_only, asn_only ,update, markdown, concise} => {
+        Commands::Whois { query, name_only, asn_only ,update, markdown, concise, full_country} => {
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
 
@@ -487,9 +490,20 @@ fn main() {
                 }
             };
 
-            let res = query.into_iter().flat_map(|q| {
+            let mut res = query.into_iter().flat_map(|q| {
                 as2org.search(q.as_str(), &search_type).unwrap()
             }).collect::<Vec<SearchResult>>();
+
+            if full_country {
+                let country_lookup = CountryLookup::new();
+                res = res.into_iter().map(|mut x|{
+                    x.org_country = match country_lookup.lookup_code(x.org_country.as_str()) {
+                        None => {x.org_country}
+                        Some(name) => {name.to_string()}
+                    };
+                    x
+                }).collect();
+            }
 
             match concise {
                 true => {
