@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{As2org, MonocleConfig, MsgStore, parser_with_filters, SearchResult, SearchType, string_to_time, time_to_table};
+use monocle::{As2org, MonocleConfig, MsgStore, parser_with_filters, SearchResult, SearchResultConcise, SearchType, string_to_time, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -239,6 +239,9 @@ enum Commands {
         /// Output to markdown table
         #[clap(short, long)]
         markdown: bool,
+
+        #[clap(short, long)]
+        concise: bool,
     },
     /// Time conversion utilities
     Time {
@@ -453,7 +456,7 @@ fn main() {
             writer_thread.join().unwrap();
             progress_thread.join().unwrap();
         }
-        Commands::Whois { query, name_only, asn_only ,update, markdown} => {
+        Commands::Whois { query, name_only, asn_only ,update, markdown, concise} => {
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
 
@@ -488,12 +491,30 @@ fn main() {
                 as2org.search(q.as_str(), &search_type).unwrap()
             }).collect::<Vec<SearchResult>>();
 
-            match markdown {
+            match concise {
                 true => {
-                    println!("{}", Table::new(res).with(Style::markdown()));
-                }
+                    let res_concise = res.into_iter().map(|x: SearchResult|{
+                        SearchResultConcise { asn: x.asn, as_name: x.as_name, org_country: x.org_country }
+                    });
+
+                    match markdown {
+                        true => {
+                            println!("{}", Table::new(res_concise).with(Style::markdown()));
+                        }
+                        false => {
+                            println!("{}", Table::new(res_concise).with(Style::rounded()));
+                        }
+                    };
+                },
                 false => {
-                    println!("{}", Table::new(res).with(Style::rounded()));
+                    match markdown {
+                        true => {
+                            println!("{}", Table::new(res).with(Style::markdown()));
+                        }
+                        false => {
+                            println!("{}", Table::new(res).with(Style::rounded()));
+                        }
+                    };
                 }
             }
         }

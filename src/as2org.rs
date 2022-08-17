@@ -108,12 +108,19 @@ impl Default for SearchType {
 
 #[derive(Debug, Tabled)]
 pub struct SearchResult {
-    asn: u32,
-    as_name: String,
-    org_name: String,
-    org_id: String,
-    org_country: String,
-    org_size: u32
+    pub asn: u32,
+    pub as_name: String,
+    pub org_name: String,
+    pub org_id: String,
+    pub org_country: String,
+    pub org_size: u32
+}
+
+#[derive(Debug, Tabled)]
+pub struct SearchResultConcise {
+    pub asn: u32,
+    pub as_name: String,
+    pub org_country: String,
 }
 
 fn stmt_to_results(stmt: &mut Statement) -> Result<Vec<SearchResult>> {
