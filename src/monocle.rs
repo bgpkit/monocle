@@ -246,13 +246,19 @@ enum Commands {
         #[clap(short, long)]
         full_country: bool,
     },
+
+    /// ASN and organization lookup utility.
+    Country {
+        /// Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
+        query: String,
+    },
     /// Time conversion utilities
     Time {
         /// Time stamp or time string to convert
         #[clap()]
         time: Option<String>,
     },
-    #[cfg(feature = "webp")]
+    #[cfg(feature = "scouter")]
     /// Investigative toolbox
     Scouter {
         /// Measure the power of your enemy
@@ -541,6 +547,11 @@ fn main() {
                     eprintln!("{}", e)
                 }
             }
+        }
+        Commands::Country {query} => {
+            let lookup = CountryLookup::new();
+            let res = lookup.lookup(query.as_str());
+            println!("{}", Table::new(res).with(Style::rounded()));
         }
         #[cfg(feature = "scouter")]
         Commands::Scouter {

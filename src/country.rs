@@ -1,4 +1,11 @@
 use std::collections::HashMap;
+use tabled::Tabled;
+
+#[derive(Debug, Tabled)]
+pub struct CountryEntry {
+        pub code: String,
+        pub name: String,
+}
 
 pub struct CountryLookup {
     code_map: HashMap<&'static str, &'static str>,
@@ -262,6 +269,21 @@ impl CountryLookup {
 
     pub fn lookup_code(&self, code: &str) -> Option<&'static str> {
         self.code_map.get(code).map(|x| x.to_owned())
+    }
+
+    pub fn lookup(&self, query: &str) -> Vec<CountryEntry> {
+        let mut entries = vec![];
+
+        let query = query.to_lowercase();
+
+        for (code, name) in &self.code_map {
+            if code.to_lowercase() == query {
+                entries.push(CountryEntry{code: code.to_string(), name: name.to_string()});
+            } else if name.to_lowercase().contains(query.as_str()) {
+                entries.push(CountryEntry{code: code.to_string(), name: name.to_string()});
+            }
+        }
+        entries
     }
 }
 
