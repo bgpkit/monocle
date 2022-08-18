@@ -499,20 +499,9 @@ fn main() {
                 search_type = SearchType::CountryOnly;
             }
 
-            let mut res = query.into_iter().flat_map(|q| {
-                as2org.search(q.as_str(), &search_type).unwrap()
+            let res = query.into_iter().flat_map(|q| {
+                as2org.search(q.as_str(), &search_type, full_country).unwrap()
             }).collect::<Vec<SearchResult>>();
-
-            if full_country {
-                let country_lookup = CountryLookup::new();
-                res = res.into_iter().map(|mut x|{
-                    x.org_country = match country_lookup.lookup_code(x.org_country.as_str()) {
-                        None => {x.org_country}
-                        Some(name) => {name.to_string()}
-                    };
-                    x
-                }).collect();
-            }
 
             match concise {
                 true => {
