@@ -278,7 +278,10 @@ impl CountryLookup {
 
         for (code, name) in &self.code_map {
             if code.to_lowercase() == query {
+                // if there is code match, return only code match
+                entries.clear();
                 entries.push(CountryEntry{code: code.to_string(), name: name.to_string()});
+                break;
             } else if name.to_lowercase().contains(query.as_str()) {
                 entries.push(CountryEntry{code: code.to_string(), name: name.to_string()});
             }
