@@ -232,6 +232,10 @@ enum Commands {
         #[clap(short, long)]
         asn_only: bool,
 
+        /// Search by country only
+        #[clap(short='C', long)]
+        country_only: bool,
+
         /// Refresh local as2org database
         #[clap(short, long)]
         update: bool,
@@ -240,9 +244,11 @@ enum Commands {
         #[clap(short, long)]
         markdown: bool,
 
+        /// Display concise table
         #[clap(short, long)]
         concise: bool,
 
+        /// Show full country names instead of 2-letter code
         #[clap(short, long)]
         full_country: bool,
     },
@@ -258,13 +264,6 @@ enum Commands {
         #[clap()]
         time: Option<String>,
     },
-    #[cfg(feature = "scouter")]
-    /// Investigative toolbox
-    Scouter {
-        /// Measure the power of your enemy
-        #[clap()]
-        power: bool
-    }
 }
 
 fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool) -> String {
@@ -465,7 +464,7 @@ fn main() {
             writer_thread.join().unwrap();
             progress_thread.join().unwrap();
         }
-        Commands::Whois { query, name_only, asn_only ,update, markdown, concise, full_country} => {
+        Commands::Whois { query, name_only, asn_only ,update, markdown, concise, full_country, country_only} => {
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
 
@@ -480,7 +479,7 @@ fn main() {
                 println!("bootstrapping as2org data finished");
             }
 
-            let search_type: SearchType = match (name_only, asn_only) {
+            let mut search_type: SearchType = match (name_only, asn_only) {
                 (true, false) => {
                     SearchType::NameOnly
                 }
@@ -495,6 +494,10 @@ fn main() {
                     return
                 }
             };
+
+            if country_only {
+                search_type = SearchType::CountryOnly;
+            }
 
             let mut res = query.into_iter().flat_map(|q| {
                 as2org.search(q.as_str(), &search_type).unwrap()
@@ -552,14 +555,6 @@ fn main() {
             let lookup = CountryLookup::new();
             let res = lookup.lookup(query.as_str());
             println!("{}", Table::new(res).with(Style::rounded()));
-        }
-        #[cfg(feature = "scouter")]
-        Commands::Scouter {
-            power: _
-        } => {
-            // https://dragonball.fandom.com/wiki/It%27s_Over_9000!
-            println!("It's Over 9000!");
-            println!("What!? 9000!? There's no way that can be right! Can it!?");
         }
     }
 }

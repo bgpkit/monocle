@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tabled::Tabled;
 
-#[derive(Debug, Tabled)]
+#[derive(Debug, Clone, Tabled)]
 pub struct CountryEntry {
     pub code: String,
     pub name: String,
