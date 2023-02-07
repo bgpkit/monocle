@@ -302,7 +302,7 @@ fn main() {
             filters,
         } => {
             if let Err(e) = filters.validate() {
-                eprintln!("{}", e);
+                eprintln!("{e}");
                 return
             }
 
@@ -325,7 +325,7 @@ fn main() {
                 let output_str = elem_to_string(&elem, json, pretty);
                 if let Err(e) = writeln!(stdout, "{}", &output_str) {
                     if e.kind() != std::io::ErrorKind::BrokenPipe {
-                        eprintln!("{}", e);
+                        eprintln!("{e}");
                     }
                     std::process::exit(1);
                 }
@@ -333,7 +333,7 @@ fn main() {
         },
         Commands::Search { dry_run, json, pretty, sqlite_path, sqlite_reset, filters } => {
             if let Err(e) = filters.validate() {
-                eprintln!("{}", e);
+                eprintln!("{e}");
                 return
             }
 
@@ -405,12 +405,12 @@ fn main() {
                             db.insert_elems(&msg_cache);
                         }
 
-                        println!("processed {} files, found {} messages, written into file {}", total_items, msg_count, sqlite_path_str);
+                        println!("processed {total_items} files, found {msg_count} messages, written into file {sqlite_path_str}");
                     }
                     None => {
                         for elem in receiver {
                             let output_str = elem_to_string(&elem, json, pretty);
-                            println!("{}", output_str);
+                            println!("{output_str}");
                         }
                     }
                 }
@@ -466,7 +466,7 @@ fn main() {
         }
         Commands::Whois { query, name_only, asn_only ,update, markdown, concise, full_country, country_only} => {
             let data_dir = config.data_dir.as_str();
-            let as2org = As2org::new(&Some(format!("{}/monocle-data.sqlite3", data_dir))).unwrap();
+            let as2org = As2org::new(&Some(format!("{data_dir}/monocle-data.sqlite3"))).unwrap();
 
             if update{
                 // if update flag is set, clear existing as2org data and re-download later
@@ -506,7 +506,7 @@ fn main() {
             match concise {
                 true => {
                     let res_concise = res.into_iter().map(|x: SearchResult|{
-                        SearchResultConcise { asn: x.asn, as_name: x.as_name, org_country: x.org_country }
+                        SearchResultConcise { asn: x.asn, as_name: x.as_name, org_name: x.org_name, org_country: x.org_country }
                     });
 
                     match markdown {
@@ -533,10 +533,10 @@ fn main() {
         Commands::Time { time} => {
             match time_to_table(&time) {
                 Ok(t) => {
-                    println!("{}", t)
+                    println!("{t}")
                 }
                 Err(e) => {
-                    eprintln!("{}", e)
+                    eprintln!("{e}")
                 }
             }
         }
