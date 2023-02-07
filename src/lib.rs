@@ -108,7 +108,7 @@ pub fn time_to_table(time_string: &Option<String>) -> Result<String> {
     let human = ht.to_string();
 
 
-    let rfc3339 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(unix, 0), Utc).to_rfc3339();
+    let rfc3339 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(unix, 0).unwrap(), Utc).to_rfc3339();
 
     Ok( Table::new(vec![BgpTime{ unix, rfc3339, human}]).with(Style::rounded()).to_string())
 }
