@@ -123,6 +123,7 @@ pub struct SearchResult {
 pub struct SearchResultConcise {
     pub asn: u32,
     pub as_name: String,
+    pub org_name: String,
     pub org_country: String,
 }
 
@@ -282,24 +283,24 @@ impl As2org {
                 let asn = query.parse::<u32>()?;
                 let mut stmt = self.db.conn.prepare(
                     format!(
-                        "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where asn='{}'", asn).as_str()
+                        "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where asn='{asn}'").as_str()
                 )?;
                 res = self.stmt_to_results(&mut stmt, full_country_name)?;
             }
             SearchType::NameOnly => {
                 let mut stmt = self.db.conn.prepare(
                     format!(
-                        "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{}%' or as_name like '%{}%' order by count desc", query, query).as_str()
+                        "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{query}%' or as_name like '%{query}%' order by count desc").as_str()
                 )?;
                 res = self.stmt_to_results(&mut stmt, full_country_name)?;
             }
             SearchType::CountryOnly => {
                 let countries = self.country_lookup.lookup(query);
-                if countries.len() == 0 {
+                if countries.is_empty() {
                     return Err(anyhow!("no country found with the query ({})", query));
                 } else if countries.len() > 1 {
                     let countries = countries.into_iter().map(|x|x.name).join(" ; ");
-                    return Err(anyhow!("more than one countries found with the query ({}): {}", query, countries));
+                    return Err(anyhow!("more than one countries found with the query ({query}): {countries}"));
                 }
 
                 let mut stmt = self.db.conn.prepare(
@@ -313,14 +314,14 @@ impl As2org {
                     Ok(asn) => {
                         let mut stmt = self.db.conn.prepare(
                             format!(
-                                "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where asn='{}'", asn).as_str()
+                                "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where asn='{asn}'").as_str()
                         )?;
                         res = self.stmt_to_results(&mut stmt, full_country_name)?;
                     }
                     Err(_) => {
                         let mut stmt = self.db.conn.prepare(
                             format!(
-                                "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{}%' or as_name like '%{}%' or org_id like '%{}%' order by count desc", query, query, query).as_str()
+                                "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{query}%' or as_name like '%{query}%' or org_id like '%{query}%' order by count desc").as_str()
                         )?;
                         res = self.stmt_to_results(&mut stmt, full_country_name)?;
                     }
@@ -372,7 +373,7 @@ impl As2org {
         }).collect();
         let file = res.last().unwrap().to_string();
 
-        format!("https://publicdata.caida.org/datasets/as-organizations/{}", file)
+        format!("https://publicdata.caida.org/datasets/as-organizations/{file}")
     }
 }
 

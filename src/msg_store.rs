@@ -91,7 +91,7 @@ impl MsgStore {
             timestamp, elem_type, peer_ip, peer_asn, prefix, next_hop, \
             as_path, origin_asns, origin, local_pref, med, communities,\
             atomic, aggr_asn, aggr_ip)\
-            VALUES {};", values
+            VALUES {values};"
             );
             self.db.conn.execute(query.as_str(), []).unwrap();
         }
