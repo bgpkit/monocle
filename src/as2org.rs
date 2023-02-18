@@ -276,7 +276,12 @@ impl As2org {
     }
 
     pub fn search(&self, query: &str, search_type: &SearchType, full_country_name: bool) -> Result<Vec<SearchResult>>{
+        enum QueryType {
+            ASN, NAME, COUNTRY
+        }
         let res: Vec<SearchResult>;
+        let mut query_type = QueryType::ASN;
+
         match search_type {
             SearchType::AsnOnly => {
                 let asn = query.parse::<u32>()?;
@@ -287,6 +292,7 @@ impl As2org {
                 res = self.stmt_to_results(&mut stmt, full_country_name)?;
             }
             SearchType::NameOnly => {
+                query_type = QueryType::NAME;
                 let mut stmt = self.db.conn.prepare(
                     format!(
                         "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{query}%' or as_name like '%{query}%' order by count desc").as_str()
@@ -294,6 +300,7 @@ impl As2org {
                 res = self.stmt_to_results(&mut stmt, full_country_name)?;
             }
             SearchType::CountryOnly => {
+                query_type = QueryType::COUNTRY;
                 let countries = self.country_lookup.lookup(query);
                 if countries.is_empty() {
                     return Err(anyhow!("no country found with the query ({})", query));
@@ -311,6 +318,7 @@ impl As2org {
             SearchType::Guess => {
                 match query.parse::<u32>() {
                     Ok(asn) => {
+                        query_type = QueryType::ASN;
                         let mut stmt = self.db.conn.prepare(
                             format!(
                                 "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where asn='{asn}'").as_str()
@@ -318,6 +326,7 @@ impl As2org {
                         res = self.stmt_to_results(&mut stmt, full_country_name)?;
                     }
                     Err(_) => {
+                        query_type = QueryType::NAME;
                         let mut stmt = self.db.conn.prepare(
                             format!(
                                 "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{query}%' or as_name like '%{query}%' or org_id like '%{query}%' order by count desc").as_str()
@@ -327,7 +336,47 @@ impl As2org {
                 }
             }
         }
-        Ok(res)
+
+        match res.is_empty() {
+            true => {
+                let new_res = match query_type {
+                    QueryType::ASN => {
+                        SearchResult{
+                            asn: query.parse::<u32>().unwrap(),
+                            as_name: "?".to_string(),
+                            org_name: "?".to_string(),
+                            org_id: "?".to_string(),
+                            org_country: "?".to_string(),
+                            org_size: 0,
+                        }
+                    }
+                    QueryType::NAME => {
+                        SearchResult{
+                            asn: 0,
+                            as_name: "?".to_string(),
+                            org_name: query.to_string(),
+                            org_id: "?".to_string(),
+                            org_country: "?".to_string(),
+                            org_size: 0,
+                        }
+                    }
+                    QueryType::COUNTRY => {
+                        SearchResult{
+                            asn: 0,
+                            as_name: "?".to_string(),
+                            org_name: "?".to_string(),
+                            org_id: "?".to_string(),
+                            org_country: query.to_string(),
+                            org_size: 0,
+                        }
+                    }
+                };
+                Ok(vec![new_res])
+            }
+            false => {
+                Ok(res)
+            }
+        }
     }
 
     /// parse remote AS2Org file into Vec of DataEntry
@@ -420,7 +469,8 @@ mod tests {
         let res = as2org.search("0", &SearchType::AsnOnly, false);
         assert!(res.is_ok());
         let data = res.unwrap();
-        assert_eq!(data.len(), 0);
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].as_name, "?");
 
         let res = as2org.search("bgpkit", &SearchType::NameOnly, false);
         assert!(res.is_ok());
