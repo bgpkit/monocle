@@ -239,13 +239,13 @@ enum Commands {
         #[clap(short, long)]
         update: bool,
 
-        /// Output to markdown table
+        /// Output to pretty table, default markdown table
         #[clap(short, long)]
-        markdown: bool,
+        pretty: bool,
 
-        /// Display concise table
-        #[clap(short, long)]
-        concise: bool,
+        /// Display full table (with ord_id, org_size)
+        #[clap(short='F', long)]
+        full_table: bool,
 
         /// Show full country names instead of 2-letter code
         #[clap(short, long)]
@@ -463,7 +463,7 @@ fn main() {
             writer_thread.join().unwrap();
             progress_thread.join().unwrap();
         }
-        Commands::Whois { query, name_only, asn_only ,update, markdown, concise, full_country, country_only} => {
+        Commands::Whois { query, name_only, asn_only ,update, pretty, full_table, full_country, country_only} => {
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{data_dir}/monocle-data.sqlite3"))).unwrap();
 
@@ -505,28 +505,28 @@ fn main() {
             // order search results by AS number
             res.sort_by_key(|v| v.asn);
 
-            match concise {
-                true => {
+            match full_table {
+                false => {
                     let res_concise = res.into_iter().map(|x: SearchResult|{
                         SearchResultConcise { asn: x.asn, as_name: x.as_name, org_name: x.org_name, org_country: x.org_country }
                     });
 
-                    match markdown {
+                    match pretty {
                         true => {
-                            println!("{}", Table::new(res_concise).with(Style::markdown()));
+                            println!("{}", Table::new(res_concise).with(Style::rounded()));
                         }
                         false => {
-                            println!("{}", Table::new(res_concise).with(Style::rounded()));
+                            println!("{}", Table::new(res_concise).with(Style::markdown()));
                         }
                     };
                 },
-                false => {
-                    match markdown {
+                true => {
+                    match pretty {
                         true => {
-                            println!("{}", Table::new(res).with(Style::markdown()));
+                            println!("{}", Table::new(res).with(Style::rounded()));
                         }
                         false => {
-                            println!("{}", Table::new(res).with(Style::rounded()));
+                            println!("{}", Table::new(res).with(Style::markdown()));
                         }
                     };
                 }
