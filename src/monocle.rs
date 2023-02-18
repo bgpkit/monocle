@@ -498,9 +498,12 @@ fn main() {
                 search_type = SearchType::CountryOnly;
             }
 
-            let res = query.into_iter().flat_map(|q| {
+            let mut res = query.into_iter().flat_map(|q| {
                 as2org.search(q.as_str(), &search_type, full_country).unwrap()
             }).collect::<Vec<SearchResult>>();
+
+            // order search results by AS number
+            res.sort_by_key(|v| v.asn);
 
             match full_table {
                 false => {
