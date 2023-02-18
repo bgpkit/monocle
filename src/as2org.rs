@@ -3,7 +3,6 @@
 /// Data source:
 /// The CAIDA AS Organizations Dataset,
 ///      http://www.caida.org/data/as-organizations
-use std::io::BufRead;
 
 use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, Result};
@@ -335,8 +334,7 @@ impl As2org {
     pub fn parse_as2org_file(path: &str) -> Result<Vec<DataEntry>> {
         let mut res: Vec<DataEntry> = vec![];
 
-        let reader = oneio::get_reader(path)?;
-        for line in reader.lines() {
+        for line in oneio::read_lines(path)? {
             let line = line?;
             if line.contains(r#""type":"ASN""#) {
                 let data = serde_json::from_str::<JsonAs>(line.as_str());

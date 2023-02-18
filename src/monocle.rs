@@ -8,7 +8,6 @@ use monocle::{As2org, CountryLookup, MonocleConfig, MsgStore, parser_with_filter
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
-use bgpkit_broker::QueryParams;
 use tracing::{info, Level};
 
 use anyhow::{anyhow, Result};
@@ -177,7 +176,7 @@ enum Commands {
     /// Parse individual MRT files given a file path, local or remote.
     Parse {
         /// File path to a MRT file, local or remote.
-        #[clap(name = "FILE", parse(from_os_str))]
+        #[clap(name = "FILE")]
         file_path: PathBuf,
 
         /// Output as JSON objects
@@ -348,26 +347,26 @@ fn main() {
                 None => {None}
             };
 
-            let broker = bgpkit_broker::BgpkitBroker::new("https://api.broker.bgpkit.com/v2");
             let ts_start = string_to_time(filters.start_ts.as_str()).unwrap().to_string();
             let ts_end = string_to_time(filters.end_ts.as_str()).unwrap().to_string();
-            let mut params = QueryParams{
-                ts_start: Some(ts_start),
-                ts_end: Some(ts_end),
-                data_type: Some("update".to_string()),
-                page_size: 1000,
-                ..Default::default()
-            };
+
+            let mut broker = bgpkit_broker::BgpkitBroker::new()
+                .ts_start(ts_start.as_str())
+                .ts_end(ts_end.as_str())
+                .data_type("update")
+                .page_size(1000);
 
             if let Some(project) = filters.project {
-                params.project = Some(project);
+                broker = broker.project(project.as_str());
+
             }
             if let Some(collector) = filters.collector {
-                params.collector_id = Some(collector)
+                broker = broker.collector_id(collector.as_str());
             }
 
-            let items = broker.query_all(
-                &params
+
+
+            let items = broker.query(
             ).expect("broker query error: please check filters are valid");
 
             let total_items = items.len();
