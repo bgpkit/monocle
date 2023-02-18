@@ -83,8 +83,8 @@ pub fn string_to_time(time_string: &str) -> Result<i64> {
             ts.timestamp()
         }
         Err(_) => {
-            match time_string.parse::<i64>(){
-                Ok(ts) => ts,
+            match time_string.parse::<f64>(){
+                Ok(ts) => ts as i64,
                 Err(_) => return Err(anyhow!("Input time must be either Unix timestamp or time string compliant with RFC3339"))
             }
         }
