@@ -22,31 +22,31 @@ cargo install monocle
 Subcommands:
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
-- `time`: utility to convert time between unix timestamp and RFC3339 string
 - `whois`: search AS and organization information by ASN or name
+- `time`: utility to convert time between unix timestamp and RFC3339 string
+- `country`: utility to lookup country name and code
 
 Top-level help menu:
 ```text
 ➜  ~ monocle                      
-monocle 0.0.4
-Mingwei Zhang <mingwei@bgpkit.com>
 A commandline application to search, parse, and process BGP information in public sources.
 
-USAGE:
-    monocle [OPTIONS] <SUBCOMMAND>
 
-OPTIONS:
-    -c, --config <CONFIG>    configuration file path, by default $HOME/.monocle.toml is used
-        --debug              Print debug information
-    -h, --help               Print help information
-    -V, --version            Print version information
+Usage: monocle [OPTIONS] <COMMAND>
 
-SUBCOMMANDS:
-    help      Print this message or the help of the given subcommand(s)
-    parse     Parse individual MRT files given a file path, local or remote
-    search    Search BGP messages from all available public MRT files
-    time      Time conversion utilities
-    whois     ASN and organization lookup utility
+Commands:
+  parse    Parse individual MRT files given a file path, local or remote
+  search   Search BGP messages from all available public MRT files
+  whois    ASN and organization lookup utility
+  country  ASN and organization lookup utility
+  time     Time conversion utilities
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -c, --config <CONFIG>  configuration file path, by default $HOME/.monocle.toml is used
+      --debug            Print debug information
+  -h, --help             Print help
+  -V, --version          Print version
 ```
 
 ### `monocle parse`
@@ -88,7 +88,6 @@ MRT files in parallel. More filters can be used to search for messages that matc
 
 ```text
 ➜  monocle git:(main) ✗ monocle search --help
-monocle-search 0.0.1
 Search BGP messages from all available public MRT files
 
 USAGE:
@@ -119,7 +118,6 @@ Convert between UNIX timestamp and RFC3339 time strings.
 
 ```text
 ➜  ~ monocle time --help              
-monocle-time 0.0.3
 Time conversion utilities
 
 USAGE:
@@ -170,67 +168,108 @@ Data source:
 
 ```text
 ➜  ~ monocle whois --help
-monocle-whois 0.0.4
 ASN and organization lookup utility
 
-USAGE:
-    monocle whois [OPTIONS] [QUERY]...
+Usage: monocle whois [OPTIONS] [QUERY]...
 
-ARGS:
-    <QUERY>...    Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
+Arguments:
+  [QUERY]...  Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
 
-OPTIONS:
-    -a, --asn-only     Search by ASN only
-    -h, --help         Print help information
-    -m, --markdown     Output to markdown table
-    -n, --name-only    Search AS and Org name only
-    -u, --update       Refresh local as2org database
-    -V, --version      Print version information
-
+Options:
+  -n, --name-only     Search AS and Org name only
+  -a, --asn-only      Search by ASN only
+  -C, --country-only  Search by country only
+  -u, --update        Refresh local as2org database
+  -p, --pretty        Output to pretty table, default markdown table
+  -F, --full-table    Display full table (with ord_id, org_size)
+  -P, --psv           Export to pipe-separated values
+  -f, --full-country  Show full country names instead of 2-letter code
+  -h, --help          Print help
+  -V, --version       Print version
 ```
 
 Example queries:
 ```text
 ➜  ~ monocle whois 400644
-╭────────┬────────────┬────────────┬──────────────┬─────────────┬──────────╮
-│ asn    │ as_name    │ org_name   │ org_id       │ org_country │ org_size │
-├────────┼────────────┼────────────┼──────────────┼─────────────┼──────────┤
-│ 400644 │ BGPKIT-LLC │ BGPKIT LLC │ BL-1057-ARIN │ US          │ 1        │
-╰────────┴────────────┴────────────┴──────────────┴─────────────┴──────────╯
+| asn    | as_name    | org_name   | org_country |
+|--------|------------|------------|-------------|
+| 400644 | BGPKIT-LLC | BGPKIT LLC | US          |
 
 ➜  ~ monocle whois bgpkit
-╭────────┬────────────┬────────────┬──────────────┬─────────────┬──────────╮
-│ asn    │ as_name    │ org_name   │ org_id       │ org_country │ org_size │
-├────────┼────────────┼────────────┼──────────────┼─────────────┼──────────┤
-│ 400644 │ BGPKIT-LLC │ BGPKIT LLC │ BL-1057-ARIN │ US          │ 1        │
-╰────────┴────────────┴────────────┴──────────────┴─────────────┴──────────╯
+| asn    | as_name    | org_name   | org_country |
+|--------|------------|------------|-------------|
+| 400644 | BGPKIT-LLC | BGPKIT LLC | US          |
+
 ```
 
 You can specify multiple queries:
 
 ```text
 ➜  monocle whois 13335 bgpkit               
-╭────────┬───────────────┬──────────────────┬──────────────┬─────────────┬──────────╮
-│ asn    │ as_name       │ org_name         │ org_id       │ org_country │ org_size │
-├────────┼───────────────┼──────────────────┼──────────────┼─────────────┼──────────┤
-│ 13335  │ CLOUDFLARENET │ Cloudflare, Inc. │ CLOUD14-ARIN │ US          │ 5        │
-│ 400644 │ BGPKIT-LLC    │ BGPKIT LLC       │ BL-1057-ARIN │ US          │ 1        │
-╰────────┴───────────────┴──────────────────┴──────────────┴─────────────┴──────────╯
+| asn    | as_name       | org_name         | org_country |
+|--------|---------------|------------------|-------------|
+| 13335  | CLOUDFLARENET | Cloudflare, Inc. | US          |
+| 400644 | BGPKIT-LLC    | BGPKIT LLC       | US          |
 ```
 
-Use `--markdown` to output the table in markdown format:
+Use `--pretty` to output the table with pretty rounded corner
 ```text
-➜  monocle whois 13335 bgpkit --markdown
-| asn    | as_name       | org_name         | org_id       | org_country | org_size |
-|--------|---------------|------------------|--------------|-------------|----------|
-| 13335  | CLOUDFLARENET | Cloudflare, Inc. | CLOUD14-ARIN | US          | 5        |
-| 400644 | BGPKIT-LLC    | BGPKIT LLC       | BL-1057-ARIN | US          | 1        |
+➜  monocle whois 13335 bgpkit --pretty
+╭────────┬───────────────┬──────────────────┬─────────────╮
+│ asn    │ as_name       │ org_name         │ org_country │
+├────────┼───────────────┼──────────────────┼─────────────┤
+│ 13335  │ CLOUDFLARENET │ Cloudflare, Inc. │ US          │
+│ 400644 │ BGPKIT-LLC    │ BGPKIT LLC       │ US          │
+╰────────┴───────────────┴──────────────────┴─────────────╯
 ```
 
-| asn    | as_name       | org_name         | org_id       | org_country | org_size |
-|--------|---------------|------------------|--------------|-------------|----------|
-| 13335  | CLOUDFLARENET | Cloudflare, Inc. | CLOUD14-ARIN | US          | 5        |
-| 400644 | BGPKIT-LLC    | BGPKIT LLC       | BL-1057-ARIN | US          | 1        |
+### `monocle country`
+
+Country name and code lookup utilities.
+
+```text
+➜  ~ monocle country --help              
+Country name and code lookup utilities
+
+Usage: monocle country <QUERY>
+
+Arguments:
+  <QUERY>  Search query, e.g. "US" or "United States"
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+```
+
+Example runs:
+```text
+➜  monocle country US    
+╭──────┬──────────────────────────╮
+│ code │ name                     │
+├──────┼──────────────────────────┤
+│ US   │ United States of America │
+╰──────┴──────────────────────────╯
+
+➜  monocle country united
+╭──────┬──────────────────────────────────────────────────────╮
+│ code │ name                                                 │
+├──────┼──────────────────────────────────────────────────────┤
+│ TZ   │ Tanzania, United Republic of                         │
+│ GB   │ United Kingdom of Great Britain and Northern Ireland │
+│ AE   │ United Arab Emirates                                 │
+│ US   │ United States of America                             │
+│ UM   │ United States Minor Outlying Islands                 │
+╰──────┴──────────────────────────────────────────────────────╯
+
+➜  monocle country "United States" 
+╭──────┬──────────────────────────────────────╮
+│ code │ name                                 │
+├──────┼──────────────────────────────────────┤
+│ UM   │ United States Minor Outlying Islands │
+│ US   │ United States of America             │
+╰──────┴──────────────────────────────────────╯
+```
 
 
 ## Built with ❤️ by BGPKIT Team

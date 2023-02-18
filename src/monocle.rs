@@ -256,9 +256,9 @@ enum Commands {
         full_country: bool,
     },
 
-    /// ASN and organization lookup utility.
+    /// Country name and code lookup utilities
     Country {
-        /// Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
+        /// Search query, e.g. "US" or "United States"
         query: String,
     },
     /// Time conversion utilities
