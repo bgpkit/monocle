@@ -247,6 +247,10 @@ enum Commands {
         #[clap(short='F', long)]
         full_table: bool,
 
+        /// Export to pipe-separated values
+        #[clap(short='P', long)]
+        psv: bool,
+
         /// Show full country names instead of 2-letter code
         #[clap(short, long)]
         full_country: bool,
@@ -463,7 +467,7 @@ fn main() {
             writer_thread.join().unwrap();
             progress_thread.join().unwrap();
         }
-        Commands::Whois { query, name_only, asn_only ,update, pretty, full_table, full_country, country_only} => {
+        Commands::Whois { query, name_only, asn_only ,update, pretty, full_table, full_country, country_only, psv} => {
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{data_dir}/monocle-data.sqlite3"))).unwrap();
 
@@ -510,6 +514,13 @@ fn main() {
                     let res_concise = res.into_iter().map(|x: SearchResult|{
                         SearchResultConcise { asn: x.asn, as_name: x.as_name, org_name: x.org_name, org_country: x.org_country }
                     });
+                    if psv {
+                        println!("asn|asn_name|org_name|org_country");
+                        for res in res_concise {
+                            println!("{}|{}|{}|{}", res.asn, res.as_name, res.org_name, res.org_country);
+                        }
+                        return
+                    }
 
                     match pretty {
                         true => {
@@ -521,6 +532,13 @@ fn main() {
                     };
                 },
                 true => {
+                    if psv {
+                        println!("asn|asn_name|org_name|org_id|org_country|org_size");
+                        for entry in res {
+                            format!("{}|{}|{}|{}|{}|{}", entry.asn, entry.as_name, entry.org_name, entry.org_id, entry.org_country, entry.org_size);
+                        }
+                        return
+                    }
                     match pretty {
                         true => {
                             println!("{}", Table::new(res).with(Style::rounded()));
