@@ -274,8 +274,4 @@ Example runs:
 
 ## Built with ❤️ by BGPKIT Team
 
-BGPKIT is a small-team focuses on building the best open-source tooling for BGP data processing in Rust. We have over 10 years of
-experience in working with BGP data and we believe that our work can enable more companies to start keeping tracks of BGP data
-on their own turf. Learn more about what we do at https://bgpkit.com.
-
 <a href="https://bgpkit.com"><img src="https://bgpkit.com/Original%20Logo%20Cropped.png" alt="https://bgpkit.com/favicon.ico" width="200"/></a>
