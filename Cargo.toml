@@ -36,7 +36,8 @@ dirs = "4"
 rusqlite = { version = "0.28.0", features = ["bundled"] }
 reqwest = {version = "0.11", features = ["blocking"]}
 regex = "1.6.0"
-oneio = "0.7.1"
+oneio = "0.7.2"
+rpki = {git="https://github.com/bgpkit/rpki-rs.git", branch = "expose-roa-inner", features = ["repository"]}
 
 # progress bar
 indicatif = "0.17.0"

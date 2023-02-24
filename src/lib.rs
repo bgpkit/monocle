@@ -3,6 +3,7 @@ mod as2org;
 mod database;
 mod msg_store;
 mod country;
+mod rpki;
 
 use std::net::IpAddr;
 use bgpkit_parser::BgpkitParser;
@@ -17,6 +18,7 @@ pub use crate::database::MonocleDatabase;
 pub use crate::as2org::*;
 pub use crate::msg_store::MsgStore;
 pub use crate::country::CountryLookup;
+pub use crate::rpki::*;
 
 pub fn parser_with_filters(
     file_path: &str,
