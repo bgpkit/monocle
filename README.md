@@ -271,6 +271,72 @@ Example runs:
 ╰──────┴──────────────────────────────────────╯
 ```
 
+### `monocle rpki`: 
+Check RPKI validity for given prefix-ASN pair and provide utility to read ROA and ASPA files from the RPKI archive.
+
+```text
+➜  monocle rpki --help
+RPKI utility module
+
+Usage: monocle rpki <COMMAND>
+
+Commands:
+  roa    parse a RPKI ROA file
+  aspa   parse a RPKI ASPA file
+  check  validate a prefix-asn pair with a RPKI validator
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+```
+
+#### `monocle rpki check`
+
+Check RPKI validity for given prefix-ASN pair. We use RIPE NCC's [routinator instance](https://rpki-validator.ripe.net) as the data source.
+
+```text
+➜  monocle rpki check --help
+validate a prefix-asn pair with a RPKI validator
+
+Usage: monocle rpki check --asn <ASN> --prefix <PREFIX>
+
+Options:
+  -a, --asn <ASN>        
+  -p, --prefix <PREFIX>  
+  -h, --help             Print help
+  -V, --version          Print version
+```
+
+#### `monocle rpki roa`
+Parse a given RPKI ROA file and display the prefix-ASN pairs with max length.
+
+```text
+➜  monocle rpki roa https://spaces.bgpkit.org/parser/bgpkit.roa
+
+| asn    | prefix            | max_len |
+|--------|-------------------|---------|
+| 393949 | 192.67.222.0/24   | 24      |
+| 393949 | 192.195.251.0/24  | 24      |
+| 393949 | 2620:98:4000::/44 | 48      |
+```
+
+#### `monocle rpki aspa`
+
+Parse a given RPKI ASPA file and display the allowed upstreams.
+
+```text
+➜  monocle rpki aspa https://spaces.bgpkit.org/parser/as945.asa
+| asn | allowed_upstream |
+|-----|------------------|
+| 945 | 1299             |
+|     | 6939             |
+|     | 7480             |
+|     | 32097            |
+|     | 50058            |
+|     | 61138            |
+```
 
 ## Built with ❤️ by BGPKIT Team
 

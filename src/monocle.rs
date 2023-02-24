@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use monocle::{As2org, CountryLookup, MonocleConfig, MsgStore, parser_with_filters, SearchResult, SearchResultConcise, SearchType, string_to_time, time_to_table};
+use monocle::{As2org, CountryLookup, MonocleConfig, MsgStore, parser_with_filters, read_aspa, read_roa, rpki_validate, SearchResult, SearchResultConcise, SearchType, string_to_time, time_to_table};
 use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -14,6 +14,7 @@ use anyhow::{anyhow, Result};
 use bgpkit_parser::BgpElem;
 use chrono::DateTime;
 use tabled::{Style, Table};
+use tabled::merge::Merge;
 
 trait Validate{
     fn validate(&self) -> Result<()>;
@@ -261,13 +262,49 @@ enum Commands {
         /// Search query, e.g. "US" or "United States"
         query: String,
     },
+
     /// Time conversion utilities
     Time {
         /// Time stamp or time string to convert
         #[clap()]
         time: Option<String>,
     },
+
+    /// RPKI utility module
+    Rpki {
+        #[clap(subcommand)]
+        commands: RpkiCommands,
+    }
 }
+
+#[derive(Subcommand)]
+enum RpkiCommands {
+    /// parse a RPKI ROA file
+    Roa {
+        /// File path to a ROA file (.roa), local or remote.
+        #[clap(name = "FILE")]
+        file_path: PathBuf,
+
+    },
+
+    /// parse a RPKI ASPA file
+    Aspa {
+        /// File path to a ASPA file (.asa), local or remote.
+        #[clap(name = "FILE")]
+        file_path: PathBuf,
+    },
+
+    /// validate a prefix-asn pair with a RPKI validator
+    Check {
+        #[clap(short, long)]
+        asn: u32,
+
+        #[clap(short, long)]
+        prefix: String
+    }
+}
+
+
 
 fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool) -> String {
     if json {
@@ -564,6 +601,40 @@ fn main() {
             let lookup = CountryLookup::new();
             let res = lookup.lookup(query.as_str());
             println!("{}", Table::new(res).with(Style::rounded()));
+        }
+        Commands::Rpki { commands } => {
+            match commands {
+                RpkiCommands::Roa { file_path } => {
+                    let res = match read_roa(file_path.to_str().unwrap()) {
+                        Ok(r) => {r}
+                        Err(e) => {
+                            eprintln!("unable to read ROA file: {}", e.to_string());
+                            return
+                        }
+                    };
+                    println!("{}", Table::new(res).with(Style::markdown()));
+                }
+                RpkiCommands::Aspa { file_path } => {
+                    let res = match read_aspa(file_path.to_str().unwrap()) {
+                        Ok(r) => {r}
+                        Err(e) => {
+                            eprintln!("unable to read ASPA file: {}", e.to_string());
+                            return
+                        }
+                    };
+                    println!("{}", Table::new(res).with(Style::markdown()).with(Merge::vertical()));
+                }
+                RpkiCommands::Check { asn, prefix } => {
+                    let res = match rpki_validate(asn, prefix.as_str()) {
+                        Ok(r) => {r}
+                        Err(e) => {
+                            eprintln!("unable to read ASPA file: {}", e.to_string());
+                            return
+                        }
+                    };
+                    println!("{}", Table::new(vec![res]).with(Style::markdown()));
+                }
+            }
         }
     }
 }
