@@ -19,8 +19,8 @@ pub fn read_roa(file_path: &str) -> Result<Vec<RoaObject>> {
     let mut reader = oneio::get_reader(file_path)?;
     reader.read_to_end(&mut data)?;
     let roa = Roa::decode(data.as_ref(), true)?;
-    let asn: u32 = roa.content.as_id().into_u32();
-    let objects = roa.content.iter()
+    let asn: u32 = roa.content().as_id().into_u32();
+    let objects = roa.content().iter()
         .map(|addr| {
             let prefix_str = addr.to_string();
             let fields = prefix_str.as_str().split('/').collect::<Vec<&str>>();
@@ -47,8 +47,8 @@ pub fn read_aspa(file_path: &str) -> Result<Vec<AspaObject>> {
     let mut reader = oneio::get_reader(file_path)?;
     reader.read_to_end(&mut data)?;
     let aspa = Aspa::decode(data.as_ref(), true)?;
-    let customer = aspa.content.customer_as().into_u32();
-    let res = aspa.content.provider_as_set().iter()
+    let customer = aspa.content().customer_as().into_u32();
+    let res = aspa.content().provider_as_set().iter()
         .map(|p|
             AspaObject{ asn: customer, allowed_upstream: p.provider().into_u32()}
             ).collect();

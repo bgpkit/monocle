@@ -309,6 +309,19 @@ Options:
   -V, --version          Print version
 ```
 
+```text
+➜  monocle rpki check --asn 400644 --prefix 2620:AA:A000::/48 
+| asn    | prefix            | validity |
+|--------|-------------------|----------|
+| 400644 | 2620:aa:a000::/48 | valid    |
+
+➜  monocle rpki check --asn 400644 --prefix 2620:AA:A000::/49 
+| asn    | prefix            | validity |
+|--------|-------------------|----------|
+| 400644 | 2620:aa:a000::/49 | invalid  |
+
+```
+
 #### `monocle rpki roa`
 Parse a given RPKI ROA file and display the prefix-ASN pairs with max length.
 
