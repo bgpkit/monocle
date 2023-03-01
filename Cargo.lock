@@ -1143,7 +1143,6 @@ dependencies = [
  "oneio 0.7.2",
  "rayon",
  "regex",
- "reqwest",
  "rpki",
  "rusqlite",
  "serde",
@@ -1151,6 +1150,7 @@ dependencies = [
  "tabled",
  "tracing",
  "tracing-subscriber",
+ "ureq",
 ]
 
 [[package]]

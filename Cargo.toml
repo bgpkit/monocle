@@ -34,7 +34,7 @@ tabled = "0.10.0"
 config = {version = "0.13.1", features = ["toml"]}
 dirs = "4"
 rusqlite = { version = "0.28.0", features = ["bundled"] }
-reqwest = {version = "0.11", features = ["blocking"]}
+ureq = "2.6.2"
 regex = "1.6.0"
 oneio = "0.7.2"
 rpki = {version="0.15.10", features = ["repository"]}
