@@ -1611,8 +1611,9 @@ dependencies = [
 
 [[package]]
 name = "rpki"
-version = "0.15.10-dev"
-source = "git+https://github.com/bgpkit/rpki-rs.git?branch=expose-roa-inner#65a9edc5f33cf8dd901f7b4f0a1b65eb34493590"
+version = "0.15.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93cb4a11fa739521d34d6c4213bbf75be8f2ecd438024721870731436d44ab36"
 dependencies = [
  "base64 0.13.1",
  "bcder",
