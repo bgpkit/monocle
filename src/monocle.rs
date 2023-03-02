@@ -290,7 +290,7 @@ enum Commands {
         time: Option<String>,
     },
 
-    /// RPKI utility module
+    /// RPKI utilities
     Rpki {
         #[clap(subcommand)]
         commands: RpkiCommands,

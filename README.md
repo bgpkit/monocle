@@ -9,8 +9,6 @@ See through all BGP data with a monocle.
 
 ![](https://spaces.bgpkit.org/assets/monocle/monocle-emoji.png)
 
-*Still in early prototype phase. You are warned.*
-
 ## Install
 
 ```bash
@@ -23,8 +21,9 @@ Subcommands:
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
 - `whois`: search AS and organization information by ASN or name
-- `time`: utility to convert time between unix timestamp and RFC3339 string
 - `country`: utility to lookup country name and code
+- `time`: utility to convert time between unix timestamp and RFC3339 string
+- `rpki`: check RPKI validation for given ASNs or prefixes
 
 Top-level help menu:
 ```text
@@ -40,6 +39,7 @@ Commands:
   whois    ASN and organization lookup utility
   country  ASN and organization lookup utility
   time     Time conversion utilities
+  rpki     RPKI utilities
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -55,7 +55,6 @@ Parsing single MRT file given a local path or a remote URL.
 
 ```text
 ➜  monocle git:(main) ✗ monocle parse --help
-monocle-parse 0.0.1
 Parse individual MRT files given a file path, local or remote
 
 USAGE:
@@ -274,22 +273,21 @@ Example runs:
 ### `monocle rpki`: 
 Check RPKI validity for given prefix-ASN pair and provide utility to read ROA and ASPA files from the RPKI archive.
 
+We use [Cloudflare RPKI validator](https://rpki.cloudflare.com) as our data source.
+
 ```text
 ➜  monocle rpki --help
-RPKI utility module
+RPKI utilities
 
 Usage: monocle rpki <COMMAND>
 
 Commands:
-  roa    parse a RPKI ROA file
-  aspa   parse a RPKI ASPA file
-  check  validate a prefix-asn pair with a RPKI validator
-  help   Print this message or the help of the given subcommand(s)
-
-Options:
-  -h, --help     Print help
-  -V, --version  Print version
-
+  read-roa   parse a RPKI ROA file
+  read-aspa  parse a RPKI ASPA file
+  check      validate a prefix-asn pair with a RPKI validator
+  list       list ROAs by ASN or prefix
+  summary    summarize RPKI status for a list of given ASNs
+  help       Print this message or the help of the given subcommand(s)
 ```
 
 #### `monocle rpki check`
@@ -311,14 +309,26 @@ Options:
 
 ```text
 ➜  monocle rpki check --asn 400644 --prefix 2620:AA:A000::/48 
+RPKI validation result:
 | asn    | prefix            | validity |
 |--------|-------------------|----------|
 | 400644 | 2620:aa:a000::/48 | valid    |
 
+Covering prefixes:
+| asn    | prefix            | max_length |
+|--------|-------------------|------------|
+| 400644 | 2620:aa:a000::/48 | 48         |
+
 ➜  monocle rpki check --asn 400644 --prefix 2620:AA:A000::/49 
+RPKI validation result:
 | asn    | prefix            | validity |
 |--------|-------------------|----------|
 | 400644 | 2620:aa:a000::/49 | invalid  |
+
+Covering prefixes:
+| asn    | prefix            | max_length |
+|--------|-------------------|------------|
+| 400644 | 2620:aa:a000::/48 | 48         |
 
 ```
 
@@ -326,7 +336,7 @@ Options:
 Parse a given RPKI ROA file and display the prefix-ASN pairs with max length.
 
 ```text
-➜  monocle rpki roa https://spaces.bgpkit.org/parser/bgpkit.roa
+➜  monocle rpki read-roa https://spaces.bgpkit.org/parser/bgpkit.roa
 
 | asn    | prefix            | max_len |
 |--------|-------------------|---------|
@@ -340,7 +350,7 @@ Parse a given RPKI ROA file and display the prefix-ASN pairs with max length.
 Parse a given RPKI ASPA file and display the allowed upstreams.
 
 ```text
-➜  monocle rpki aspa https://spaces.bgpkit.org/parser/as945.asa
+➜  monocle rpki read-aspa https://spaces.bgpkit.org/parser/as945.asa
 | asn | allowed_upstream |
 |-----|------------------|
 | 945 | 1299             |
@@ -350,6 +360,48 @@ Parse a given RPKI ASPA file and display the allowed upstreams.
 |     | 50058            |
 |     | 61138            |
 ```
+
+#### `monocle rpki list`
+
+List signed ROAs for a given ASN or prefix.
+
+```text
+➜ monocle rpki list 13335
+| asn   | prefix              | max_length |
+|-------|---------------------|------------|
+| 13335 | 197.234.240.0/22    | 22         |
+| 13335 | 197.234.240.0/24    | 24         |
+| 13335 | 197.234.241.0/24    | 24         |
+| 13335 | 197.234.242.0/24    | 24         |
+| 13335 | 197.234.243.0/24    | 24         |
+| 13335 | 2c0f:f248::/32      | 32         |
+| 13335 | 210.17.44.0/24      | 24         |
+| 13335 | 103.22.200.0/23     | 23         |
+...
+```
+
+```text
+➜ monocle rpki list 1.1.1.0/24
+| asn   | prefix     | max_length |
+|-------|------------|------------|
+| 13335 | 1.1.1.0/24 | 24         |
+```
+
+#### `monocle rpki summary`
+
+
+Summarize RPKI status for a list of given ASNs.
+
+```text
+➜ rpki summary 701 13335 15169 400644                 
+| asn    | signed | routed_valid | routed_invalid | routed_unknown |
+|--------|--------|--------------|----------------|----------------|
+| 701    | 956    | 890          | 35             | 361            |
+| 13335  | 1184   | 1000         | 4              | 221            |
+| 15169  | 1372   | 989          | 0              | 5              |
+| 400644 | 1      | 0            | 0              | 0              |
+```
+**NOTE**: due to Cloudflare API's current limitation, the maximum number of entries per `routed_` category is `1000`.
 
 ## Built with ❤️ by BGPKIT Team
 
