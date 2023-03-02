@@ -686,7 +686,7 @@ fn main() {
                 let res = match read_roa(file_path.to_str().unwrap()) {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("unable to read ROA file: {}", e.to_string());
+                        eprintln!("unable to read ROA file: {}", e);
                         return;
                     }
                 };
@@ -696,7 +696,7 @@ fn main() {
                 let res = match read_aspa(file_path.to_str().unwrap()) {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("unable to read ASPA file: {}", e.to_string());
+                        eprintln!("unable to read ASPA file: {}", e);
                         return;
                     }
                 };
@@ -711,13 +711,13 @@ fn main() {
                 let (validity, roas) = match validate(asn, prefix.as_str()) {
                     Ok((v1, v2)) => (v1, v2),
                     Err(e) => {
-                        eprintln!("unable to check RPKI validity: {}", e.to_string());
+                        eprintln!("unable to check RPKI validity: {}", e);
                         return;
                     }
                 };
                 println!("RPKI validation result:");
                 println!("{}", Table::new(vec![validity]).with(Style::markdown()));
-                println!("");
+                println!();
                 println!("Covering prefixes:");
                 println!(
                     "{}",
