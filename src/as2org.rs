@@ -414,7 +414,7 @@ impl As2org {
 
     pub fn get_most_recent_data() -> String {
         let data_link: Regex = Regex::new(r#".*(........\.as-org2info\.jsonl\.gz).*"#).unwrap();
-        let content = reqwest::blocking::get("https://publicdata.caida.org/datasets/as-organizations/").unwrap().text().unwrap();
+        let content = ureq::get("https://publicdata.caida.org/datasets/as-organizations/").call().unwrap().into_string().unwrap();
         let res: Vec<String> = data_link.captures_iter(content.as_str()).map(|cap| {
             cap[1].to_owned()
         }).collect();
