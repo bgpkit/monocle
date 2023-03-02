@@ -1,22 +1,30 @@
-use clap::{Args, Parser, Subcommand};
-use serde_json::json;
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
-
-use monocle::{As2org, CountryLookup, MonocleConfig, MsgStore, parser_with_filters, read_aspa, read_roa, rpki_validate, SearchResult, SearchResultConcise, SearchType, string_to_time, time_to_table};
-use rayon::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
-use tracing::{info, Level};
 
 use anyhow::{anyhow, Result};
 use bgpkit_parser::BgpElem;
 use chrono::DateTime;
-use tabled::{Style, Table};
+use clap::{Args, Parser, Subcommand};
+use ipnetwork::IpNetwork;
+use rayon::prelude::*;
+use serde_json::json;
 use tabled::merge::Merge;
+use tabled::{Style, Table};
+use tracing::{info, Level};
 
-trait Validate{
+use monocle::rpki::{
+    list_by_asn, list_by_prefix, read_aspa, read_roa, summarize_asn, validate, RoaTableItem,
+    SummaryTableItem,
+};
+use monocle::{
+    parser_with_filters, string_to_time, time_to_table, As2org, CountryLookup, MonocleConfig,
+    MsgStore, SearchResult, SearchResultConcise, SearchType,
+};
+
+trait Validate {
     fn validate(&self) -> Result<()>;
 }
 
@@ -84,7 +92,6 @@ struct SearchFilters {
     /*
     REQUIRED ARGUMENTS
      */
-
     /// Filter by start unix timestamp inclusive
     #[clap(short = 't', long)]
     start_ts: String,
@@ -96,7 +103,6 @@ struct SearchFilters {
     /*
     OPTIONAL ARGUMENTS
      */
-
     /// Filter by collector, e.g. rrc00 or route-views2
     #[clap(short = 'c', long)]
     collector: Option<String>,
@@ -141,15 +147,19 @@ struct SearchFilters {
 impl Validate for ParseFilters {
     fn validate(&self) -> Result<()> {
         if let Some(ts) = &self.start_ts {
-            if ! (ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()){
+            if !(ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()) {
                 // not a number or a rfc3339 string
-                return Err(anyhow!("start-ts must be either a unix-timestamp or a RFC3339-compliant string"))
+                return Err(anyhow!(
+                    "start-ts must be either a unix-timestamp or a RFC3339-compliant string"
+                ));
             }
         }
         if let Some(ts) = &self.end_ts {
-            if ! (ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()){
+            if !(ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()) {
                 // not a number or a rfc3339 string
-                return Err(anyhow!("end-ts must be either a unix-timestamp or a RFC3339-compliant string"))
+                return Err(anyhow!(
+                    "end-ts must be either a unix-timestamp or a RFC3339-compliant string"
+                ));
             }
         }
 
@@ -159,13 +169,23 @@ impl Validate for ParseFilters {
 
 impl Validate for SearchFilters {
     fn validate(&self) -> Result<()> {
-        if ! (self.start_ts.as_str().parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(self.start_ts.as_str()).is_ok()){
+        if !(self.start_ts.as_str().parse::<f64>().is_ok()
+            || DateTime::parse_from_rfc3339(self.start_ts.as_str()).is_ok())
+        {
             // not a number or a rfc3339 string
-            return Err(anyhow!("start-ts must be either a unix-timestamp or a RFC3339-compliant string: {}", self.start_ts))
+            return Err(anyhow!(
+                "start-ts must be either a unix-timestamp or a RFC3339-compliant string: {}",
+                self.start_ts
+            ));
         }
-        if ! (self.end_ts.as_str().parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(self.end_ts.as_str()).is_ok()){
+        if !(self.end_ts.as_str().parse::<f64>().is_ok()
+            || DateTime::parse_from_rfc3339(self.end_ts.as_str()).is_ok())
+        {
             // not a number or a rfc3339 string
-            return Err(anyhow!("end-ts must be either a unix-timestamp or a RFC3339-compliant string: {}", self.end_ts))
+            return Err(anyhow!(
+                "end-ts must be either a unix-timestamp or a RFC3339-compliant string: {}",
+                self.end_ts
+            ));
         }
 
         Ok(())
@@ -233,7 +253,7 @@ enum Commands {
         asn_only: bool,
 
         /// Search by country only
-        #[clap(short='C', long)]
+        #[clap(short = 'C', long)]
         country_only: bool,
 
         /// Refresh local as2org database
@@ -245,11 +265,11 @@ enum Commands {
         pretty: bool,
 
         /// Display full table (with ord_id, org_size)
-        #[clap(short='F', long)]
+        #[clap(short = 'F', long)]
         full_table: bool,
 
         /// Export to pipe-separated values
-        #[clap(short='P', long)]
+        #[clap(short = 'P', long)]
         psv: bool,
 
         /// Show full country names instead of 2-letter code
@@ -274,21 +294,20 @@ enum Commands {
     Rpki {
         #[clap(subcommand)]
         commands: RpkiCommands,
-    }
+    },
 }
 
 #[derive(Subcommand)]
 enum RpkiCommands {
     /// parse a RPKI ROA file
-    Roa {
+    ReadRoa {
         /// File path to a ROA file (.roa), local or remote.
         #[clap(name = "FILE")]
         file_path: PathBuf,
-
     },
 
     /// parse a RPKI ASPA file
-    Aspa {
+    ReadAspa {
         /// File path to a ASPA file (.asa), local or remote.
         #[clap(name = "FILE")]
         file_path: PathBuf,
@@ -300,11 +319,22 @@ enum RpkiCommands {
         asn: u32,
 
         #[clap(short, long)]
-        prefix: String
-    }
+        prefix: String,
+    },
+
+    /// list ROAs by ASN or prefix
+    List {
+        /// prefix or ASN
+        #[clap()]
+        resource: String,
+    },
+
+    /// summarize RPKI status for a list of given ASNs
+    Summary {
+        #[clap()]
+        asns: Vec<u32>,
+    },
 }
-
-
 
 fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool) -> String {
     if json {
@@ -331,7 +361,6 @@ fn main() {
             .init();
     }
 
-
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
     match cli.command {
@@ -343,7 +372,7 @@ fn main() {
         } => {
             if let Err(e) = filters.validate() {
                 eprintln!("{e}");
-                return
+                return;
             }
 
             let parser = parser_with_filters(
@@ -358,7 +387,8 @@ fn main() {
                 &filters.start_ts.clone(),
                 &filters.end_ts.clone(),
                 &filters.as_path,
-            ).unwrap();
+            )
+            .unwrap();
 
             let mut stdout = std::io::stdout();
             for elem in parser {
@@ -370,11 +400,18 @@ fn main() {
                     std::process::exit(1);
                 }
             }
-        },
-        Commands::Search { dry_run, json, pretty, sqlite_path, sqlite_reset, filters } => {
+        }
+        Commands::Search {
+            dry_run,
+            json,
+            pretty,
+            sqlite_path,
+            sqlite_reset,
+            filters,
+        } => {
             if let Err(e) = filters.validate() {
                 eprintln!("{e}");
-                return
+                return;
             }
 
             let mut show_progress = false;
@@ -385,10 +422,12 @@ fn main() {
                     sqlite_path_str = path.to_str().unwrap().to_string();
                     Some(MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset))
                 }
-                None => {None}
+                None => None,
             };
 
-            let ts_start = string_to_time(filters.start_ts.as_str()).unwrap().to_string();
+            let ts_start = string_to_time(filters.start_ts.as_str())
+                .unwrap()
+                .to_string();
             let ts_end = string_to_time(filters.end_ts.as_str()).unwrap().to_string();
 
             let mut broker = bgpkit_broker::BgpkitBroker::new()
@@ -399,28 +438,42 @@ fn main() {
 
             if let Some(project) = filters.project {
                 broker = broker.project(project.as_str());
-
             }
             if let Some(collector) = filters.collector {
                 broker = broker.collector_id(collector.as_str());
             }
 
-
-
-            let items = broker.query(
-            ).expect("broker query error: please check filters are valid");
+            let items = broker
+                .query()
+                .expect("broker query error: please check filters are valid");
 
             let total_items = items.len();
 
-            let total_size: i64 = items.iter().map(|x|{
-                info!("{},{},{}", x.collector_id.as_str(), x.url.as_str(), x.rough_size);
-                x.rough_size
-            }).sum::<i64>();
-            info!("total of {} files, {} bytes to parse", items.len(), total_size);
+            let total_size: i64 = items
+                .iter()
+                .map(|x| {
+                    info!(
+                        "{},{},{}",
+                        x.collector_id.as_str(),
+                        x.url.as_str(),
+                        x.rough_size
+                    );
+                    x.rough_size
+                })
+                .sum::<i64>();
+            info!(
+                "total of {} files, {} bytes to parse",
+                items.len(),
+                total_size
+            );
 
             if dry_run {
-                println!("total of {} files, {} bytes to parse", items.len(), total_size);
-                return
+                println!(
+                    "total of {} files, {} bytes to parse",
+                    items.len(),
+                    total_size
+                );
+                return;
             }
 
             let (sender, receiver): (Sender<BgpElem>, Receiver<BgpElem>) = channel();
@@ -428,30 +481,28 @@ fn main() {
             let (pb_sender, pb_receiver): (Sender<u8>, Receiver<u8>) = channel();
 
             // dedicated thread for handling output of results
-            let writer_thread = thread::spawn(move || {
-                match sqlite_db {
-                    Some(db) => {
-                        let mut msg_cache = vec![];
-                        let mut msg_count = 0;
-                        for elem in receiver {
-                            msg_count += 1;
-                            msg_cache.push(elem);
-                            if msg_cache.len()>=500 {
-                                db.insert_elems(&msg_cache);
-                                msg_cache.clear();
-                            }
-                        }
-                        if !msg_cache.is_empty() {
+            let writer_thread = thread::spawn(move || match sqlite_db {
+                Some(db) => {
+                    let mut msg_cache = vec![];
+                    let mut msg_count = 0;
+                    for elem in receiver {
+                        msg_count += 1;
+                        msg_cache.push(elem);
+                        if msg_cache.len() >= 500 {
                             db.insert_elems(&msg_cache);
+                            msg_cache.clear();
                         }
-
-                        println!("processed {total_items} files, found {msg_count} messages, written into file {sqlite_path_str}");
                     }
-                    None => {
-                        for elem in receiver {
-                            let output_str = elem_to_string(&elem, json, pretty);
-                            println!("{output_str}");
-                        }
+                    if !msg_cache.is_empty() {
+                        db.insert_elems(&msg_cache);
+                    }
+
+                    println!("processed {total_items} files, found {msg_count} messages, written into file {sqlite_path_str}");
+                }
+                None => {
+                    for elem in receiver {
+                        let output_str = elem_to_string(&elem, json, pretty);
+                        println!("{output_str}");
                     }
                 }
             });
@@ -459,12 +510,14 @@ fn main() {
             // dedicated thread for progress bar
             let progress_thread = thread::spawn(move || {
                 if !show_progress {
-                    return
+                    return;
                 }
 
-                let sty = indicatif::ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta}")
-                    .unwrap()
-                    .progress_chars("##-");
+                let sty = indicatif::ProgressStyle::with_template(
+                    "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta}",
+                )
+                .unwrap()
+                .progress_chars("##-");
                 let pb = indicatif::ProgressBar::new(total_items as u64);
                 pb.set_style(sty);
                 for _ in pb_receiver.iter() {
@@ -472,43 +525,58 @@ fn main() {
                 }
             });
 
-            let urls = items.iter().map(|x| x.url.to_string()).collect::<Vec<String>>();
+            let urls = items
+                .iter()
+                .map(|x| x.url.to_string())
+                .collect::<Vec<String>>();
 
-            urls.into_par_iter().for_each_with((sender, pb_sender), |(s, pb_sender), url| {
-                info!("start parsing {}", url.as_str());
-                let parser = parser_with_filters(
-                    url.as_str(),
-                    &filters.origin_asn,
-                    &filters.prefix,
-                    &filters.include_super,
-                    &filters.include_sub,
-                    &filters.peer_ip,
-                    &filters.peer_asn,
-                    &filters.elem_type,
-                    &Some(filters.start_ts.clone()),
-                    &Some(filters.end_ts.clone()),
-                    &filters.as_path,
-                ).unwrap();
+            urls.into_par_iter()
+                .for_each_with((sender, pb_sender), |(s, pb_sender), url| {
+                    info!("start parsing {}", url.as_str());
+                    let parser = parser_with_filters(
+                        url.as_str(),
+                        &filters.origin_asn,
+                        &filters.prefix,
+                        &filters.include_super,
+                        &filters.include_sub,
+                        &filters.peer_ip,
+                        &filters.peer_asn,
+                        &filters.elem_type,
+                        &Some(filters.start_ts.clone()),
+                        &Some(filters.end_ts.clone()),
+                        &filters.as_path,
+                    )
+                    .unwrap();
 
-                for elem in parser {
-                    s.send(elem).unwrap()
-                }
+                    for elem in parser {
+                        s.send(elem).unwrap()
+                    }
 
-                if show_progress{
-                    pb_sender.send(0).unwrap();
-                }
-                info!("finished parsing {}", url.as_str());
-            });
+                    if show_progress {
+                        pb_sender.send(0).unwrap();
+                    }
+                    info!("finished parsing {}", url.as_str());
+                });
 
             // wait for the output thread to stop
             writer_thread.join().unwrap();
             progress_thread.join().unwrap();
         }
-        Commands::Whois { query, name_only, asn_only ,update, pretty, full_table, full_country, country_only, psv} => {
+        Commands::Whois {
+            query,
+            name_only,
+            asn_only,
+            update,
+            pretty,
+            full_table,
+            full_country,
+            country_only,
+            psv,
+        } => {
             let data_dir = config.data_dir.as_str();
             let as2org = As2org::new(&Some(format!("{data_dir}/monocle-data.sqlite3"))).unwrap();
 
-            if update{
+            if update {
                 // if update flag is set, clear existing as2org data and re-download later
                 as2org.clear_db();
             }
@@ -520,18 +588,12 @@ fn main() {
             }
 
             let mut search_type: SearchType = match (name_only, asn_only) {
-                (true, false) => {
-                    SearchType::NameOnly
-                }
-                (false, true) => {
-                    SearchType::AsnOnly
-                }
-                (false, false) => {
-                    SearchType::Guess
-                }
+                (true, false) => SearchType::NameOnly,
+                (false, true) => SearchType::AsnOnly,
+                (false, false) => SearchType::Guess,
                 (true, true) => {
                     eprintln!("name-only and asn-only cannot be both true");
-                    return
+                    return;
                 }
             };
 
@@ -539,24 +601,35 @@ fn main() {
                 search_type = SearchType::CountryOnly;
             }
 
-            let mut res = query.into_iter().flat_map(|q| {
-                as2org.search(q.as_str(), &search_type, full_country).unwrap()
-            }).collect::<Vec<SearchResult>>();
+            let mut res = query
+                .into_iter()
+                .flat_map(|q| {
+                    as2org
+                        .search(q.as_str(), &search_type, full_country)
+                        .unwrap()
+                })
+                .collect::<Vec<SearchResult>>();
 
             // order search results by AS number
             res.sort_by_key(|v| v.asn);
 
             match full_table {
                 false => {
-                    let res_concise = res.into_iter().map(|x: SearchResult|{
-                        SearchResultConcise { asn: x.asn, as_name: x.as_name, org_name: x.org_name, org_country: x.org_country }
+                    let res_concise = res.into_iter().map(|x: SearchResult| SearchResultConcise {
+                        asn: x.asn,
+                        as_name: x.as_name,
+                        org_name: x.org_name,
+                        org_country: x.org_country,
                     });
                     if psv {
                         println!("asn|asn_name|org_name|org_country");
                         for res in res_concise {
-                            println!("{}|{}|{}|{}", res.asn, res.as_name, res.org_name, res.org_country);
+                            println!(
+                                "{}|{}|{}|{}",
+                                res.asn, res.as_name, res.org_name, res.org_country
+                            );
                         }
-                        return
+                        return;
                     }
 
                     match pretty {
@@ -567,14 +640,22 @@ fn main() {
                             println!("{}", Table::new(res_concise).with(Style::markdown()));
                         }
                     };
-                },
+                }
                 true => {
                     if psv {
                         println!("asn|asn_name|org_name|org_id|org_country|org_size");
                         for entry in res {
-                            format!("{}|{}|{}|{}|{}|{}", entry.asn, entry.as_name, entry.org_name, entry.org_id, entry.org_country, entry.org_size);
+                            format!(
+                                "{}|{}|{}|{}|{}|{}",
+                                entry.asn,
+                                entry.as_name,
+                                entry.org_name,
+                                entry.org_id,
+                                entry.org_country,
+                                entry.org_size
+                            );
                         }
-                        return
+                        return;
                     }
                     match pretty {
                         true => {
@@ -587,54 +668,97 @@ fn main() {
                 }
             }
         }
-        Commands::Time { time} => {
-            match time_to_table(&time) {
-                Ok(t) => {
-                    println!("{t}")
-                }
-                Err(e) => {
-                    eprintln!("{e}")
-                }
+        Commands::Time { time } => match time_to_table(&time) {
+            Ok(t) => {
+                println!("{t}")
             }
-        }
-        Commands::Country {query} => {
+            Err(e) => {
+                eprintln!("{e}")
+            }
+        },
+        Commands::Country { query } => {
             let lookup = CountryLookup::new();
             let res = lookup.lookup(query.as_str());
             println!("{}", Table::new(res).with(Style::rounded()));
         }
-        Commands::Rpki { commands } => {
-            match commands {
-                RpkiCommands::Roa { file_path } => {
-                    let res = match read_roa(file_path.to_str().unwrap()) {
-                        Ok(r) => {r}
-                        Err(e) => {
-                            eprintln!("unable to read ROA file: {}", e.to_string());
-                            return
+        Commands::Rpki { commands } => match commands {
+            RpkiCommands::ReadRoa { file_path } => {
+                let res = match read_roa(file_path.to_str().unwrap()) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("unable to read ROA file: {}", e.to_string());
+                        return;
+                    }
+                };
+                println!("{}", Table::new(res).with(Style::markdown()));
+            }
+            RpkiCommands::ReadAspa { file_path } => {
+                let res = match read_aspa(file_path.to_str().unwrap()) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("unable to read ASPA file: {}", e.to_string());
+                        return;
+                    }
+                };
+                println!(
+                    "{}",
+                    Table::new(res)
+                        .with(Style::markdown())
+                        .with(Merge::vertical())
+                );
+            }
+            RpkiCommands::Check { asn, prefix } => {
+                let (validity, roas) = match validate(asn, prefix.as_str()) {
+                    Ok((v1, v2)) => (v1, v2),
+                    Err(e) => {
+                        eprintln!("unable to check RPKI validity: {}", e.to_string());
+                        return;
+                    }
+                };
+                println!("RPKI validation result:");
+                println!("{}", Table::new(vec![validity]).with(Style::markdown()));
+                println!("");
+                println!("Covering prefixes:");
+                println!(
+                    "{}",
+                    Table::new(
+                        roas.into_iter()
+                            .map(RoaTableItem::from)
+                            .collect::<Vec<RoaTableItem>>()
+                    )
+                    .with(Style::markdown())
+                );
+            }
+            RpkiCommands::List { resource } => {
+                let resources = match resource.parse::<u32>() {
+                    Ok(asn) => list_by_asn(asn).unwrap(),
+                    Err(_) => match resource.parse::<IpNetwork>() {
+                        Ok(prefix) => list_by_prefix(&prefix).unwrap(),
+                        Err(_) => {
+                            eprintln!("list resource not an AS number or a prefix: {}", resource);
+                            return;
                         }
-                    };
-                    println!("{}", Table::new(res).with(Style::markdown()));
-                }
-                RpkiCommands::Aspa { file_path } => {
-                    let res = match read_aspa(file_path.to_str().unwrap()) {
-                        Ok(r) => {r}
-                        Err(e) => {
-                            eprintln!("unable to read ASPA file: {}", e.to_string());
-                            return
-                        }
-                    };
-                    println!("{}", Table::new(res).with(Style::markdown()).with(Merge::vertical()));
-                }
-                RpkiCommands::Check { asn, prefix } => {
-                    let res = match rpki_validate(asn, prefix.as_str()) {
-                        Ok(r) => {r}
-                        Err(e) => {
-                            eprintln!("unable to read ASPA file: {}", e.to_string());
-                            return
-                        }
-                    };
-                    println!("{}", Table::new(vec![res]).with(Style::markdown()));
+                    },
+                };
+
+                let roas: Vec<RoaTableItem> = resources
+                    .into_iter()
+                    .flat_map(Into::<Vec<RoaTableItem>>::into)
+                    .collect();
+                if roas.is_empty() {
+                    println!("no matching ROAS found for {}", resource);
+                } else {
+                    println!("{}", Table::new(roas).with(Style::markdown()));
                 }
             }
-        }
+            RpkiCommands::Summary { asns } => {
+                let res: Vec<SummaryTableItem> = asns
+                    .into_iter()
+                    .map(|v| summarize_asn(v).unwrap())
+                    .collect();
+
+                println!("{}", Table::new(res).with(Style::markdown()));
+            }
+        },
     }
 }
