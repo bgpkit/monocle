@@ -10,6 +10,7 @@ use bgpkit_parser::BgpkitParser;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use chrono_humanize::HumanTime;
 use itertools::Itertools;
+use std::io::Read;
 use std::net::IpAddr;
 use tabled::{Style, Table, Tabled};
 
@@ -19,6 +20,7 @@ pub use crate::country::CountryLookup;
 pub use crate::database::MonocleDatabase;
 pub use crate::msg_store::MsgStore;
 
+#[allow(clippy::too_many_arguments)]
 pub fn parser_with_filters(
     file_path: &str,
     origin_asn: &Option<u32>,
@@ -31,7 +33,7 @@ pub fn parser_with_filters(
     start_ts: &Option<String>,
     end_ts: &Option<String>,
     as_path: &Option<String>,
-) -> Result<BgpkitParser> {
+) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
     let mut parser = BgpkitParser::new(file_path).unwrap().disable_warnings();
 
     if let Some(v) = as_path {

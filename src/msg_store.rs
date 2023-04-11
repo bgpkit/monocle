@@ -1,15 +1,16 @@
+use crate::MonocleDatabase;
+use bgpkit_parser::models::{ElemType, MetaCommunity};
 use bgpkit_parser::BgpElem;
 use itertools::Itertools;
-use crate::MonocleDatabase;
 
-macro_rules! option_to_string{
+macro_rules! option_to_string {
     ($a:expr) => {
         if let Some(v) = $a {
             v.to_string()
         } else {
             String::new()
         }
-    }
+    };
 }
 
 pub struct MsgStore {
@@ -20,11 +21,13 @@ impl MsgStore {
     pub fn new(db_path: &Option<String>, reset: bool) -> MsgStore {
         let mut db = MonocleDatabase::new(db_path).unwrap();
         Self::initialize_msgs_db(&mut db, reset);
-        MsgStore{db}
+        MsgStore { db }
     }
 
     fn initialize_msgs_db(db: &mut MonocleDatabase, reset: bool) {
-        db.conn.execute(r#"
+        db.conn
+            .execute(
+                r#"
         create table if not exists elems (
             timestamp INTEGER,
             elem_type TEXT,
@@ -42,7 +45,10 @@ impl MsgStore {
             aggr_asn INTEGER,
             aggr_ip TEXT
         );
-        "#,[]).unwrap();
+        "#,
+                [],
+            )
+            .unwrap();
 
         if reset {
             db.conn.execute("delete from elems", []).unwrap();
@@ -50,24 +56,27 @@ impl MsgStore {
     }
 
     #[inline(always)]
-    fn option_to_string_communities(o: &Option<Vec<bgpkit_parser::MetaCommunity>>) -> String {
+    fn option_to_string_communities(o: &Option<Vec<MetaCommunity>>) -> String {
         if let Some(v) = o {
-            v.iter()
-                .join(" ")
+            v.iter().join(" ")
         } else {
             String::new()
         }
     }
 
     pub fn insert_elems(&self, elems: &[BgpElem]) {
-        for elems in elems.chunks(100){
-            let values = elems.iter().map(|elem|{
-                let t = match elem.elem_type {
-                    bgpkit_parser::ElemType::ANNOUNCE => "A",
-                    bgpkit_parser::ElemType::WITHDRAW => "W",
-                };
-                let origin_string = elem.origin_asns.as_ref().map(|asns| asns.get(0).unwrap());
-                format!(
+        for elems in elems.chunks(100) {
+            let values = elems
+                .iter()
+                .map(|elem| {
+                    let t = match elem.elem_type {
+                        // bgpkit_parser::ElemType::ANNOUNCE => "A",
+                        // bgpkit_parser::ElemType::WITHDRAW => "W",
+                        ElemType::ANNOUNCE => "A",
+                        ElemType::WITHDRAW => "W",
+                    };
+                    let origin_string = elem.origin_asns.as_ref().map(|asns| asns.get(0).unwrap());
+                    format!(
                     "('{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}')",
                     elem.timestamp as u32,
                     t,
@@ -85,7 +94,9 @@ impl MsgStore {
                     option_to_string!(&elem.aggr_asn),
                     option_to_string!(&elem.aggr_ip),
                 )
-            }).join(", ").to_string();
+                })
+                .join(", ")
+                .to_string();
             let query = format!(
                 "INSERT INTO elems (\
             timestamp, elem_type, peer_ip, peer_asn, prefix, next_hop, \
@@ -100,8 +111,8 @@ impl MsgStore {
 
 #[cfg(test)]
 mod tests {
-    use bgpkit_parser::BgpkitParser;
     use super::*;
+    use bgpkit_parser::BgpkitParser;
 
     #[test]
     fn test_insert() {
