@@ -11,8 +11,8 @@ use clap::{Args, Parser, Subcommand};
 use ipnetwork::IpNetwork;
 use rayon::prelude::*;
 use serde_json::json;
-use tabled::merge::Merge;
-use tabled::{Style, Table};
+use tabled::settings::{Merge, Style};
+use tabled::Table;
 use tracing::{info, Level};
 
 use monocle::rpki::{
@@ -311,6 +311,9 @@ enum RpkiCommands {
         /// File path to a ASPA file (.asa), local or remote.
         #[clap(name = "FILE")]
         file_path: PathBuf,
+
+        #[clap(long)]
+        no_merge_dups: bool,
     },
 
     /// validate a prefix-asn pair with a RPKI validator
@@ -692,7 +695,10 @@ fn main() {
                 };
                 println!("{}", Table::new(res).with(Style::markdown()));
             }
-            RpkiCommands::ReadAspa { file_path } => {
+            RpkiCommands::ReadAspa {
+                file_path,
+                no_merge_dups,
+            } => {
                 let res = match read_aspa(file_path.to_str().unwrap()) {
                     Ok(r) => r,
                     Err(e) => {
@@ -700,12 +706,15 @@ fn main() {
                         return;
                     }
                 };
-                println!(
-                    "{}",
-                    Table::new(res)
-                        .with(Style::markdown())
-                        .with(Merge::vertical())
-                );
+                match no_merge_dups {
+                    true => println!("{}", Table::new(res).with(Style::markdown())),
+                    false => println!(
+                        "{}",
+                        Table::new(res)
+                            .with(Style::markdown())
+                            .with(Merge::vertical())
+                    ),
+                };
             }
             RpkiCommands::Check { asn, prefix } => {
                 let (validity, roas) = match validate(asn, prefix.as_str()) {
