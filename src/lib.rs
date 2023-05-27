@@ -12,7 +12,8 @@ use chrono_humanize::HumanTime;
 use itertools::Itertools;
 use std::io::Read;
 use std::net::IpAddr;
-use tabled::{Style, Table, Tabled};
+use tabled::settings::Style;
+use tabled::{Table, Tabled};
 
 pub use crate::as2org::*;
 pub use crate::config::MonocleConfig;
