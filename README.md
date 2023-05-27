@@ -332,7 +332,7 @@ Covering prefixes:
 
 ```
 
-#### `monocle rpki roa`
+#### `monocle rpki read-roa`
 Parse a given RPKI ROA file and display the prefix-ASN pairs with max length.
 
 ```text
@@ -345,20 +345,20 @@ Parse a given RPKI ROA file and display the prefix-ASN pairs with max length.
 | 393949 | 2620:98:4000::/44 | 48      |
 ```
 
-#### `monocle rpki aspa`
+#### `monocle rpki read-aspa`
 
 Parse a given RPKI ASPA file and display the allowed upstreams.
 
 ```text
 ➜  monocle rpki read-aspa https://spaces.bgpkit.org/parser/as945.asa
-| asn | allowed_upstream |
-|-----|------------------|
-| 945 | 1299             |
-|     | 6939             |
-|     | 7480             |
-|     | 32097            |
-|     | 50058            |
-|     | 61138            |
+| asn | afi_limit | allowed_upstream |
+|-----|-----------|------------------|
+| 945 | none      | 1299             |
+|     |           | 6939             |
+|     |           | 7480             |
+|     |           | 32097            |
+|     |           | 50058            |
+|     |           | 61138            |
 ```
 
 #### `monocle rpki list`
