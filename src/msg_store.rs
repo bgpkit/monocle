@@ -65,7 +65,7 @@ impl MsgStore {
     }
 
     pub fn insert_elems(&self, elems: &[BgpElem]) {
-        for elems in elems.chunks(100) {
+        for elems in elems.chunks(10000) {
             let values = elems
                 .iter()
                 .map(|elem| {
