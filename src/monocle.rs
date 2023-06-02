@@ -491,7 +491,7 @@ fn main() {
                     for elem in receiver {
                         msg_count += 1;
                         msg_cache.push(elem);
-                        if msg_cache.len() >= 500 {
+                        if msg_cache.len() >= 100000 {
                             db.insert_elems(&msg_cache);
                             msg_cache.clear();
                         }
