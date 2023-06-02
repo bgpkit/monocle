@@ -6,9 +6,9 @@ use itertools::Itertools;
 macro_rules! option_to_string {
     ($a:expr) => {
         if let Some(v) = $a {
-            v.to_string()
+            format!("'{}'", v)
         } else {
-            String::new()
+            "NULL".to_string()
         }
     };
 }
@@ -58,9 +58,9 @@ impl MsgStore {
     #[inline(always)]
     fn option_to_string_communities(o: &Option<Vec<MetaCommunity>>) -> String {
         if let Some(v) = o {
-            v.iter().join(" ")
+            format!("'{}'", v.iter().join(" "))
         } else {
-            String::new()
+            "NULL".to_string()
         }
     }
 
@@ -77,23 +77,23 @@ impl MsgStore {
                     };
                     let origin_string = elem.origin_asns.as_ref().map(|asns| asns.get(0).unwrap());
                     format!(
-                    "('{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}','{}')",
-                    elem.timestamp as u32,
-                    t,
-                    elem.peer_ip,
-                    elem.peer_asn,
-                    elem.prefix,
-                    option_to_string!(&elem.next_hop),
-                    option_to_string!(&elem.as_path),
-                    option_to_string!(origin_string),
-                    option_to_string!(&elem.origin),
-                    option_to_string!(&elem.local_pref),
-                    option_to_string!(&elem.med),
-                    Self::option_to_string_communities(&elem.communities),
-                    option_to_string!(&elem.atomic),
-                    option_to_string!(&elem.aggr_asn),
-                    option_to_string!(&elem.aggr_ip),
-                )
+                        "('{}','{}','{}','{}','{}', {},{},{},{},{},{},{},{},{},{})",
+                        elem.timestamp as u32,
+                        t,
+                        elem.peer_ip,
+                        elem.peer_asn,
+                        elem.prefix,
+                        option_to_string!(&elem.next_hop),
+                        option_to_string!(&elem.as_path),
+                        option_to_string!(origin_string),
+                        option_to_string!(&elem.origin),
+                        option_to_string!(&elem.local_pref),
+                        option_to_string!(&elem.med),
+                        Self::option_to_string_communities(&elem.communities),
+                        option_to_string!(&elem.atomic),
+                        option_to_string!(&elem.aggr_asn),
+                        option_to_string!(&elem.aggr_ip),
+                    )
                 })
                 .join(", ")
                 .to_string();
