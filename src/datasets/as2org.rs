@@ -1,18 +1,18 @@
-/// AS2Org data handling utility.
-///
-/// Data source:
-/// The CAIDA AS Organizations Dataset,
-///      http://www.caida.org/data/as-organizations
+//! AS2Org data handling utility.
+//!
+//! Data source:
+//! The CAIDA AS Organizations Dataset,
+//!      http://www.caida.org/data/as-organizations
 
-use serde::{Serialize, Deserialize};
+use crate::database::MonocleDatabase;
+use crate::CountryLookup;
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
 use regex::Regex;
 use rusqlite::Statement;
+use serde::{Deserialize, Serialize};
 use tabled::Tabled;
 use tracing::info;
-use crate::{CountryLookup, MonocleDatabase};
-
 
 /// Organization JSON format
 ///
@@ -32,7 +32,7 @@ use crate::{CountryLookup, MonocleDatabase};
 /// source  : the RIR or NIR database which was contained this entry
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonOrg {
-    #[serde(alias="organizationId")]
+    #[serde(alias = "organizationId")]
     org_id: String,
 
     changed: Option<String>,
@@ -45,8 +45,8 @@ pub struct JsonOrg {
     /// The RIR or NIR database that contained this entry
     source: String,
 
-    #[serde(alias="type")]
-    data_type: String
+    #[serde(alias = "type")]
+    data_type: String,
 }
 
 /// AS Json format
@@ -62,7 +62,6 @@ pub struct JsonOrg {
 /// source  : the RIR or NIR database which was contained this entry
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonAs {
-
     asn: String,
 
     changed: Option<String>,
@@ -70,17 +69,17 @@ pub struct JsonAs {
     #[serde(default)]
     name: String,
 
-    #[serde(alias="opaqueId")]
+    #[serde(alias = "opaqueId")]
     opaque_id: Option<String>,
 
-    #[serde(alias="organizationId")]
+    #[serde(alias = "organizationId")]
     org_id: String,
 
     /// The RIR or NIR database that contained this entry
     source: String,
 
-    #[serde(rename="type")]
-    data_type: String
+    #[serde(rename = "type")]
+    data_type: String,
 }
 
 #[derive(Debug)]
@@ -94,18 +93,13 @@ pub struct As2org {
     country_lookup: CountryLookup,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum SearchType {
     AsnOnly,
     NameOnly,
     CountryOnly,
+    #[default]
     Guess,
-}
-
-impl Default for SearchType {
-    fn default() -> Self {
-        SearchType::Guess
-    }
 }
 
 #[derive(Debug, Tabled)]
@@ -115,7 +109,7 @@ pub struct SearchResult {
     pub org_name: String,
     pub org_id: String,
     pub org_country: String,
-    pub org_size: u32
+    pub org_size: u32,
 }
 
 #[derive(Debug, Tabled)]
@@ -127,15 +121,18 @@ pub struct SearchResultConcise {
 }
 
 impl As2org {
-
     pub fn new(db_path: &Option<String>) -> Result<As2org> {
         let mut db = MonocleDatabase::new(db_path)?;
         As2org::initialize_db(&mut db);
         let country_lookup = CountryLookup::new();
-        Ok(As2org{ db, country_lookup })
+        Ok(As2org { db, country_lookup })
     }
 
-    fn stmt_to_results(&self, stmt: &mut Statement, full_country_name: bool) -> Result<Vec<SearchResult>> {
+    fn stmt_to_results(
+        &self,
+        stmt: &mut Statement,
+        full_country_name: bool,
+    ) -> Result<Vec<SearchResult>> {
         let res_iter = stmt.query_map([], |row| {
             let code: String = row.get(4)?;
             let country: String = match full_country_name {
@@ -145,10 +142,8 @@ impl As2org {
                         None => code,
                         Some(c) => c.to_string(),
                     }
-                },
-                false => {
-                    code
                 }
+                false => code,
             };
             Ok(SearchResult {
                 asn: row.get(0)?,
@@ -156,107 +151,146 @@ impl As2org {
                 org_name: row.get(2)?,
                 org_id: row.get(3)?,
                 org_country: country,
-                org_size: row.get(5)?
+                org_size: row.get(5)?,
             })
         })?;
-        Ok(
-            res_iter.filter_map(|x| x.ok()).collect()
-        )
+        Ok(res_iter.filter_map(|x| x.ok()).collect())
     }
 
     pub fn is_db_empty(&self) -> bool {
-        let count: u32 = self.db.conn.query_row("select count(*) from as2org_as", [],
-            |row| row.get(0),
-        ).unwrap();
+        let count: u32 = self
+            .db
+            .conn
+            .query_row("select count(*) from as2org_as", [], |row| row.get(0))
+            .unwrap();
         count == 0
     }
 
     fn initialize_db(db: &mut MonocleDatabase) {
-        db.conn.execute(r#"
+        db.conn
+            .execute(
+                r#"
         create table if not exists as2org_as (
         asn INTEGER PRIMARY KEY,
         name TEXT,
         org_id TEXT,
         source TEXT
         );
-        "#,[]).unwrap();
-        db.conn.execute(r#"
+        "#,
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                r#"
         create table if not exists as2org_org (
         org_id TEXT PRIMARY KEY,
         name TEXT,
         country TEXT,
         source TEXT
         );
-        "#,[]).unwrap();
+        "#,
+                [],
+            )
+            .unwrap();
 
         // views
 
-        db.conn.execute(r#"
+        db.conn
+            .execute(
+                r#"
         create view if not exists as2org_both as
         select a.asn, a.name as 'as_name', b.name as 'org_name', b.org_id, b.country
         from as2org_as as a join as2org_org as b on a.org_id = b.org_id
         ;
-        "#,[]).unwrap();
+        "#,
+                [],
+            )
+            .unwrap();
 
-        db.conn.execute(r#"
+        db.conn
+            .execute(
+                r#"
             create view if not exists as2org_count as
             select org_id, org_name, count(*) as count
             from as2org_both group by org_name
             order by count desc;
-        "#,[]).unwrap();
+        "#,
+                [],
+            )
+            .unwrap();
 
-        db.conn.execute(r#"
+        db.conn
+            .execute(
+                r#"
             create view if not exists as2org_all as
             select a.*, b.count
             from as2org_both as a join as2org_count as b on a.org_id = b.org_id;
-        "#,[]).unwrap();
+        "#,
+                [],
+            )
+            .unwrap();
     }
 
     fn insert_as(&self, as_entry: &JsonAs) -> Result<()> {
-        self.db.conn.execute( r#"
+        self.db.conn.execute(
+            r#"
         INSERT INTO as2org_as (asn, name, org_id, source)
         VALUES (?1, ?2, ?3, ?4)
-        "#, (
-            as_entry.asn.parse::<u32>().unwrap(),
-            as_entry.name.as_str(),
-            as_entry.org_id.as_str(),
-            as_entry.source.as_str(),
-        )
+        "#,
+            (
+                as_entry.asn.parse::<u32>().unwrap(),
+                as_entry.name.as_str(),
+                as_entry.org_id.as_str(),
+                as_entry.source.as_str(),
+            ),
         )?;
         Ok(())
     }
 
     fn insert_org(&self, org_entry: &JsonOrg) -> Result<()> {
-        self.db.conn.execute( r#"
+        self.db.conn.execute(
+            r#"
         INSERT INTO as2org_org (org_id, name, country, source)
         VALUES (?1, ?2, ?3, ?4)
-        "#, (
-            org_entry.org_id.as_str(),
-            org_entry.name.as_str(),
-            org_entry.country.as_str(),
-            org_entry.source.as_str(),
-        )
+        "#,
+            (
+                org_entry.org_id.as_str(),
+                org_entry.name.as_str(),
+                org_entry.country.as_str(),
+                org_entry.source.as_str(),
+            ),
         )?;
         Ok(())
     }
 
     pub fn clear_db(&self) {
-        self.db.conn.execute(r#"
+        self.db
+            .conn
+            .execute(
+                r#"
         DELETE FROM as2org_as
-        "#, []
-        ).unwrap();
-        self.db.conn.execute(r#"
+        "#,
+                [],
+            )
+            .unwrap();
+        self.db
+            .conn
+            .execute(
+                r#"
         DELETE FROM as2org_org
-        "#, []
-        ).unwrap();
+        "#,
+                [],
+            )
+            .unwrap();
     }
 
     /// parse as2org data and insert into monocle sqlite database
-    pub fn parse_insert_as2org(&self, url: Option<&str>) -> Result<()>{
+    pub fn parse_insert_as2org(&self, url: Option<&str>) -> Result<()> {
         self.clear_db();
         let url = match url {
             Some(u) => u.to_string(),
-            None => As2org::get_most_recent_data()
+            None => As2org::get_most_recent_data(),
         };
         info!("start parsing as2org file at {}", url.as_str());
         let entries = As2org::parse_as2org_file(url.as_str())?;
@@ -275,9 +309,17 @@ impl As2org {
         Ok(())
     }
 
-    pub fn search(&self, query: &str, search_type: &SearchType, full_country_name: bool) -> Result<Vec<SearchResult>>{
+    pub fn search(
+        &self,
+        query: &str,
+        search_type: &SearchType,
+        full_country_name: bool,
+    ) -> Result<Vec<SearchResult>> {
+        #[allow(clippy::upper_case_acronyms)]
         enum QueryType {
-            ASN, NAME, COUNTRY
+            ASN,
+            NAME,
+            COUNTRY,
         }
         let res: Vec<SearchResult>;
         let mut query_type = QueryType::ASN;
@@ -305,8 +347,10 @@ impl As2org {
                 if countries.is_empty() {
                     return Err(anyhow!("no country found with the query ({})", query));
                 } else if countries.len() > 1 {
-                    let countries = countries.into_iter().map(|x|x.name).join(" ; ");
-                    return Err(anyhow!("more than one countries found with the query ({query}): {countries}"));
+                    let countries = countries.into_iter().map(|x| x.name).join(" ; ");
+                    return Err(anyhow!(
+                        "more than one countries found with the query ({query}): {countries}"
+                    ));
                 }
 
                 let mut stmt = self.db.conn.prepare(
@@ -315,67 +359,57 @@ impl As2org {
                 )?;
                 res = self.stmt_to_results(&mut stmt, full_country_name)?;
             }
-            SearchType::Guess => {
-                match query.parse::<u32>() {
-                    Ok(asn) => {
-                        query_type = QueryType::ASN;
-                        let mut stmt = self.db.conn.prepare(
+            SearchType::Guess => match query.parse::<u32>() {
+                Ok(asn) => {
+                    query_type = QueryType::ASN;
+                    let mut stmt = self.db.conn.prepare(
                             format!(
                                 "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where asn='{asn}'").as_str()
                         )?;
-                        res = self.stmt_to_results(&mut stmt, full_country_name)?;
-                    }
-                    Err(_) => {
-                        query_type = QueryType::NAME;
-                        let mut stmt = self.db.conn.prepare(
+                    res = self.stmt_to_results(&mut stmt, full_country_name)?;
+                }
+                Err(_) => {
+                    query_type = QueryType::NAME;
+                    let mut stmt = self.db.conn.prepare(
                             format!(
                                 "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where org_name like '%{query}%' or as_name like '%{query}%' or org_id like '%{query}%' order by count desc").as_str()
                         )?;
-                        res = self.stmt_to_results(&mut stmt, full_country_name)?;
-                    }
+                    res = self.stmt_to_results(&mut stmt, full_country_name)?;
                 }
-            }
+            },
         }
 
         match res.is_empty() {
             true => {
                 let new_res = match query_type {
-                    QueryType::ASN => {
-                        SearchResult{
-                            asn: query.parse::<u32>().unwrap(),
-                            as_name: "?".to_string(),
-                            org_name: "?".to_string(),
-                            org_id: "?".to_string(),
-                            org_country: "?".to_string(),
-                            org_size: 0,
-                        }
-                    }
-                    QueryType::NAME => {
-                        SearchResult{
-                            asn: 0,
-                            as_name: "?".to_string(),
-                            org_name: query.to_string(),
-                            org_id: "?".to_string(),
-                            org_country: "?".to_string(),
-                            org_size: 0,
-                        }
-                    }
-                    QueryType::COUNTRY => {
-                        SearchResult{
-                            asn: 0,
-                            as_name: "?".to_string(),
-                            org_name: "?".to_string(),
-                            org_id: "?".to_string(),
-                            org_country: query.to_string(),
-                            org_size: 0,
-                        }
-                    }
+                    QueryType::ASN => SearchResult {
+                        asn: query.parse::<u32>().unwrap(),
+                        as_name: "?".to_string(),
+                        org_name: "?".to_string(),
+                        org_id: "?".to_string(),
+                        org_country: "?".to_string(),
+                        org_size: 0,
+                    },
+                    QueryType::NAME => SearchResult {
+                        asn: 0,
+                        as_name: "?".to_string(),
+                        org_name: query.to_string(),
+                        org_id: "?".to_string(),
+                        org_country: "?".to_string(),
+                        org_size: 0,
+                    },
+                    QueryType::COUNTRY => SearchResult {
+                        asn: 0,
+                        as_name: "?".to_string(),
+                        org_name: "?".to_string(),
+                        org_id: "?".to_string(),
+                        org_country: query.to_string(),
+                        org_size: 0,
+                    },
                 };
                 Ok(vec![new_res])
             }
-            false => {
-                Ok(res)
-            }
+            false => Ok(res),
         }
     }
 
@@ -393,7 +427,7 @@ impl As2org {
                     }
                     Err(e) => {
                         eprintln!("error parsing line:\n{}", line.as_str());
-                        return Err(anyhow!(e))
+                        return Err(anyhow!(e));
                     }
                 }
             } else {
@@ -404,7 +438,7 @@ impl As2org {
                     }
                     Err(e) => {
                         eprintln!("error parsing line:\n{}", line.as_str());
-                        return Err(anyhow!(e))
+                        return Err(anyhow!(e));
                     }
                 }
             }
@@ -414,16 +448,20 @@ impl As2org {
 
     pub fn get_most_recent_data() -> String {
         let data_link: Regex = Regex::new(r#".*(........\.as-org2info\.jsonl\.gz).*"#).unwrap();
-        let content = ureq::get("https://publicdata.caida.org/datasets/as-organizations/").call().unwrap().into_string().unwrap();
-        let res: Vec<String> = data_link.captures_iter(content.as_str()).map(|cap| {
-            cap[1].to_owned()
-        }).collect();
+        let content = ureq::get("https://publicdata.caida.org/datasets/as-organizations/")
+            .call()
+            .unwrap()
+            .into_string()
+            .unwrap();
+        let res: Vec<String> = data_link
+            .captures_iter(content.as_str())
+            .map(|cap| cap[1].to_owned())
+            .collect();
         let file = res.last().unwrap().to_string();
 
         format!("https://publicdata.caida.org/datasets/as-organizations/{file}")
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -458,7 +496,9 @@ mod tests {
         let as2org = As2org::new(&Some("./test.sqlite3".to_string())).unwrap();
         as2org.clear_db();
         assert!(as2org.is_db_empty());
-        as2org.parse_insert_as2org(Some("tests/test-as2org.jsonl.gz")).unwrap();
+        as2org
+            .parse_insert_as2org(Some("tests/test-as2org.jsonl.gz"))
+            .unwrap();
 
         let res = as2org.search("400644", &SearchType::AsnOnly, false);
         assert!(res.is_ok());
