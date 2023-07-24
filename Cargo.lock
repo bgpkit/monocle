@@ -479,6 +479,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0688c2a7f92e427f44895cd63841bff7b29f8d7a1648b9e7e07a4a365b2e1257"
 
 [[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
 name = "either"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1086,6 +1092,7 @@ dependencies = [
  "ipnetwork",
  "itertools",
  "oneio 0.11.0",
+ "radar-rs",
  "rayon",
  "regex",
  "rpki",
@@ -1414,6 +1421,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b9ab9c7eadfd8df19006f1cf1a4aed13540ed5cbc047010ece5826e10825488"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "radar-rs"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f65b3d4f8b54ac753d05c26b7107b120d5f96411c4d7b7fe19f2e95906f0557d"
+dependencies = [
+ "dotenvy",
+ "reqwest",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
