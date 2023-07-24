@@ -344,7 +344,7 @@ enum RadarCommands {
     Stats {
         /// a two-letter country code or asn number (e.g. US or 13335)
         #[clap(name = "QUERY")]
-        query: String,
+        query: Option<String>,
     },
 
     /// look up prefix to origin mapping on the most recent global routing table snapshot
@@ -794,9 +794,12 @@ fn main() {
 
             match commands {
                 RadarCommands::Stats { query } => {
-                    let (country, asn) = match query.parse::<u32>() {
-                        Ok(asn) => (None, Some(asn)),
-                        Err(_) => (Some(query), None),
+                    let (country, asn) = match query {
+                        None => (None, None),
+                        Some(q) => match q.parse::<u32>() {
+                            Ok(asn) => (None, Some(asn)),
+                            Err(_) => (Some(q), None),
+                        },
                     };
 
                     let res = match client.get_bgp_routing_stats(asn, country.clone()) {
