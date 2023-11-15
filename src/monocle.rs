@@ -273,7 +273,7 @@ enum Commands {
     /// Country name and code lookup utilities
     Country {
         /// Search query, e.g. "US" or "United States"
-        query: String,
+        queries: Vec<String>,
     },
 
     /// Time conversion utilities
@@ -699,9 +699,9 @@ fn main() {
                 eprintln!("{e}")
             }
         },
-        Commands::Country { query } => {
+        Commands::Country { queries } => {
             let lookup = CountryLookup::new();
-            let res = lookup.lookup(query.as_str());
+            let res: Vec<CountryEntry> = queries.into_iter().flat_map(|query|lookup.lookup(query.as_str())).collect();
             println!("{}", Table::new(res).with(Style::rounded()));
         }
         Commands::Rpki { commands } => match commands {
