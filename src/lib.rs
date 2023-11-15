@@ -4,7 +4,7 @@ mod datasets;
 
 use anyhow::{anyhow, Result};
 use bgpkit_parser::BgpkitParser;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use itertools::Itertools;
 use std::io::Read;
@@ -112,7 +112,7 @@ pub fn time_to_table(time_string: &Option<String>) -> Result<String> {
     let human = ht.to_string();
 
     let rfc3339 =
-        DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(unix, 0).unwrap(), Utc)
+        Utc.from_utc_datetime(&NaiveDateTime::from_timestamp_opt(unix, 0).unwrap())
             .to_rfc3339();
 
     Ok(Table::new(vec![BgpTime {
