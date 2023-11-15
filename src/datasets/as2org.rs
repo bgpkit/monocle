@@ -447,7 +447,7 @@ impl As2org {
     }
 
     pub fn get_most_recent_data() -> String {
-        let data_link: Regex = Regex::new(r#".*(........\.as-org2info\.jsonl\.gz).*"#).unwrap();
+        let data_link: Regex = Regex::new(r".*(........\.as-org2info\.jsonl\.gz).*").unwrap();
         let content = ureq::get("https://publicdata.caida.org/datasets/as-organizations/")
             .call()
             .unwrap()
