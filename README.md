@@ -11,8 +11,16 @@ See through all BGP data with a monocle.
 
 ## Install
 
+### Using `cargo`
+
 ```bash
 cargo install monocle
+```
+
+### Using `homebrew`
+
+```bash
+brew install bgpkit/tap/monocle
 ```
 
 ## Usage
