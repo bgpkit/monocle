@@ -49,3 +49,8 @@ openssl = { version = "0.10", features = ["vendored"], optional = true }
 default = []
 # vendored openssl
 vendored-openssl = ["openssl"]
+
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
+pkg-fmt = "tgz"
