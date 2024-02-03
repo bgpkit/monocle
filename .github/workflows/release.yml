@@ -35,6 +35,5 @@ jobs:
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: monocle
-          features: vendored-openssl
           target: ${{ matrix.target }}
           token: ${{ secrets.GITHUB_TOKEN }}

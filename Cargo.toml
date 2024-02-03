@@ -43,13 +43,6 @@ radar-rs = "0.0.2"
 # progress bar
 indicatif = "0.17.0"
 
-openssl = { version = "0.10", features = ["vendored"], optional = true }
-
-[features]
-default = []
-# vendored openssl
-vendored-openssl = ["openssl"]
-
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
 pkg-fmt = "tgz"
