@@ -91,7 +91,7 @@ impl MsgStore {
                     };
                     let origin_string = elem.origin_asns.as_ref().map(|asns| asns.get(0).unwrap());
                     format!(
-                        "('{}','{}','{}','{}','{}', {},{},{},{},{},{},{},{},{},{})",
+                        "('{}','{}','{}','{}','{}', {},{},{},{},{},{},{},'{}',{},{})",
                         elem.timestamp as u32,
                         t,
                         elem.peer_ip,
@@ -104,7 +104,10 @@ impl MsgStore {
                         option_to_string!(&elem.local_pref),
                         option_to_string!(&elem.med),
                         Self::option_to_string_communities(&elem.communities),
-                        option_to_string!(&elem.atomic),
+                        match &elem.atomic {
+                            true => "AG",
+                            false => "NAG",
+                        },
                         option_to_string!(&elem.aggr_asn),
                         option_to_string!(&elem.aggr_ip),
                     )

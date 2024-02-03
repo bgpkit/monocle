@@ -17,10 +17,22 @@ See through all BGP data with a monocle.
 cargo install monocle
 ```
 
-### Using `homebrew`
+### Using `homebrew` on macOS
 
 ```bash
 brew install bgpkit/tap/monocle
+```
+
+### Using [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)
+
+Install `cargo-binstall` first:
+```bash
+cargo install cargo-binstall
+```
+
+Then install `monocle` using `cargo binstall`
+```bash
+cargo binstall monocle
 ```
 
 ## Usage
@@ -206,7 +218,6 @@ Example queries:
 | asn    | as_name    | org_name   | org_country |
 |--------|------------|------------|-------------|
 | 400644 | BGPKIT-LLC | BGPKIT LLC | US          |
-
 ```
 
 You can specify multiple queries:
