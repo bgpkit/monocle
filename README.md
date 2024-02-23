@@ -26,11 +26,13 @@ brew install bgpkit/tap/monocle
 ### Using [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)
 
 Install `cargo-binstall` first:
+
 ```bash
 cargo install cargo-binstall
 ```
 
 Then install `monocle` using `cargo binstall`
+
 ```bash
 cargo binstall monocle
 ```
@@ -38,6 +40,7 @@ cargo binstall monocle
 ## Usage
 
 Subcommands:
+
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
 - `whois`: search AS and organization information by ASN or name
@@ -46,6 +49,7 @@ Subcommands:
 - `rpki`: check RPKI validation for given ASNs or prefixes
 
 Top-level help menu:
+
 ```text
 ➜  ~ monocle                      
 A commandline application to search, parse, and process BGP information in public sources.
@@ -146,11 +150,13 @@ ARGS:
     <TIME>    Time stamp or time string to convert
 
 OPTIONS:
+    -s, --simple   Simple output, only print the converted time
     -h, --help       Print help information
     -V, --version    Print version information
 ```
 
 Example runs:
+
 ```text
 ➜  monocle time
 ╭────────────┬───────────────────────────┬───────╮
@@ -182,6 +188,7 @@ Input time must be either Unix timestamp or time string compliant with RFC3339
 Search AS/organization-level information with ASN or organization name.
 
 Data source:
+
 - The CAIDA AS Organizations Dataset, http://www.caida.org/data/as-organizations
 - Please also cite the data source above if you use this tool for your public work.
 
@@ -208,6 +215,7 @@ Options:
 ```
 
 Example queries:
+
 ```text
 ➜  ~ monocle whois 400644
 | asn    | as_name    | org_name   | org_country |
@@ -231,6 +239,7 @@ You can specify multiple queries:
 ```
 
 Use `--pretty` to output the table with pretty rounded corner
+
 ```text
 ➜  monocle whois 13335 bgpkit --pretty
 ╭────────┬───────────────┬──────────────────┬─────────────╮
@@ -261,6 +270,7 @@ Options:
 ```
 
 Example runs:
+
 ```text
 ➜  monocle country US    
 ╭──────┬──────────────────────────╮
@@ -289,7 +299,8 @@ Example runs:
 ╰──────┴──────────────────────────────────────╯
 ```
 
-### `monocle rpki`: 
+### `monocle rpki`:
+
 Check RPKI validity for given prefix-ASN pair and provide utility to read ROA and ASPA files from the RPKI archive.
 
 We use [Cloudflare RPKI validator](https://rpki.cloudflare.com) as our data source.
@@ -311,7 +322,8 @@ Commands:
 
 #### `monocle rpki check`
 
-Check RPKI validity for given prefix-ASN pair. We use RIPE NCC's [routinator instance](https://rpki-validator.ripe.net) as the data source.
+Check RPKI validity for given prefix-ASN pair. We use RIPE NCC's [routinator instance](https://rpki-validator.ripe.net)
+as the data source.
 
 ```text
 ➜  monocle rpki check --help
@@ -352,6 +364,7 @@ Covering prefixes:
 ```
 
 #### `monocle rpki read-roa`
+
 Parse a given RPKI ROA file and display the prefix-ASN pairs with max length.
 
 ```text
@@ -408,7 +421,6 @@ List signed ROAs for a given ASN or prefix.
 
 #### `monocle rpki summary`
 
-
 Summarize RPKI status for a list of given ASNs.
 
 ```text
@@ -420,17 +432,22 @@ Summarize RPKI status for a list of given ASNs.
 | 15169  | 1372   | 989          | 0              | 5              |
 | 400644 | 1      | 0            | 0              | 0              |
 ```
+
 **NOTE**: due to Cloudflare API's current limitation, the maximum number of entries per `routed_` category is `1000`.
 
 ### `monocle radar`:
 
-Lookup BGP information using [Cloudflare Radar](https://radar.cloudflare.com/) API using [`radar-rs`](https://github.com/bgpkit/radar-rs) crate.
+Lookup BGP information using [Cloudflare Radar](https://radar.cloudflare.com/) API
+using [`radar-rs`](https://github.com/bgpkit/radar-rs) crate.
 
-Using this command requires setting up the `CF_API_TOKEN` environment variable. See the [Cloudflare Radar API getting started guide](https://developers.cloudflare.com/radar/get-started/first-request/) for detailed steps on obtaining a API token.
+Using this command requires setting up the `CF_API_TOKEN` environment variable. See
+the [Cloudflare Radar API getting started guide](https://developers.cloudflare.com/radar/get-started/first-request/) for
+detailed steps on obtaining a API token.
 
 #### `monocle radar stats`: routing statistics
 
 Global routing overview:
+
 ```text
 ➜  monocle radar stats   
 ┌─────────────┬─────────┬──────────┬─────────────────┬───────────────┬─────────────────┐
@@ -445,6 +462,7 @@ Global routing overview:
 ```
 
 Country-level routing overview:
+
 ```text
 ➜  monocle radar stats us
 ┌─────────┬─────────┬──────────┬────────────────┬──────────────┬─────────────────┐
@@ -461,6 +479,7 @@ Data generated at 2023-07-24T16:00:00 UTC.
 ```
 
 AS-level routing overview:
+
 ```text
 ➜  monocle git:(main) ✗ monocle radar stats 174
 ┌────────────┬─────────┬──────────┬─────────────┬──────────────┬───────────────┐
@@ -479,6 +498,7 @@ Data generated at 2023-07-24T16:00:00 UTC.
 #### `monocle radar pfx2asn`: prefix-to-ASN mapping
 
 Lookup prefix origin for a given prefix (using Cloudflare `1.1.1.0/24` as an example):
+
 ```text
 ➜  monocle radar pfx2as 1.1.1.0/24
 ┌────────────┬─────────┬───────┬───────────────┐
@@ -489,6 +509,7 @@ Lookup prefix origin for a given prefix (using Cloudflare `1.1.1.0/24` as an exa
 ```
 
 Lookup prefixes originated by a given AS (using BGPKIT AS400644 as an example):
+
 ```text
 ➜  monocle radar pfx2as 400644    
 ┌───────────────────┬──────────┬───────┬───────────────┐
@@ -501,6 +522,7 @@ Data generated at 2023-07-24T16:00:00 UTC.
 ```
 
 Lookup RPKI invalid (with flag `--rpki-status invalid`) prefixes originated by a given AS:
+
 ```text
 ➜  monocle radar pfx2as 174 --rpki-status invalid
 ┌─────────────────────┬────────┬─────────┬──────────────┐
