@@ -281,6 +281,10 @@ enum Commands {
         /// Time stamp or time string to convert
         #[clap()]
         time: Option<String>,
+
+        /// Simple output, only print the converted time
+        #[clap(short, long)]
+        simple: bool,
     },
 
     /// RPKI utilities
@@ -691,17 +695,26 @@ fn main() {
                 }
             }
         }
-        Commands::Time { time } => match time_to_table(&time) {
-            Ok(t) => {
-                println!("{t}")
-            }
-            Err(e) => {
-                eprintln!("{e}")
-            }
-        },
+        Commands::Time { time, simple } => {
+            let timestring_res = match simple {
+                true => convert_time_string(&time),
+                false => time_to_table(&time),
+            };
+            match timestring_res {
+                Ok(t) => {
+                    println!("{t}")
+                }
+                Err(e) => {
+                    eprintln!("{e}")
+                }
+            };
+        }
         Commands::Country { queries } => {
             let lookup = CountryLookup::new();
-            let res: Vec<CountryEntry> = queries.into_iter().flat_map(|query|lookup.lookup(query.as_str())).collect();
+            let res: Vec<CountryEntry> = queries
+                .into_iter()
+                .flat_map(|query| lookup.lookup(query.as_str()))
+                .collect();
             println!("{}", Table::new(res).with(Style::rounded()));
         }
         Commands::Rpki { commands } => match commands {

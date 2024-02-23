@@ -101,6 +101,35 @@ pub fn string_to_time(time_string: &str) -> Result<i64> {
     Ok(ts)
 }
 
+pub fn convert_time_string(time_string: &Option<String>) -> Result<String> {
+    let unix = match time_string {
+        None => Utc::now().to_rfc3339(),
+        Some(ts) => {
+            // check if ts is a valid Unix timestamp
+            match ts.parse::<f64>() {
+                Ok(timestamp) => {
+                    let dt = Utc.timestamp_opt(timestamp as i64, 0).unwrap();
+                    dt.to_rfc3339()
+                }
+                Err(_) => {
+                    // not a time stamp, check if it is a valid RFC3339 string,
+                    // if so, return the unix timestamp as string; otherwise, return error
+                    match chrono::DateTime::parse_from_rfc3339(ts) {
+                        Ok(dt) => dt.timestamp().to_string(),
+                        Err(_) => {
+                            return Err(anyhow!(
+                                "Input time must be either Unix timestamp or time string compliant with RFC3339"
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    Ok(unix)
+}
+
 pub fn time_to_table(time_string: &Option<String>) -> Result<String> {
     let now_ts = Utc::now().timestamp();
     let unix = match time_string {
@@ -111,9 +140,9 @@ pub fn time_to_table(time_string: &Option<String>) -> Result<String> {
     let ht = HumanTime::from(chrono::Local::now() - chrono::Duration::seconds(now_ts - unix));
     let human = ht.to_string();
 
-    let rfc3339 =
-        Utc.from_utc_datetime(&NaiveDateTime::from_timestamp_opt(unix, 0).unwrap())
-            .to_rfc3339();
+    let rfc3339 = Utc
+        .from_utc_datetime(&NaiveDateTime::from_timestamp_opt(unix, 0).unwrap())
+        .to_rfc3339();
 
     Ok(Table::new(vec![BgpTime {
         unix,
