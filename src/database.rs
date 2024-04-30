@@ -89,7 +89,7 @@ impl MsgStore {
                         ElemType::ANNOUNCE => "A",
                         ElemType::WITHDRAW => "W",
                     };
-                    let origin_string = elem.origin_asns.as_ref().map(|asns| asns.get(0).unwrap());
+                    let origin_string = elem.origin_asns.as_ref().map(|asns| asns.first().unwrap());
                     format!(
                         "('{}','{}','{}','{}','{}', {},{},{},{},{},{},{},'{}',{},{})",
                         elem.timestamp as u32,

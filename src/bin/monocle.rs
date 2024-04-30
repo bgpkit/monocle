@@ -280,7 +280,7 @@ enum Commands {
     Time {
         /// Time stamp or time string to convert
         #[clap()]
-        time: Option<String>,
+        time: Vec<String>,
 
         /// Simple output, only print the converted time
         #[clap(short, long)]
