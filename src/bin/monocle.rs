@@ -505,7 +505,7 @@ fn main() {
 
             let (sender, receiver): (Sender<BgpElem>, Receiver<BgpElem>) = channel();
             // progress bar
-            let (pb_sender, pb_receiver): (Sender<u8>, Receiver<u8>) = channel();
+            let (pb_sender, pb_receiver): (Sender<u32>, Receiver<u32>) = channel();
 
             // dedicated thread for handling output of results
             let writer_thread = thread::spawn(move || match sqlite_db {
@@ -541,13 +541,16 @@ fn main() {
                 }
 
                 let sty = indicatif::ProgressStyle::with_template(
-                    "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta}",
+                    "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} left; {msg}",
                 )
                 .unwrap()
                 .progress_chars("##-");
                 let pb = indicatif::ProgressBar::new(total_items as u64);
                 pb.set_style(sty);
-                for _ in pb_receiver.iter() {
+                let mut total_count: u64 = 0;
+                for count in pb_receiver.iter() {
+                    total_count += count as u64;
+                    pb.set_message(format!("found {total_count} messages"));
                     pb.inc(1);
                 }
             });
@@ -575,12 +578,14 @@ fn main() {
                     )
                     .unwrap();
 
+                    let mut elems_count = 0;
                     for elem in parser {
-                        s.send(elem).unwrap()
+                        s.send(elem).unwrap();
+                        elems_count += 1;
                     }
 
                     if show_progress {
-                        pb_sender.send(0).unwrap();
+                        pb_sender.send(elems_count).unwrap();
                     }
                     info!("finished parsing {}", url.as_str());
                 });
