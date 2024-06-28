@@ -6,6 +6,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
 use anyhow::{anyhow, Result};
+use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
 use chrono::DateTime;
 use clap::{Args, Parser, Subcommand};
@@ -225,6 +226,10 @@ enum Commands {
         #[clap(long)]
         sqlite_path: Option<PathBuf>,
 
+        /// Path to output MRT file
+        #[clap(long)]
+        mrt_path: Option<PathBuf>,
+
         /// SQLite reset database content if exists
         #[clap(long)]
         sqlite_reset: bool,
@@ -437,6 +442,7 @@ fn main() {
             dry_run,
             json,
             pretty,
+            mrt_path,
             sqlite_path,
             sqlite_reset,
             filters,
@@ -446,16 +452,13 @@ fn main() {
                 return;
             }
 
-            let mut show_progress = false;
             let mut sqlite_path_str = "".to_string();
-            let sqlite_db = match sqlite_path {
-                Some(path) => {
-                    show_progress = true;
-                    sqlite_path_str = path.to_str().unwrap().to_string();
-                    Some(MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset))
-                }
-                None => None,
-            };
+            let sqlite_db = sqlite_path.map(|p| {
+                sqlite_path_str = p.to_str().unwrap().to_string();
+                MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset)
+            });
+            let mrt_path = mrt_path.map(|p| p.to_str().unwrap().to_string());
+            let show_progress = sqlite_db.is_some() || mrt_path.is_some();
 
             let ts_start = string_to_time(filters.start_ts.as_str())
                 .unwrap()
@@ -514,29 +517,59 @@ fn main() {
             let (pb_sender, pb_receiver): (Sender<u32>, Receiver<u32>) = channel();
 
             // dedicated thread for handling output of results
-            let writer_thread = thread::spawn(move || match sqlite_db {
-                Some(db) => {
-                    let mut msg_cache = vec![];
-                    let mut msg_count = 0;
-                    for (elem, collector) in receiver {
-                        msg_count += 1;
-                        msg_cache.push((elem, collector));
-                        if msg_cache.len() >= 100000 {
-                            db.insert_elems(&msg_cache);
-                            msg_cache.clear();
-                        }
-                    }
-                    if !msg_cache.is_empty() {
-                        db.insert_elems(&msg_cache);
-                    }
+            let writer_thread = thread::spawn(move || {
+                let display_stdout = sqlite_db.is_none() && mrt_path.is_none();
+                let mut mrt_writer = mrt_path.map(|p| {
+                    (
+                        MrtUpdatesEncoder::new(),
+                        oneio::get_writer(p.as_str()).unwrap(),
+                    )
+                });
 
-                    println!("processed {total_items} files, found {msg_count} messages, written into file {sqlite_path_str}");
-                }
-                None => {
-                    for (elem, collector) in receiver {
+                let mut msg_cache = vec![];
+                let mut msg_count = 0;
+
+                for (elem, collector) in receiver {
+                    msg_count += 1;
+
+                    if display_stdout {
                         let output_str = elem_to_string(&elem, json, pretty, collector.as_str());
                         println!("{output_str}");
+                        continue;
                     }
+
+                    msg_cache.push((elem, collector));
+                    if msg_cache.len() >= 100000 {
+                        if let Some(db) = &sqlite_db {
+                            db.insert_elems(&msg_cache);
+                        }
+                        if let Some((encoder, _writer)) = &mut mrt_writer {
+                            for (elem, _) in &msg_cache {
+                                encoder.process_elem(elem);
+                            }
+                        }
+                        msg_cache.clear();
+                    }
+                }
+
+                if !msg_cache.is_empty() {
+                    if let Some(db) = &sqlite_db {
+                        db.insert_elems(&msg_cache);
+                    }
+                    if let Some((encoder, _writer)) = &mut mrt_writer {
+                        for (elem, _) in &msg_cache {
+                            encoder.process_elem(elem);
+                        }
+                    }
+                }
+                if let Some((encoder, writer)) = &mut mrt_writer {
+                    let bytes = encoder.export_bytes();
+                    writer.write_all(&bytes).unwrap();
+                }
+                drop(mrt_writer);
+
+                if !display_stdout {
+                    println!("processed {total_items} files, found {msg_count} messages, written into file {sqlite_path_str}");
                 }
             });
 
