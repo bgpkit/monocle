@@ -39,12 +39,16 @@ impl MsgStore {
     }
 
     fn initialize_msgs_db(db: &mut MonocleDatabase, reset: bool) {
+        if reset {
+            db.conn.execute("drop table if exists elems", []).unwrap();
+        }
         db.conn
             .execute(
                 r#"
         create table if not exists elems (
             timestamp INTEGER,
             elem_type TEXT,
+            collector TEXT,
             peer_ip TEXT,
             peer_asn INTEGER,
             prefix TEXT,
@@ -63,10 +67,6 @@ impl MsgStore {
                 [],
             )
             .unwrap();
-
-        if reset {
-            db.conn.execute("delete from elems", []).unwrap();
-        }
     }
 
     #[inline(always)]
@@ -78,11 +78,11 @@ impl MsgStore {
         }
     }
 
-    pub fn insert_elems(&self, elems: &[BgpElem]) {
+    pub fn insert_elems(&self, elems: &[(BgpElem, String)]) {
         for elems in elems.chunks(10000) {
             let values = elems
                 .iter()
-                .map(|elem| {
+                .map(|(elem, collector)| {
                     let t = match elem.elem_type {
                         // bgpkit_parser::ElemType::ANNOUNCE => "A",
                         // bgpkit_parser::ElemType::WITHDRAW => "W",
@@ -91,9 +91,10 @@ impl MsgStore {
                     };
                     let origin_string = elem.origin_asns.as_ref().map(|asns| asns.first().unwrap());
                     format!(
-                        "('{}','{}','{}','{}','{}', {},{},{},{},{},{},{},'{}',{},{})",
+                        "('{}','{}','{}', '{}','{}','{}', {},{},{},{},{},{},{},'{}',{},{})",
                         elem.timestamp as u32,
                         t,
+                        collector,
                         elem.peer_ip,
                         elem.peer_asn,
                         elem.prefix,
@@ -116,7 +117,7 @@ impl MsgStore {
                 .to_string();
             let query = format!(
                 "INSERT INTO elems (\
-            timestamp, elem_type, peer_ip, peer_asn, prefix, next_hop, \
+            timestamp, elem_type, collector, peer_ip, peer_asn, prefix, next_hop, \
             as_path, origin_asns, origin, local_pref, med, communities,\
             atomic, aggr_asn, aggr_ip)\
             VALUES {values};"

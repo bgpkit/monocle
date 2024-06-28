@@ -363,16 +363,19 @@ enum RadarCommands {
     },
 }
 
-fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool) -> String {
+fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool, collector: &str) -> String {
     if json {
-        let val = json!(elem);
+        let mut val = json!(elem);
+        val.as_object_mut()
+            .unwrap()
+            .insert("collector".to_string(), collector.into());
         if pretty {
             serde_json::to_string_pretty(&val).unwrap()
         } else {
             val.to_string()
         }
     } else {
-        elem.to_string()
+        format!("{}|{}", elem.to_string(), collector)
     }
 }
 
@@ -402,8 +405,9 @@ fn main() {
                 return;
             }
 
+            let file_path = file_path.to_str().unwrap();
             let parser = parser_with_filters(
-                file_path.to_str().unwrap(),
+                file_path,
                 &filters.origin_asn,
                 &filters.prefix,
                 &filters.include_super,
@@ -419,7 +423,7 @@ fn main() {
 
             let mut stdout = std::io::stdout();
             for elem in parser {
-                let output_str = elem_to_string(&elem, json, pretty);
+                let output_str = elem_to_string(&elem, json, pretty, "");
                 if let Err(e) = writeln!(stdout, "{}", &output_str) {
                     if e.kind() != std::io::ErrorKind::BrokenPipe {
                         eprintln!("{e}");
@@ -503,7 +507,8 @@ fn main() {
                 return;
             }
 
-            let (sender, receiver): (Sender<BgpElem>, Receiver<BgpElem>) = channel();
+            let (sender, receiver): (Sender<(BgpElem, String)>, Receiver<(BgpElem, String)>) =
+                channel();
             // progress bar
             let (pb_sender, pb_receiver): (Sender<u32>, Receiver<u32>) = channel();
 
@@ -512,9 +517,9 @@ fn main() {
                 Some(db) => {
                     let mut msg_cache = vec![];
                     let mut msg_count = 0;
-                    for elem in receiver {
+                    for (elem, collector) in receiver {
                         msg_count += 1;
-                        msg_cache.push(elem);
+                        msg_cache.push((elem, collector));
                         if msg_cache.len() >= 100000 {
                             db.insert_elems(&msg_cache);
                             msg_cache.clear();
@@ -527,8 +532,8 @@ fn main() {
                     println!("processed {total_items} files, found {msg_count} messages, written into file {sqlite_path_str}");
                 }
                 None => {
-                    for elem in receiver {
-                        let output_str = elem_to_string(&elem, json, pretty);
+                    for (elem, collector) in receiver {
+                        let output_str = elem_to_string(&elem, json, pretty, collector.as_str());
                         println!("{output_str}");
                     }
                 }
@@ -555,13 +560,11 @@ fn main() {
                 }
             });
 
-            let urls = items
-                .iter()
-                .map(|x| x.url.to_string())
-                .collect::<Vec<String>>();
-
-            urls.into_par_iter()
-                .for_each_with((sender, pb_sender), |(s, pb_sender), url| {
+            items
+                .into_par_iter()
+                .for_each_with((sender, pb_sender), |(s, pb_sender), item| {
+                    let url = item.url;
+                    let collector = item.collector_id;
                     info!("start parsing {}", url.as_str());
                     let parser = parser_with_filters(
                         url.as_str(),
@@ -580,7 +583,7 @@ fn main() {
 
                     let mut elems_count = 0;
                     for elem in parser {
-                        s.send(elem).unwrap();
+                        s.send((elem, collector.clone())).unwrap();
                         elems_count += 1;
                     }
 
