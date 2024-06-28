@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.6.0 - 2024-06-28
+
+### Highlights
+
+* `monocle time` now supports querying multiple time strings in a single query
+* `monocle search` with `--sqlite-path` now adds found messages to the progress bar during search
+* `monocle search` now shows the collector IDs in the results, included in the plaintext, json output as well as the
+  sqlite database
+* `monocle search` now supports exporting to MRT files using `--mrt-path` parameter
+
 ## v0.5.5 - 2024-03-29
 
 ### Highlights
