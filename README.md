@@ -113,26 +113,29 @@ MRT files in parallel. More filters can be used to search for messages that matc
 ➜  monocle git:(main) ✗ monocle search --help
 Search BGP messages from all available public MRT files
 
-USAGE:
-    monocle search [OPTIONS] --start-ts <START_TS> --end-ts <END_TS>
+Usage: monocle search [OPTIONS] --start-ts <START_TS> --end-ts <END_TS>
 
-OPTIONS:
-    -a, --as-path <AS_PATH>          Filter by AS path regex string
-    -c, --collector <COLLECTOR>      Filter by collector, e.g. rrc00 or route-views2
-    -d, --debug                      Print debug information
-    -d, --dry-run                    Dry-run, do not download or parse
-    -h, --help                       Print help information
-    -j, --peer-ip <PEER_IP>          Filter by peer IP address
-    -J, --peer-asn <PEER_ASN>        Filter by peer ASN
-    -m, --elem-type <ELEM_TYPE>      Filter by elem type: announce (a) or withdraw (w)
-    -o, --origin-asn <ORIGIN_ASN>    Filter by origin AS Number
-    -p, --prefix <PREFIX>            Filter by network prefix
-    -P, --project <PROJECT>          Filter by route collection project, i.e. riperis or routeviews
-    -s, --include-super              Include super-prefix when filtering
-    -S, --include-sub                Include sub-prefix when filtering
-    -t, --start-ts <START_TS>        Filter by start unix timestamp inclusive
-    -T, --end-ts <END_TS>            Filter by end unix timestamp inclusive
-    -V, --version                    Print version information
+Options:
+      --dry-run                    Dry-run, do not download or parse
+      --json                       Output as JSON objects
+      --pretty                     Pretty-print JSON output
+      --sqlite-path <SQLITE_PATH>  SQLite output file path
+      --mrt-path <MRT_PATH>        MRT output file path
+      --sqlite-reset               SQLite reset database content if exists
+  -t, --start-ts <START_TS>        Filter by start unix timestamp inclusive
+  -T, --end-ts <END_TS>            Filter by end unix timestamp inclusive
+  -c, --collector <COLLECTOR>      Filter by collector, e.g. rrc00 or route-views2
+  -P, --project <PROJECT>          Filter by route collection project, i.e. riperis or routeviews
+  -o, --origin-asn <ORIGIN_ASN>    Filter by origin AS Number
+  -p, --prefix <PREFIX>            Filter by network prefix
+  -s, --include-super              Include super-prefix when filtering
+  -S, --include-sub                Include sub-prefix when filtering
+  -j, --peer-ip <PEER_IP>          Filter by peer IP address
+  -J, --peer-asn <PEER_ASN>        Filter by peer ASN
+  -m, --elem-type <ELEM_TYPE>      Filter by elem type: announce (a) or withdraw (w)
+  -a, --as-path <AS_PATH>          Filter by AS path regex string
+  -h, --help                       Print help
+  -V, --version                    Print version
 ```
 
 ### `monocle time`

@@ -226,7 +226,7 @@ enum Commands {
         #[clap(long)]
         sqlite_path: Option<PathBuf>,
 
-        /// Path to output MRT file
+        /// MRT output file path
         #[clap(long)]
         mrt_path: Option<PathBuf>,
 
