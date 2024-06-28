@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -375,7 +376,7 @@ fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool, collector: &str) -> 
             val.to_string()
         }
     } else {
-        format!("{}|{}", elem.to_string(), collector)
+        format!("{}|{}", elem, collector)
     }
 }
 

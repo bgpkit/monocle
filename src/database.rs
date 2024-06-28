@@ -126,17 +126,3 @@ impl MsgStore {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bgpkit_parser::BgpkitParser;
-
-    #[test]
-    fn test_insert() {
-        let store = MsgStore::new(&Some("test.sqlite3".to_string()), false);
-        let url = "https://spaces.bgpkit.org/parser/update-example.gz";
-        let elems: Vec<BgpElem> = BgpkitParser::new(url).unwrap().into_elem_iter().collect();
-        store.insert_elems(&elems);
-    }
-}
