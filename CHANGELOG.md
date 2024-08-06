@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.6.1 - 2024-08-05
+
+This is a maintenance release that updates the following dependencies.
+
+* `bgpkit-broker` to v0.7.0 -> v0.7.1
+* `bgpkit-parser` to v0.10.9 -> v0.10.10
+* `oneio` to v0.16.7 -> v0.17.0
+
+With the updated dependencies, `monocle` now supports using `ONEIO_ACCEPT_INVALID_CERTS=true` env variable
+to run search within a network that uses self-signed certificates.
+
 ## v0.6.0 - 2024-06-28
 
 ### Highlights
