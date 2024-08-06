@@ -386,6 +386,7 @@ fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool, collector: &str) -> 
 }
 
 fn main() {
+    dotenvy::dotenv().ok();
     let cli = Cli::parse();
 
     let config = MonocleConfig::new(&cli.config);
