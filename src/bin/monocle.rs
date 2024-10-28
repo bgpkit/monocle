@@ -715,7 +715,7 @@ fn main() {
                     if psv {
                         println!("asn|asn_name|org_name|org_id|org_country|org_size");
                         for entry in res {
-                            format!(
+                            println!(
                                 "{}|{}|{}|{}|{}|{}",
                                 entry.asn,
                                 entry.as_name,
