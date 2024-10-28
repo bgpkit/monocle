@@ -17,8 +17,8 @@ name = "monocle"
 path = "src/bin/monocle.rs"
 
 [dependencies]
-bgpkit-broker = "0.7.1"
-bgpkit-parser = { version = "0.10.10", features = ["serde"] }
+bgpkit-broker = "0.7.5"
+bgpkit-parser = { version = "0.10.11", features = ["serde"] }
 oneio = { version = "0.17.0", default-features = false, features = ["remote", "gz", "bz"] }
 
 clap = { version = "4.1", features = ["derive"] }
