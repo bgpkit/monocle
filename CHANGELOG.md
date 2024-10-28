@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.6.2 - 2024-10-28
+
+### Dependency updates
+
+* `bgpkit-broker` to v0.7.0 -> v0.7.5
+* `bgpkit-parser` to v0.10.9 -> v0.10.11
+
+`bgpkit-parser` version `v0.10.11` fixes the improper handling of `AS23456` (`AS_TRANS`). If you previously see
+`AS23456` incorrectly showing on the path, it should no-longer showing up after this patchshould no-longer show up after
+this patch.
+
+### Fixes
+
+* fixed a bug where `psv` format output does not actually print out content.
+
 ## v0.6.1 - 2024-08-05
 
 This is a maintenance release that updates the following dependencies.
