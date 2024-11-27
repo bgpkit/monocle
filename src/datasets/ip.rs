@@ -32,11 +32,16 @@ pub struct IpInfo {
     pub asn: Option<AsnRouteInfo>,
 }
 
-pub fn fetch_ip_info(ip_opt: Option<IpAddr>) -> Result<IpInfo> {
-    let url = match ip_opt {
-        Some(ip) => format!("https://api.bgpkit.com/v3/utils/ip?ip={}", ip),
-        None => "https://api.bgpkit.com/v3/utils/ip".to_string(),
-    };
+const IP_INFO_API: &str = "https://api.bgpkit.com/v3/utils/ip";
+pub fn fetch_ip_info(ip_opt: Option<IpAddr>, simple: bool) -> Result<IpInfo> {
+    let mut params = vec![];
+    if let Some(ip) = ip_opt {
+        params.push(format!("ip={}", ip));
+    }
+    if simple {
+        params.push("simple=true".to_string());
+    }
+    let url = format!("{}?{}", IP_INFO_API, params.join("&"));
     let resp = ureq::get(&url).call()?.into_json::<IpInfo>()?;
     Ok(resp)
 }
@@ -47,7 +52,7 @@ mod tests {
 
     #[test]
     fn test_fetch_ip_info() {
-        let my_public_ip_info = fetch_ip_info(None).unwrap();
+        let my_public_ip_info = fetch_ip_info(None, false).unwrap();
         dbg!(my_public_ip_info);
     }
 }

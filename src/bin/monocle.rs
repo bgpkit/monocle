@@ -302,8 +302,17 @@ enum Commands {
 
     /// IP information lookup
     Ip {
+        /// IP address to look up (optional)
         #[clap()]
         ip: Option<IpAddr>,
+
+        /// Print IP address only (e.g. for getting the public IP address quickly)
+        #[clap(long)]
+        simple: bool,
+
+        /// Output as JSON objects
+        #[clap(long)]
+        json: bool,
     },
 
     /// Cloudflare Radar API lookup (set CF_API_TOKEN to enable)
@@ -1041,13 +1050,21 @@ fn main() {
                 }
             }
         }
-        Commands::Ip { ip } => match fetch_ip_info(ip) {
+        Commands::Ip { ip, json, simple } => match fetch_ip_info(ip, simple) {
             Ok(ipinfo) => {
-                let json_value = json!(&ipinfo);
-                let mut table = json_to_table(&json_value);
-                table.collapse();
+                if simple {
+                    println!("{}", ipinfo.ip);
+                    return;
+                }
 
-                println!("{}", table);
+                let json_value = json!(&ipinfo);
+                if json {
+                    serde_json::to_writer_pretty(std::io::stdout(), &json_value).unwrap();
+                } else {
+                    let mut table = json_to_table(&json_value);
+                    table.collapse();
+                    println!("{}", table);
+                }
             }
             Err(e) => {
                 eprintln!("unable to get ip information: {e}");
