@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ipnetwork::IpNetwork;
+use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::{Display, Formatter};
@@ -9,7 +9,7 @@ use tabled::Tabled;
 #[derive(Debug, Tabled)]
 pub struct RpkiValidity {
     asn: u32,
-    prefix: IpNetwork,
+    prefix: IpNet,
     validity: ValidationState,
 }
 
@@ -123,7 +123,7 @@ impl Display for ValidationState {
 
 /// https://rpki-validator.ripe.net/api/v1/validity/13335/1.1.0.0/23
 pub fn validate(asn: u32, prefix_str: &str) -> Result<(RpkiValidity, Vec<Roa>)> {
-    let prefix = IpNetwork::from_str(prefix_str)?;
+    let prefix = IpNet::from_str(prefix_str)?;
     let query_string = format!(
         r#"
     query GetValidation {{
@@ -164,7 +164,7 @@ pub fn validate(asn: u32, prefix_str: &str) -> Result<(RpkiValidity, Vec<Roa>)> 
     ))
 }
 
-pub fn list_by_prefix(prefix: &IpNetwork) -> Result<Vec<RoaResource>> {
+pub fn list_by_prefix(prefix: &IpNet) -> Result<Vec<RoaResource>> {
     let query_string = format!(
         r#"
     query GetResources {{
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_list_prefix() {
-        let res = list_by_prefix(&"1.0.0.0/25".parse::<IpNetwork>().unwrap()).unwrap();
+        let res = list_by_prefix(&"1.0.0.0/25".parse::<IpNet>().unwrap()).unwrap();
         dbg!(&res);
     }
 

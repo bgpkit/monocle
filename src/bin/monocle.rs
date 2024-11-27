@@ -10,7 +10,8 @@ use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
 use chrono::DateTime;
 use clap::{Args, Parser, Subcommand};
-use ipnetwork::IpNetwork;
+use ipnet::IpNet;
+use json_to_table::json_to_table;
 use monocle::*;
 use radar_rs::RadarClient;
 use rayon::prelude::*;
@@ -297,6 +298,12 @@ enum Commands {
     Rpki {
         #[clap(subcommand)]
         commands: RpkiCommands,
+    },
+
+    /// IP information lookup
+    Ip {
+        #[clap()]
+        ip: Option<IpAddr>,
     },
 
     /// Cloudflare Radar API lookup (set CF_API_TOKEN to enable)
@@ -817,7 +824,7 @@ fn main() {
             RpkiCommands::List { resource } => {
                 let resources = match resource.parse::<u32>() {
                     Ok(asn) => list_by_asn(asn).unwrap(),
-                    Err(_) => match resource.parse::<IpNetwork>() {
+                    Err(_) => match resource.parse::<IpNet>() {
                         Ok(prefix) => list_by_prefix(&prefix).unwrap(),
                         Err(_) => {
                             eprintln!("list resource not an AS number or a prefix: {}", resource);
@@ -1034,5 +1041,17 @@ fn main() {
                 }
             }
         }
+        Commands::Ip { ip } => match fetch_ip_info(ip) {
+            Ok(ipinfo) => {
+                let json_value = json!(&ipinfo);
+                let mut table = json_to_table(&json_value);
+                table.collapse();
+
+                println!("{}", table);
+            }
+            Err(e) => {
+                eprintln!("unable to get ip information: {e}");
+            }
+        },
     }
 }
