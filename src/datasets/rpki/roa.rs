@@ -1,13 +1,13 @@
-use std::str::FromStr;
 use anyhow::Result;
-use ipnetwork::IpNetwork;
+use ipnet::IpNet;
 use rpki::repository::Roa;
+use std::str::FromStr;
 use tabled::Tabled;
 
 #[derive(Debug, Tabled)]
 pub struct RoaObject {
     pub asn: u32,
-    pub prefix: IpNetwork,
+    pub prefix: IpNet,
     pub max_len: u8,
 }
 
@@ -17,19 +17,21 @@ pub fn read_roa(file_path: &str) -> Result<Vec<RoaObject>> {
     reader.read_to_end(&mut data)?;
     let roa = Roa::decode(data.as_ref(), true)?;
     let asn: u32 = roa.content().as_id().into_u32();
-    let objects = roa.content().iter()
+    let objects = roa
+        .content()
+        .iter()
         .map(|addr| {
             let prefix_str = addr.to_string();
             let fields = prefix_str.as_str().split('/').collect::<Vec<&str>>();
             let p = format!("{}/{}", fields[0], fields[1]);
-            let prefix = IpNetwork::from_str(p.as_str()).unwrap();
+            let prefix = IpNet::from_str(p.as_str()).unwrap();
             let max_len = addr.max_length();
-            RoaObject{
+            RoaObject {
                 asn,
                 prefix,
-                max_len
+                max_len,
             }
-        }).collect();
+        })
+        .collect();
     Ok(objects)
 }
-

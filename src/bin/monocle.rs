@@ -10,7 +10,8 @@ use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
 use chrono::DateTime;
 use clap::{Args, Parser, Subcommand};
-use ipnetwork::IpNetwork;
+use ipnet::IpNet;
+use json_to_table::json_to_table;
 use monocle::*;
 use radar_rs::RadarClient;
 use rayon::prelude::*;
@@ -297,6 +298,21 @@ enum Commands {
     Rpki {
         #[clap(subcommand)]
         commands: RpkiCommands,
+    },
+
+    /// IP information lookup
+    Ip {
+        /// IP address to look up (optional)
+        #[clap()]
+        ip: Option<IpAddr>,
+
+        /// Print IP address only (e.g. for getting the public IP address quickly)
+        #[clap(long)]
+        simple: bool,
+
+        /// Output as JSON objects
+        #[clap(long)]
+        json: bool,
     },
 
     /// Cloudflare Radar API lookup (set CF_API_TOKEN to enable)
@@ -817,7 +833,7 @@ fn main() {
             RpkiCommands::List { resource } => {
                 let resources = match resource.parse::<u32>() {
                     Ok(asn) => list_by_asn(asn).unwrap(),
-                    Err(_) => match resource.parse::<IpNetwork>() {
+                    Err(_) => match resource.parse::<IpNet>() {
                         Ok(prefix) => list_by_prefix(&prefix).unwrap(),
                         Err(_) => {
                             eprintln!("list resource not an AS number or a prefix: {}", resource);
@@ -1034,5 +1050,25 @@ fn main() {
                 }
             }
         }
+        Commands::Ip { ip, json, simple } => match fetch_ip_info(ip, simple) {
+            Ok(ipinfo) => {
+                if simple {
+                    println!("{}", ipinfo.ip);
+                    return;
+                }
+
+                let json_value = json!(&ipinfo);
+                if json {
+                    serde_json::to_writer_pretty(std::io::stdout(), &json_value).unwrap();
+                } else {
+                    let mut table = json_to_table(&json_value);
+                    table.collapse();
+                    println!("{}", table);
+                }
+            }
+            Err(e) => {
+                eprintln!("unable to get ip information: {e}");
+            }
+        },
     }
 }
