@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.7.1 - 2024-12-27
+
+### Maintenance
+
+* add back `Cargo.lock` file to reproducible builds
+
 ## v0.7.0 - 2024-12-27
 
 ### New Features
