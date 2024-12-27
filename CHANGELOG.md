@@ -2,6 +2,88 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.7.0 - 2024-12-27
+
+### New Features
+
+#### `monocle ip` command
+
+Add a new `monocle ip` command to retrieve information for the current IP of the machine or any specified IP address,
+including location, network (ASN, network name) and the covering IP prefix of the given IP address.
+
+The command triggers an API call to [BGPKIT API][bgpkit-api],
+and it retrieves the information based on the incoming requester IP address with additional BGP information for the
+enclosing IP prefixes.
+
+[bgpkit-api]: https://api.bgpkit.com/docs
+
+```text
+➜  ~ monocle ip
++----------+--------------------------+
+| ip       | 104.48.0.0               |
++----------+--------------------------+
+| location | US                       |
++----------+---------+----------------+
+| network  | asn     | 7018           |
+|          +---------+----------------+
+|          | country | US             |
+|          +---------+----------------+
+|          | name    | AT&T US - 7018 |
+|          +---------+----------------+
+|          | prefix  | 104.48.0.0/12  |
+|          +---------+----------------+
+|          | rpki    | valid          |
++----------+---------+----------------+
+
+➜  ~ monocle ip 1.1.1.1
++----------+----------------------+
+| ip       | 1.1.1.1              |
++----------+----------------------+
+| location | US                   |
++----------+---------+------------+
+| network  | asn     | 13335      |
+|          +---------+------------+
+|          | country | US         |
+|          +---------+------------+
+|          | name    | Cloudflare |
+|          +---------+------------+
+|          | prefix  | 1.1.1.0/24 |
+|          +---------+------------+
+|          | rpki    | valid      |
++----------+---------+------------+
+
+➜  ~ monocle ip 1.1.1.1 --json
+{
+  "ip": "1.1.1.1",
+  "location": "US",
+  "network": {
+    "asn": 13335,
+    "country": "US",
+    "name": "Cloudflare",
+    "prefix": "1.1.1.0/24",
+    "rpki": "valid"
+  }
+}
+```
+
+#### MRT export for `monocle parse` command
+
+The `monocle parse` command now supports
+exporting filtered BGP messages into MRT files by supplying an MRT file path with `--mrt-path` argument.
+
+#### Improved time string parsing
+
+The parsing of time strings in `monocle time` and `monocle search` now utilizes [`dateparser`][dateparser] for natural
+date strings like `May 6 at 9:24 PM` or `2019-11-29 08:08-08`.
+It now also allows specifying a `duration` like `1h` or `"2 hours"` to replace `--start-ts` or `--end-ts`.
+
+### Other improvements
+
+* Updated documentation for various commands
+* Cleaned up dependencies in the `Cargo.toml` file
+
+[dateparser]: https://github.com/waltzofpearls/dateparser
+
 ## v0.6.2 - 2024-10-28
 
 ### Dependency updates
