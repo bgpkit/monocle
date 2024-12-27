@@ -204,6 +204,10 @@ enum Commands {
         #[clap(long)]
         pretty: bool,
 
+        /// MRT output file path
+        #[clap(long, short = 'M')]
+        mrt_path: Option<PathBuf>,
+
         /// Filter by AS path regex string
         #[clap(flatten)]
         filters: ParseFilters,
@@ -228,7 +232,7 @@ enum Commands {
         sqlite_path: Option<PathBuf>,
 
         /// MRT output file path
-        #[clap(long)]
+        #[clap(long, short = 'M')]
         mrt_path: Option<PathBuf>,
 
         /// SQLite reset database content if exists
@@ -421,6 +425,7 @@ fn main() {
             file_path,
             json,
             pretty,
+            mrt_path,
             filters,
         } => {
             if let Err(e) = filters.validate() {
@@ -445,13 +450,39 @@ fn main() {
             .unwrap();
 
             let mut stdout = std::io::stdout();
-            for elem in parser {
-                let output_str = elem_to_string(&elem, json, pretty, "");
-                if let Err(e) = writeln!(stdout, "{}", &output_str) {
-                    if e.kind() != std::io::ErrorKind::BrokenPipe {
-                        eprintln!("{e}");
+
+            match mrt_path {
+                None => {
+                    for elem in parser {
+                        // output to stdout
+                        let output_str = elem_to_string(&elem, json, pretty, "");
+                        if let Err(e) = writeln!(stdout, "{}", &output_str) {
+                            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                                eprintln!("{e}");
+                            }
+                            std::process::exit(1);
+                        }
                     }
-                    std::process::exit(1);
+                }
+                Some(p) => {
+                    let path = p.to_str().unwrap().to_string();
+                    println!("processing. filtered messages output to {}...", &path);
+                    let mut encoder = MrtUpdatesEncoder::new();
+                    let mut writer = match oneio::get_writer(&path) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            std::process::exit(1);
+                        }
+                    };
+                    let mut total_count = 0;
+                    for elem in parser {
+                        total_count += 1;
+                        encoder.process_elem(&elem);
+                    }
+                    writer.write_all(&encoder.export_bytes()).unwrap();
+                    drop(writer);
+                    println!("done. total of {} message wrote", total_count);
                 }
             }
         }
