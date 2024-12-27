@@ -8,7 +8,6 @@ use std::thread;
 use anyhow::{anyhow, Result};
 use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
-use chrono::DateTime;
 use clap::{Args, Parser, Subcommand};
 use ipnet::IpNet;
 use json_to_table::json_to_table;
@@ -33,7 +32,7 @@ struct Cli {
     config: Option<String>,
 
     /// Print debug information
-    #[clap(long)]
+    #[clap(long, global = true)]
     debug: bool,
 
     #[clap(subcommand)]
@@ -85,20 +84,17 @@ struct ParseFilters {
 
 #[derive(Args, Debug)]
 struct SearchFilters {
-    /*
-    REQUIRED ARGUMENTS
-     */
     /// Filter by start unix timestamp inclusive
     #[clap(short = 't', long)]
-    start_ts: String,
+    start_ts: Option<String>,
 
     /// Filter by end unix timestamp inclusive
     #[clap(short = 'T', long)]
-    end_ts: String,
+    end_ts: Option<String>,
 
-    /*
-    OPTIONAL ARGUMENTS
-     */
+    #[clap(short = 'd', long)]
+    duration: Option<String>,
+
     /// Filter by collector, e.g. rrc00 or route-views2
     #[clap(short = 'c', long)]
     collector: Option<String>,
@@ -143,47 +139,84 @@ struct SearchFilters {
 impl Validate for ParseFilters {
     fn validate(&self) -> Result<()> {
         if let Some(ts) = &self.start_ts {
-            if !(ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()) {
-                // not a number or a rfc3339 string
-                return Err(anyhow!(
-                    "start-ts must be either a unix-timestamp or a RFC3339-compliant string"
-                ));
+            if string_to_time(ts.as_str()).is_err() {
+                return Err(anyhow!("start-ts is not a valid time string: {}", ts));
             }
         }
         if let Some(ts) = &self.end_ts {
-            if !(ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()) {
-                // not a number or a rfc3339 string
-                return Err(anyhow!(
-                    "end-ts must be either a unix-timestamp or a RFC3339-compliant string"
-                ));
+            if string_to_time(ts.as_str()).is_err() {
+                return Err(anyhow!("end-ts is not a valid time string: {}", ts));
             }
         }
-
         Ok(())
     }
 }
 
-impl Validate for SearchFilters {
-    fn validate(&self) -> Result<()> {
-        if !(self.start_ts.as_str().parse::<f64>().is_ok()
-            || DateTime::parse_from_rfc3339(self.start_ts.as_str()).is_ok())
-        {
-            // not a number or a rfc3339 string
-            return Err(anyhow!(
-                "start-ts must be either a unix-timestamp or a RFC3339-compliant string: {}",
-                self.start_ts
-            ));
+impl SearchFilters {
+    fn parse_start_end_strings(&self) -> Result<(i64, i64)> {
+        let mut start_ts = None;
+        let mut end_ts = None;
+        if let Some(ts) = &self.start_ts {
+            match string_to_time(ts.as_str()) {
+                Ok(t) => start_ts = Some(t),
+                Err(_) => return Err(anyhow!("start-ts is not a valid time string: {}", ts)),
+            }
         }
-        if !(self.end_ts.as_str().parse::<f64>().is_ok()
-            || DateTime::parse_from_rfc3339(self.end_ts.as_str()).is_ok())
-        {
-            // not a number or a rfc3339 string
-            return Err(anyhow!(
-                "end-ts must be either a unix-timestamp or a RFC3339-compliant string: {}",
-                self.end_ts
-            ));
+        if let Some(ts) = &self.end_ts {
+            match string_to_time(ts.as_str()) {
+                Ok(t) => end_ts = Some(t),
+                Err(_) => return Err(anyhow!("end-ts is not a valid time string: {}", ts)),
+            }
         }
 
+        match (&self.start_ts, &self.end_ts, &self.duration) {
+            (Some(_), Some(_), Some(_)) => {
+                return Err(anyhow!(
+                    "cannot specify start_ts, end_ts, and duration all at the same time"
+                ))
+            }
+            (Some(_), None, None) | (None, Some(_), None) => {
+                // only one start_ts or end_ts specified
+                return Err(anyhow!(
+                    "must specify two from: start_ts, end_ts and duration"
+                ));
+            }
+            (None, None, _) => {
+                return Err(anyhow!(
+                    "must specify two from: start_ts, end_ts and duration"
+                ));
+            }
+            _ => {}
+        }
+        if let Some(duration) = &self.duration {
+            // this case is duration + start_ts OR end_ts
+            let duration = match humantime::parse_duration(duration) {
+                Ok(d) => d,
+                Err(_) => {
+                    return Err(anyhow!(
+                        "duration is not a valid time duration string: {}",
+                        duration
+                    ))
+                }
+            };
+
+            if let Some(ts) = start_ts {
+                return Ok((ts.timestamp(), (ts + duration).timestamp()));
+            }
+            if let Some(ts) = end_ts {
+                return Ok(((ts - duration).timestamp(), ts.timestamp()));
+            }
+        } else {
+            // this case is start_ts AND end_ts
+            return Ok((start_ts.unwrap().timestamp(), end_ts.unwrap().timestamp()));
+        }
+
+        Err(anyhow!("unexpected time-string parsing result"))
+    }
+}
+impl Validate for SearchFilters {
+    fn validate(&self) -> Result<()> {
+        let _ = self.parse_start_end_strings()?;
         Ok(())
     }
 }
@@ -429,7 +462,7 @@ fn main() {
             filters,
         } => {
             if let Err(e) = filters.validate() {
-                eprintln!("{e}");
+                eprintln!("ERROR: {e}");
                 return;
             }
 
@@ -458,7 +491,7 @@ fn main() {
                         let output_str = elem_to_string(&elem, json, pretty, "");
                         if let Err(e) = writeln!(stdout, "{}", &output_str) {
                             if e.kind() != std::io::ErrorKind::BrokenPipe {
-                                eprintln!("{e}");
+                                eprintln!("ERROR: {e}");
                             }
                             std::process::exit(1);
                         }
@@ -471,7 +504,7 @@ fn main() {
                     let mut writer = match oneio::get_writer(&path) {
                         Ok(w) => w,
                         Err(e) => {
-                            eprintln!("{e}");
+                            eprintln!("ERROR: {e}");
                             std::process::exit(1);
                         }
                     };
@@ -496,7 +529,7 @@ fn main() {
             filters,
         } => {
             if let Err(e) = filters.validate() {
-                eprintln!("{e}");
+                eprintln!("ERROR: {e}");
                 return;
             }
 
@@ -508,14 +541,12 @@ fn main() {
             let mrt_path = mrt_path.map(|p| p.to_str().unwrap().to_string());
             let show_progress = sqlite_db.is_some() || mrt_path.is_some();
 
-            let ts_start = string_to_time(filters.start_ts.as_str())
-                .unwrap()
-                .to_string();
-            let ts_end = string_to_time(filters.end_ts.as_str()).unwrap().to_string();
+            // it's fine to unwrap as the filters.validate() function has already checked for issues
+            let (ts_start, ts_end) = filters.parse_start_end_strings().unwrap();
 
             let mut broker = bgpkit_broker::BgpkitBroker::new()
-                .ts_start(ts_start.as_str())
-                .ts_end(ts_end.as_str())
+                .ts_start(ts_start)
+                .ts_end(ts_end)
                 .data_type("update")
                 .page_size(1000);
 
@@ -657,8 +688,9 @@ fn main() {
                         &filters.peer_ip,
                         &filters.peer_asn,
                         &filters.elem_type,
-                        &Some(filters.start_ts.clone()),
-                        &Some(filters.end_ts.clone()),
+                        // use the parsed new start and end ts
+                        &Some(ts_start.to_string()),
+                        &Some(ts_end.to_string()),
                         &filters.as_path,
                     )
                     .unwrap();
@@ -709,7 +741,7 @@ fn main() {
                 (false, true) => SearchType::AsnOnly,
                 (false, false) => SearchType::Guess,
                 (true, true) => {
-                    eprintln!("name-only and asn-only cannot be both true");
+                    eprintln!("ERROR: name-only and asn-only cannot be both true");
                     return;
                 }
             };
@@ -787,7 +819,7 @@ fn main() {
         }
         Commands::Time { time, simple } => {
             let timestring_res = match simple {
-                true => convert_time_string(&time),
+                true => parse_time_string_to_rfc3339(&time),
                 false => time_to_table(&time),
             };
             match timestring_res {
@@ -795,7 +827,7 @@ fn main() {
                     println!("{t}")
                 }
                 Err(e) => {
-                    eprintln!("{e}")
+                    eprintln!("ERROR: {e}")
                 }
             };
         }
@@ -812,7 +844,7 @@ fn main() {
                 let res = match read_roa(file_path.to_str().unwrap()) {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("unable to read ROA file: {}", e);
+                        eprintln!("ERROR: unable to read ROA file: {}", e);
                         return;
                     }
                 };
@@ -825,7 +857,7 @@ fn main() {
                 let res = match read_aspa(file_path.to_str().unwrap()) {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("unable to read ASPA file: {}", e);
+                        eprintln!("ERROR: unable to read ASPA file: {}", e);
                         return;
                     }
                 };
@@ -843,7 +875,7 @@ fn main() {
                 let (validity, roas) = match validate(asn, prefix.as_str()) {
                     Ok((v1, v2)) => (v1, v2),
                     Err(e) => {
-                        eprintln!("unable to check RPKI validity: {}", e);
+                        eprintln!("ERROR: unable to check RPKI validity: {}", e);
                         return;
                     }
                 };
@@ -867,7 +899,10 @@ fn main() {
                     Err(_) => match resource.parse::<IpNet>() {
                         Ok(prefix) => list_by_prefix(&prefix).unwrap(),
                         Err(_) => {
-                            eprintln!("list resource not an AS number or a prefix: {}", resource);
+                            eprintln!(
+                                "ERROR: list resource not an AS number or a prefix: {}",
+                                resource
+                            );
                             return;
                         }
                     },
@@ -908,7 +943,7 @@ fn main() {
                     let res = match client.get_bgp_routing_stats(asn, country.clone()) {
                         Ok(res) => res,
                         Err(e) => {
-                            eprintln!("unable to get routing stats: {}", e);
+                            eprintln!("ERROR: unable to get routing stats: {}", e);
                             return;
                         }
                     };
@@ -918,7 +953,7 @@ fn main() {
                         (Some(c), None) => c,
                         (None, Some(asn)) => format!("as{}", asn),
                         (Some(_), Some(_)) => {
-                            eprintln!("cannot specify both country and ASN");
+                            eprintln!("ERROR: cannot specify both country and ASN");
                             return;
                         }
                     };
@@ -1022,7 +1057,7 @@ fn main() {
                         match rpki_status.to_lowercase().as_str() {
                             "valid" | "invalid" | "unknown" => Some(rpki_status),
                             _ => {
-                                eprintln!("invalid rpki status: {}", rpki_status);
+                                eprintln!("ERROR: invalid rpki status: {}", rpki_status);
                                 return;
                             }
                         }
@@ -1033,7 +1068,7 @@ fn main() {
                     let res = match client.get_bgp_prefix_origins(asn, prefix, rpki) {
                         Ok(res) => res,
                         Err(e) => {
-                            eprintln!("unable to get prefix origins: {}", e);
+                            eprintln!("ERROR: unable to get prefix origins: {}", e);
                             return;
                         }
                     };
@@ -1098,7 +1133,7 @@ fn main() {
                 }
             }
             Err(e) => {
-                eprintln!("unable to get ip information: {e}");
+                eprintln!("ERROR: unable to get ip information: {e}");
             }
         },
     }

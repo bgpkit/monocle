@@ -17,34 +17,33 @@ name = "monocle"
 path = "src/bin/monocle.rs"
 
 [dependencies]
+anyhow = "1.0"
 bgpkit-broker = "0.7.5"
 bgpkit-parser = { version = "0.10.11", features = ["serde"] }
-oneio = { version = "0.17.0", default-features = false, features = ["remote", "gz", "bz"] }
-
-clap = { version = "4.1", features = ["derive"] }
-itertools = "0.13.0"
-rayon = "1.8"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-ipnet = { version = "2.10", features = ["json"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+config = { version = "0.13", features = ["toml"] }
 chrono = "0.4"
 chrono-humanize = "0.2"
-anyhow = "1.0"
-json_to_table = "0.9.0"
-tabled = "0.17.0"
-config = { version = "0.13", features = ["toml"] }
+clap = { version = "4.1", features = ["derive"] }
+dateparser = "0.2"
 dirs = "5"
-rusqlite = { version = "0.31", features = ["bundled"] }
-ureq = { version = "2.9", features = ["json"] }
+dotenvy = "0.15"
+humantime = "2.1"
+indicatif = "0.17.0" # progress bar
+ipnet = { version = "2.10", features = ["json"] }
+itertools = "0.13.0"
+json_to_table = "0.9.0"
+oneio = { version = "0.17.0", default-features = false, features = ["remote", "gz", "bz"] }
+radar-rs = "0.1.0"
+rayon = "1.8"
 regex = "1.10"
 rpki = { version = "0.16.1", features = ["repository"] }
-radar-rs = "0.1.0"
-dotenvy = "0.15"
-
-# progress bar
-indicatif = "0.17.0"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tabled = "0.17.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+ureq = { version = "2.9", features = ["json"] }
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
