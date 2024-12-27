@@ -44,7 +44,7 @@ Subcommands:
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
 - `whois`: search AS and organization information by ASN or name
-- `country`: utility to lookup country name and code
+- `country`: utility to look up country name and code
 - `time`: utility to convert time between unix timestamp and RFC3339 string
 - `rpki`: check RPKI validation for given ASNs or prefixes
 
@@ -75,33 +75,34 @@ Options:
 
 ### `monocle parse`
 
-Parsing single MRT file given a local path or a remote URL.
+Parsing a single MRT file given a local path or a remote URL.
 
 ```text
 ➜  monocle git:(main) ✗ monocle parse --help
 Parse individual MRT files given a file path, local or remote
 
-USAGE:
-    monocle parse [OPTIONS] <FILE>
+Usage: monocle parse [OPTIONS] <FILE>
 
-ARGS:
-    <FILE>    File path to a MRT file, local or remote
+Arguments:
+  <FILE>  File path to a MRT file, local or remote
 
-OPTIONS:
-    -a, --as-path <AS_PATH>          Filter by AS path regex string
-    -h, --help                       Print help information
-    -j, --peer-ip <PEER_IP>          Filter by peer IP address
-    -J, --peer-asn <PEER_ASN>        Filter by peer ASN
-        --json                       Output as JSON objects
-    -m, --elem-type <ELEM_TYPE>      Filter by elem type: announce (a) or withdraw (w)
-    -o, --origin-asn <ORIGIN_ASN>    Filter by origin AS Number
-    -p, --prefix <PREFIX>            Filter by network prefix
-        --pretty                     Pretty-print JSON output
-    -s, --include-super              Include super-prefix when filtering
-    -S, --include-sub                Include sub-prefix when filtering
-    -t, --start-ts <START_TS>        Filter by start unix timestamp inclusive
-    -T, --end-ts <END_TS>            Filter by end unix timestamp inclusive
-    -V, --version                    Print version information
+Options:
+      --json                     Output as JSON objects
+      --debug                    Print debug information
+      --pretty                   Pretty-print JSON output
+  -M, --mrt-path <MRT_PATH>      MRT output file path
+  -o, --origin-asn <ORIGIN_ASN>  Filter by origin AS Number
+  -p, --prefix <PREFIX>          Filter by network prefix
+  -s, --include-super            Include super-prefix when filtering
+  -S, --include-sub              Include sub-prefix when filtering
+  -j, --peer-ip <PEER_IP>        Filter by peer IP address
+  -J, --peer-asn <PEER_ASN>      Filter by peer ASN
+  -m, --elem-type <ELEM_TYPE>    Filter by elem type: announce (a) or withdraw (w)
+  -t, --start-ts <START_TS>      Filter by start unix timestamp inclusive
+  -T, --end-ts <END_TS>          Filter by end unix timestamp inclusive
+  -a, --as-path <AS_PATH>        Filter by AS path regex string
+  -h, --help                     Print help
+  -V, --version                  Print version
 ```
 
 ### `monocle search`
@@ -113,17 +114,19 @@ MRT files in parallel. More filters can be used to search for messages that matc
 ➜  monocle git:(main) ✗ monocle search --help
 Search BGP messages from all available public MRT files
 
-Usage: monocle search [OPTIONS] --start-ts <START_TS> --end-ts <END_TS>
+Usage: monocle search [OPTIONS]
 
 Options:
       --dry-run                    Dry-run, do not download or parse
+      --debug                      Print debug information
       --json                       Output as JSON objects
       --pretty                     Pretty-print JSON output
       --sqlite-path <SQLITE_PATH>  SQLite output file path
-      --mrt-path <MRT_PATH>        MRT output file path
+  -M, --mrt-path <MRT_PATH>        MRT output file path
       --sqlite-reset               SQLite reset database content if exists
   -t, --start-ts <START_TS>        Filter by start unix timestamp inclusive
   -T, --end-ts <END_TS>            Filter by end unix timestamp inclusive
+  -d, --duration <DURATION>        
   -c, --collector <COLLECTOR>      Filter by collector, e.g. rrc00 or route-views2
   -P, --project <PROJECT>          Filter by route collection project, i.e. riperis or routeviews
   -o, --origin-asn <ORIGIN_ASN>    Filter by origin AS Number
@@ -141,6 +144,10 @@ Options:
 ### `monocle time`
 
 Convert between UNIX timestamp and RFC3339 time strings.
+We use the [`dateparser`][dateparser] crate for parsing time
+strings.
+
+[dateparser]:https://github.com/waltzofpearls/dateparser
 
 ```text
 ➜  ~ monocle time --help              
@@ -167,13 +174,6 @@ Example runs:
 ├────────────┼───────────────────────────┼───────┤
 │ 1659135226 │ 2022-07-29T22:53:46+00:00 │ now   │
 ╰────────────┴───────────────────────────┴───────╯
-
-➜  monocle time 0
-╭──────┬───────────────────────────┬──────────────╮
-│ unix │ rfc3339                   │ human        │
-├──────┼───────────────────────────┼──────────────┤
-│ 0    │ 1970-01-01T00:00:00+00:00 │ 52 years ago │
-╰──────┴───────────────────────────┴──────────────╯
 
 ➜  monocle time 2022-01-01T00:00:00Z
 ╭────────────┬───────────────────────────┬──────────────╮
@@ -241,7 +241,7 @@ You can specify multiple queries:
 | 400644 | BGPKIT-LLC    | BGPKIT LLC       | US          |
 ```
 
-Use `--pretty` to output the table with pretty rounded corner
+Use `--pretty` to output the table with a pretty rounded corner
 
 ```text
 ➜  monocle whois 13335 bgpkit --pretty
@@ -325,7 +325,8 @@ Commands:
 
 #### `monocle rpki check`
 
-Check RPKI validity for given prefix-ASN pair. We use RIPE NCC's [routinator instance](https://rpki-validator.ripe.net)
+Check RPKI validity for a given prefix-ASN pair.
+We use RIPE NCC's [routinator instance](https://rpki-validator.ripe.net)
 as the data source.
 
 ```text
@@ -445,7 +446,7 @@ using [`radar-rs`](https://github.com/bgpkit/radar-rs) crate.
 
 Using this command requires setting up the `CF_API_TOKEN` environment variable. See
 the [Cloudflare Radar API getting started guide](https://developers.cloudflare.com/radar/get-started/first-request/) for
-detailed steps on obtaining a API token.
+detailed steps on getting an API token.
 
 #### `monocle radar stats`: routing statistics
 
@@ -563,6 +564,71 @@ Lookup RPKI invalid (with flag `--rpki-status invalid`) prefixes originated by a
 └─────────────────────┴────────┴─────────┴──────────────┘
 
 Data generated at 2023-07-24T16:00:00 UTC.
+```
+
+### `monocle ip`
+
+Retrieve information for the current IP of the machine or any specified IP address.
+The information includes location,
+network (ASN, network name) and the covering IP prefix of the given IP address.
+
+Get information for the machine's public IP address:
+
+```text
+➜  ~ monocle ip
++----------+--------------------------+
+| ip       | 104.48.0.0               |
++----------+--------------------------+
+| location | US                       |
++----------+---------+----------------+
+| network  | asn     | 7018           |
+|          +---------+----------------+
+|          | country | US             |
+|          +---------+----------------+
+|          | name    | AT&T US - 7018 |
+|          +---------+----------------+
+|          | prefix  | 104.48.0.0/12  |
+|          +---------+----------------+
+|          | rpki    | valid          |
++----------+---------+----------------+
+```
+
+Look up IP and network information for a given IP:
+
+```text
+➜  ~ monocle ip 1.1.1.1
++----------+----------------------+
+| ip       | 1.1.1.1              |
++----------+----------------------+
+| location | US                   |
++----------+---------+------------+
+| network  | asn     | 13335      |
+|          +---------+------------+
+|          | country | US         |
+|          +---------+------------+
+|          | name    | Cloudflare |
+|          +---------+------------+
+|          | prefix  | 1.1.1.0/24 |
+|          +---------+------------+
+|          | rpki    | valid      |
++----------+---------+------------+
+```
+
+Displaying the information in JSON format:
+
+```text
+➜  ~ monocle ip 1.1.1.1 --json
+{
+  "ip": "1.1.1.1",
+  "location": "US",
+  "network": {
+    "asn": 13335,
+    "country": "US",
+    "name": "Cloudflare",
+    "prefix": "1.1.1.0/24",
+    "rpki": "valid"
+  }
+}
 ```
 
 ## Built with ❤️ by BGPKIT Team
