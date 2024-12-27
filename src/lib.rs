@@ -86,16 +86,17 @@ struct BgpTime {
 }
 
 pub fn string_to_time(time_string: &str) -> Result<i64> {
-    let ts = match chrono::DateTime::parse_from_rfc3339(time_string) {
+    let ts = match dateparser::parse_with(
+        time_string,
+        &Utc,
+        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+    ) {
         Ok(ts) => ts.timestamp(),
-        Err(_) => match time_string.parse::<f64>() {
-            Ok(ts) => ts as i64,
-            Err(_) => {
-                return Err(anyhow!(
+        Err(_) => {
+            return Err(anyhow!(
                 "Input time must be either Unix timestamp or time string compliant with RFC3339"
             ))
-            }
-        },
+        }
     };
 
     Ok(ts)
@@ -109,19 +110,13 @@ pub fn convert_time_string(time_vec: &[String]) -> Result<String> {
             time_vec
                 .iter()
                 .map(|ts| {
-                    match ts.parse::<f64>() {
-                        Ok(timestamp) => {
-                            let dt = Utc.timestamp_opt(timestamp as i64, 0).unwrap();
-                            dt.to_rfc3339()
-                        }
-                        Err(_) => {
-                            // not a time stamp, check if it is a valid RFC3339 string,
-                            // if so, return the unix timestamp as string; otherwise, return error
-                            match chrono::DateTime::parse_from_rfc3339(ts) {
-                                Ok(dt) => dt.timestamp().to_string(),
-                                Err(_) => "".to_string(),
-                            }
-                        }
+                    match dateparser::parse_with(
+                        ts,
+                        &Utc,
+                        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                    ) {
+                        Ok(ts) => ts.to_rfc3339(),
+                        Err(_) => "".to_string(),
                     }
                 })
                 .collect()

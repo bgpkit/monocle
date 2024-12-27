@@ -8,7 +8,6 @@ use std::thread;
 use anyhow::{anyhow, Result};
 use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
-use chrono::DateTime;
 use clap::{Args, Parser, Subcommand};
 use ipnet::IpNet;
 use json_to_table::json_to_table;
@@ -143,47 +142,33 @@ struct SearchFilters {
 impl Validate for ParseFilters {
     fn validate(&self) -> Result<()> {
         if let Some(ts) = &self.start_ts {
-            if !(ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()) {
-                // not a number or a rfc3339 string
-                return Err(anyhow!(
-                    "start-ts must be either a unix-timestamp or a RFC3339-compliant string"
-                ));
+            if let Err(_) = dateparser::parse(ts) {
+                return Err(anyhow!("start-ts is not a valid time string: {}", ts));
             }
         }
         if let Some(ts) = &self.end_ts {
-            if !(ts.parse::<f64>().is_ok() || DateTime::parse_from_rfc3339(ts).is_ok()) {
-                // not a number or a rfc3339 string
-                return Err(anyhow!(
-                    "end-ts must be either a unix-timestamp or a RFC3339-compliant string"
-                ));
+            if let Err(_) = dateparser::parse(ts) {
+                return Err(anyhow!("end-ts is not a valid time string: {}", ts));
             }
         }
-
         Ok(())
     }
 }
 
 impl Validate for SearchFilters {
     fn validate(&self) -> Result<()> {
-        if !(self.start_ts.as_str().parse::<f64>().is_ok()
-            || DateTime::parse_from_rfc3339(self.start_ts.as_str()).is_ok())
-        {
-            // not a number or a rfc3339 string
+        if let Err(_) = dateparser::parse(&self.start_ts) {
             return Err(anyhow!(
-                "start-ts must be either a unix-timestamp or a RFC3339-compliant string: {}",
-                self.start_ts
+                "start-ts is not a valid time string: {}",
+                &self.start_ts
             ));
         }
-        if !(self.end_ts.as_str().parse::<f64>().is_ok()
-            || DateTime::parse_from_rfc3339(self.end_ts.as_str()).is_ok())
-        {
-            // not a number or a rfc3339 string
+        if let Err(_) = dateparser::parse(&self.end_ts) {
             return Err(anyhow!(
-                "end-ts must be either a unix-timestamp or a RFC3339-compliant string: {}",
-                self.end_ts
+                "end-ts is not a valid time string: {}",
+                &self.end_ts
             ));
         }
-
         Ok(())
     }
 }

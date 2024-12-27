@@ -20,9 +20,11 @@ path = "src/bin/monocle.rs"
 anyhow = "1.0"
 bgpkit-broker = "0.7.5"
 bgpkit-parser = { version = "0.10.11", features = ["serde"] }
+config = { version = "0.13", features = ["toml"] }
 chrono = "0.4"
 chrono-humanize = "0.2"
 clap = { version = "4.1", features = ["derive"] }
+dateparser = "0.2"
 dirs = "5"
 dotenvy = "0.15"
 indicatif = "0.17.0" # progress bar
@@ -33,6 +35,7 @@ oneio = { version = "0.17.0", default-features = false, features = ["remote", "g
 radar-rs = "0.1.0"
 rayon = "1.8"
 regex = "1.10"
+rpki = { version = "0.16.1", features = ["repository"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
