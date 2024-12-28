@@ -20,7 +20,7 @@ cargo install monocle
 ### Using `homebrew` on macOS
 
 ```bash
-brew install bgpkit/tap/monocle
+brew install monocle
 ```
 
 ### Using [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)
