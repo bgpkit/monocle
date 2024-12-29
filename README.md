@@ -5,7 +5,7 @@
 [![Docs.rs](https://docs.rs/monocle/badge.svg)](https://docs.rs/monocle)
 [![License](https://img.shields.io/crates/l/monocle)](https://raw.githubusercontent.com/bgpkit/monocle/main/LICENSE)
 
-See through all BGP data with a monocle.
+See through all Border Gateway Protocol (BGP) data with a monocle.
 
 ![](https://spaces.bgpkit.org/assets/monocle/monocle-emoji.png)
 
