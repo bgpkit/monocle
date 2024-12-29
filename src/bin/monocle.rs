@@ -38,7 +38,7 @@ struct Cli {
 enum Commands {
     /// Parse individual MRT files given a file path, local or remote.
     Parse {
-        /// File path to a MRT file, local or remote.
+        /// File path to an MRT file, local or remote.
         #[clap(name = "FILE")]
         file_path: PathBuf,
 
@@ -106,7 +106,7 @@ enum Commands {
         #[clap(short = 'C', long)]
         country_only: bool,
 
-        /// Refresh local as2org database
+        /// Refresh the local as2org database
         #[clap(short, long)]
         update: bool,
 
@@ -114,7 +114,7 @@ enum Commands {
         #[clap(short, long)]
         pretty: bool,
 
-        /// Display full table (with ord_id, org_size)
+        /// Display a full table (with ord_id, org_size)
         #[clap(short = 'F', long)]
         full_table: bool,
 
@@ -156,7 +156,7 @@ enum Commands {
         #[clap()]
         ip: Option<IpAddr>,
 
-        /// Print IP address only (e.g. for getting the public IP address quickly)
+        /// Print IP address only (e.g., for getting the public IP address quickly)
         #[clap(long)]
         simple: bool,
 
@@ -183,7 +183,7 @@ enum RpkiCommands {
 
     /// parse a RPKI ASPA file
     ReadAspa {
-        /// File path to a ASPA file (.asa), local or remote.
+        /// File path to an ASPA file (.asa), local or remote.
         #[clap(name = "FILE")]
         file_path: PathBuf,
 
@@ -218,14 +218,14 @@ enum RpkiCommands {
 enum RadarCommands {
     /// get routing stats
     Stats {
-        /// a two-letter country code or asn number (e.g. US or 13335)
+        /// a two-letter country code or asn number (e.g., US or 13335)
         #[clap(name = "QUERY")]
         query: Option<String>,
     },
 
-    /// look up prefix to origin mapping on the most recent global routing table snapshot
+    /// look up prefix-to-origin mapping on the most recent global routing table snapshot
     Pfx2as {
-        /// a IP prefix or an AS number (e.g. 1.1.1.0/24 or 13335)
+        /// an IP prefix or an AS number (e.g., 1.1.1.0/24 or 13335)
         #[clap(name = "QUERY")]
         query: String,
 
@@ -264,7 +264,7 @@ fn main() {
             .init();
     }
 
-    // You can check for the existence of subcommands, and if found use their
+    // You can check for the existence of subcommands, and if found, use their
     // matches just as you would the top level cmd
     match cli.command {
         Commands::Parse {
