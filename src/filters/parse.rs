@@ -57,7 +57,7 @@ pub struct ParseFilters {
 }
 
 impl ParseFilters {
-    pub fn parse_start_end_strings(&self) -> Result<(String, String)> {
+    pub fn parse_start_end_strings(&self) -> Result<(i64, i64)> {
         let mut start_ts = None;
         let mut end_ts = None;
         if let Some(ts) = &self.start_ts {
@@ -105,14 +105,14 @@ impl ParseFilters {
             };
 
             if let Some(ts) = start_ts {
-                return Ok((ts.to_rfc3339(), (ts + duration).to_rfc3339()));
+                return Ok((ts.timestamp(), (ts + duration).timestamp()));
             }
             if let Some(ts) = end_ts {
-                return Ok(((ts - duration).to_rfc3339(), ts.to_rfc3339()));
+                return Ok(((ts - duration).timestamp(), ts.timestamp()));
             }
         } else {
             // this case is start_ts AND end_ts
-            return Ok((start_ts.unwrap().to_rfc3339(), end_ts.unwrap().to_rfc3339()));
+            return Ok((start_ts.unwrap().timestamp(), end_ts.unwrap().timestamp()));
         }
 
         Err(anyhow!("unexpected time-string parsing result"))
