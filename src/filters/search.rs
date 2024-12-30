@@ -3,7 +3,8 @@ use crate::filters::MrtParserFilters;
 use anyhow::Result;
 use bgpkit_broker::BrokerItem;
 use bgpkit_parser::BgpkitParser;
-use clap::Args;
+use clap::{Args, ValueEnum};
+use serde::Serialize;
 use std::io::Read;
 
 #[derive(Args, Debug, Clone)]
@@ -18,6 +19,21 @@ pub struct SearchFilters {
     /// Filter by route collection project, i.e., riperis or routeviews
     #[clap(short = 'P', long)]
     pub project: Option<String>,
+
+    /// Specify data dump type to search (updates or RIB dump)
+    #[clap(short = 'D', long, default_value_t, value_enum)]
+    pub dump_type: DumpType,
+}
+
+#[derive(ValueEnum, Clone, Debug, Default, Serialize)]
+pub enum DumpType {
+    /// BGP updates only
+    #[default]
+    Updates,
+    /// BGP RIB dump only
+    Rib,
+    /// BGP RIB dump and BGP updates
+    RibUpdates,
 }
 
 impl SearchFilters {
@@ -28,7 +44,6 @@ impl SearchFilters {
         let mut broker = bgpkit_broker::BgpkitBroker::new()
             .ts_start(ts_start)
             .ts_end(ts_end)
-            .data_type("update")
             .page_size(1000);
 
         if let Some(project) = &self.project {
@@ -36,6 +51,18 @@ impl SearchFilters {
         }
         if let Some(collector) = &self.collector {
             broker = broker.collector_id(collector.as_str());
+        }
+
+        match self.dump_type {
+            DumpType::Updates => {
+                broker = broker.data_type("updates");
+            }
+            DumpType::Rib => {
+                broker = broker.data_type("rib");
+            }
+            DumpType::RibUpdates => {
+                // do nothing here -> getting all RIB and updates
+            }
         }
 
         broker
