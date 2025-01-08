@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.7.2 - 2025-01-08
+
+### Improvements
+
+* support searching data from RIB dumps by specifying `--dump-type` argument
+    * `--dump-type updates`: search updates files only
+    * `--dump-type rib`: search RIB files only
+    * `--dump-type rib-updates`: search RIB dump and updates
+* improved internal handling of filters and time string parsing
+* improved documentation
+
 ## v0.7.1 - 2024-12-27
 
 ### Maintenance
