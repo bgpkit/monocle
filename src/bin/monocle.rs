@@ -13,6 +13,7 @@ use json_to_table::json_to_table;
 use monocle::*;
 use radar_rs::RadarClient;
 use rayon::prelude::*;
+use serde::Serialize;
 use serde_json::json;
 use tabled::settings::{Merge, Style};
 use tabled::{Table, Tabled};
@@ -30,6 +31,10 @@ struct Cli {
     #[clap(long, global = true)]
     debug: bool,
 
+    /// Output as JSON objects
+    #[clap(long, global = true)]
+    json: bool,
+
     #[clap(subcommand)]
     command: Commands,
 }
@@ -41,10 +46,6 @@ enum Commands {
         /// File path to an MRT file, local or remote.
         #[clap(name = "FILE")]
         file_path: PathBuf,
-
-        /// Output as JSON objects
-        #[clap(long)]
-        json: bool,
 
         /// Pretty-print JSON output
         #[clap(long)]
@@ -64,10 +65,6 @@ enum Commands {
         /// Dry-run, do not download or parse.
         #[clap(long)]
         dry_run: bool,
-
-        /// Output as JSON objects
-        #[clap(long)]
-        json: bool,
 
         /// Pretty-print JSON output
         #[clap(long)]
@@ -159,16 +156,30 @@ enum Commands {
         /// Print IP address only (e.g., for getting the public IP address quickly)
         #[clap(long)]
         simple: bool,
-
-        /// Output as JSON objects
-        #[clap(long)]
-        json: bool,
     },
 
     /// Cloudflare Radar API lookup (set CF_API_TOKEN to enable)
     Radar {
         #[clap(subcommand)]
         commands: RadarCommands,
+    },
+
+    /// Bulk prefix-to-AS mapping lookup with the pre-generated data file.
+    Pfx2as {
+        /// Prefix-to-AS mapping data file location
+        #[clap(
+            long,
+            default_value = "https://data.bgpkit.com/pfx2as/pfx2as-latest.json.bz2"
+        )]
+        data_file_path: String,
+
+        /// IP prefixes or prefix files (one prefix per line)
+        #[clap(required = true)]
+        input: Vec<String>,
+
+        /// Only matching exact prefixes. By default, it does longest-prefix matching.
+        #[clap(short, long)]
+        exact_match: bool,
     },
 }
 
@@ -264,12 +275,13 @@ fn main() {
             .init();
     }
 
+    let json = cli.json;
+
     // You can check for the existence of subcommands, and if found, use their
     // matches just as you would the top level cmd
     match cli.command {
         Commands::Parse {
             file_path,
-            json,
             pretty,
             mrt_path,
             filters,
@@ -321,7 +333,6 @@ fn main() {
         }
         Commands::Search {
             dry_run,
-            json,
             pretty,
             mrt_path,
             sqlite_path,
@@ -727,7 +738,7 @@ fn main() {
                         }
                     };
 
-                    #[derive(Tabled)]
+                    #[derive(Tabled, Serialize)]
                     struct Stats {
                         pub scope: String,
                         pub origins: u32,
@@ -813,8 +824,12 @@ fn main() {
                             ),
                         },
                     ];
-                    println!("{}", Table::new(table_data).with(Style::modern()));
-                    println!("\nData generated at {} UTC.", res.meta.data_time);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&table_data).unwrap());
+                    } else {
+                        println!("{}", Table::new(table_data).with(Style::modern()));
+                        println!("\nData generated at {} UTC.", res.meta.data_time);
+                    }
                 }
                 RadarCommands::Pfx2as { query, rpki_status } => {
                     let (asn, prefix) = match query.parse::<u32>() {
@@ -842,7 +857,7 @@ fn main() {
                         }
                     };
 
-                    #[derive(Tabled)]
+                    #[derive(Tabled, Serialize)]
                     struct Pfx2origin {
                         pub prefix: String,
                         pub origin: String,
@@ -879,13 +894,16 @@ fn main() {
                             ),
                         })
                         .collect::<Vec<Pfx2origin>>();
-
-                    println!("{}", Table::new(table_data).with(Style::modern()));
-                    println!("\nData generated at {} UTC.", res.meta.data_time);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&table_data).unwrap());
+                    } else {
+                        println!("{}", Table::new(table_data).with(Style::modern()));
+                        println!("\nData generated at {} UTC.", res.meta.data_time);
+                    }
                 }
             }
         }
-        Commands::Ip { ip, json, simple } => match fetch_ip_info(ip, simple) {
+        Commands::Ip { ip, simple } => match fetch_ip_info(ip, simple) {
             Ok(ipinfo) => {
                 if simple {
                     println!("{}", ipinfo.ip);
@@ -905,5 +923,60 @@ fn main() {
                 eprintln!("ERROR: unable to get ip information: {e}");
             }
         },
+        Commands::Pfx2as {
+            data_file_path,
+            input,
+            exact_match,
+        } => {
+            let pfx2as = match Pfx2as::new(Some(data_file_path)) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("ERROR: unable to open data file: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            // collect all prefixes to look up
+            let mut prefixes: Vec<IpNet> = vec![];
+            for i in input {
+                match i.parse::<IpNet>() {
+                    Ok(p) => prefixes.push(p),
+                    Err(_) => {
+                        // it might be a data file
+                        if let Ok(lines) = oneio::read_lines(i.as_str()) {
+                            for line in lines.map_while(Result::ok) {
+                                if line.starts_with('#') {
+                                    continue;
+                                }
+                                let trimmed =
+                                    line.trim().split(',').next().unwrap_or(line.as_str());
+                                if let Ok(p) = trimmed.parse::<IpNet>() {
+                                    prefixes.push(p);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // map prefix to origins. one prefix may be mapped to multiple origins
+            prefixes.sort();
+            let mut prefix_origin_pairs: Vec<(IpNet, u32)> = vec![];
+            for p in prefixes {
+                match exact_match {
+                    true => {}
+                    false => {
+                        for origin in pfx2as.lookup_longest(p) {
+                            prefix_origin_pairs.push((p, origin));
+                        }
+                    }
+                }
+            }
+
+            // display
+            for pair in prefix_origin_pairs {
+                println!("{},{}", pair.0, pair.1);
+            }
+        }
     }
 }
