@@ -1485,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "monocle"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "bgpkit-broker",

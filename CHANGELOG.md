@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.8.0
+
+### New subcommand
+
+* added `monocle pfx2as` subcommand to allow bulk prefix-to-asn mapping using BGPKIT dataset
+    * it takes a list of prefixes or prefix files (one prefix per line)
+
+Example:
+
+```bash
+monocle pfx2as 1.1.1.0/24 8.8.8.0/24 --json
+[
+  {
+    "origin": 13335,
+    "prefix": "1.1.1.0/24"
+  },
+  {
+    "origin": 15169,
+    "prefix": "8.8.8.0/24"
+  }
+]
+```
+
+### Maintenance
+
+* update dependencies
+    * note that we upgraded to `bgpkit-parser` v0.11 and community values are now without prefixes such as `lg:` `ecv6`
+
 ## v0.7.2 - 2025-01-08
 
 ### Improvements
