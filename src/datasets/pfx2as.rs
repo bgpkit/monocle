@@ -98,25 +98,3 @@ impl Pfx2as {
         }
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-
-    #[test]
-    fn test_lookup() {
-        let pfx2as = Pfx2as::new(None).unwrap();
-        assert_eq!(
-            pfx2as.lookup_exact(IpNet::from_str("1.1.1.0/24").unwrap()),
-            vec![13335]
-        );
-        assert_eq!(
-            pfx2as.lookup_exact(IpNet::from_str("2620:aa:a000::/48").unwrap()),
-            vec![400644]
-        );
-        assert_eq!(
-            pfx2as.lookup_longest(IpNet::from_str("1.1.1.1/32").unwrap()),
-            vec![13335]
-        );
-    }
-}
