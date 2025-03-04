@@ -30,9 +30,10 @@ dotenvy = "0.15"
 humantime = "2.1"
 indicatif = "0.17.0" # progress bar
 ipnet = { version = "2.10", features = ["json"] }
+ipnet-trie = "0.2.0"
 itertools = "0.14"
 json_to_table = "0.10.0"
-oneio = { version = "0.17.0", default-features = false, features = ["remote", "gz", "bz"] }
+oneio = { version = "0.17.0", default-features = false, features = ["remote", "gz", "bz", "json"] }
 radar-rs = "0.1.0"
 rayon = "1.8"
 regex = "1.10"
