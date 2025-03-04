@@ -1,4 +1,6 @@
 #![allow(clippy::type_complexity)]
+
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -9,6 +11,7 @@ use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
 use clap::{Parser, Subcommand};
 use ipnet::IpNet;
+use itertools::Itertools;
 use json_to_table::json_to_table;
 use monocle::*;
 use radar_rs::RadarClient;
@@ -961,30 +964,29 @@ fn main() {
 
             // map prefix to origins. one prefix may be mapped to multiple origins
             prefixes.sort();
-            let mut prefix_origin_pairs: Vec<(IpNet, u32)> = vec![];
+            let mut prefix_origins_map: HashMap<IpNet, HashSet<u32>> = HashMap::new();
             for p in prefixes {
-                match exact_match {
-                    true => {}
-                    false => {
-                        for origin in pfx2as.lookup_longest(p) {
-                            prefix_origin_pairs.push((p, origin));
-                        }
-                    }
-                }
+                let origins = match exact_match {
+                    true => pfx2as.lookup_exact(p),
+                    false => pfx2as.lookup_longest(p),
+                };
+                prefix_origins_map.entry(p).or_default().extend(origins);
             }
 
             // display
             if json {
                 // map prefix_origin_pairs to a vector of JSON objects each with a
                 // "prefix" and "origin" field
-                let data = prefix_origin_pairs
+                let data = prefix_origins_map
                     .iter()
-                    .map(|(p, o)| json!({"prefix": p.to_string(), "origin": *o}))
+                    .map(|(p, o)| json!({"prefix": p.to_string(), "origins": o.iter().cloned().collect::<Vec<u32>>()}))
                     .collect::<Vec<Value>>();
                 serde_json::to_writer_pretty(std::io::stdout(), &data).unwrap();
             } else {
-                for pair in prefix_origin_pairs {
-                    println!("{},{}", pair.0, pair.1);
+                for (prefix, origins) in prefix_origins_map {
+                    let mut origins_vec = origins.iter().cloned().collect::<Vec<u32>>();
+                    origins_vec.sort();
+                    println!("{},{}", prefix, origins.iter().join(","));
                 }
             }
         }
