@@ -14,7 +14,7 @@ use monocle::*;
 use radar_rs::RadarClient;
 use rayon::prelude::*;
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tabled::settings::{Merge, Style};
 use tabled::{Table, Tabled};
 use tracing::{info, Level};
@@ -974,8 +974,18 @@ fn main() {
             }
 
             // display
-            for pair in prefix_origin_pairs {
-                println!("{},{}", pair.0, pair.1);
+            if json {
+                // map prefix_origin_pairs to a vector of JSON objects each with a
+                // "prefix" and "origin" field
+                let data = prefix_origin_pairs
+                    .iter()
+                    .map(|(p, o)| json!({"prefix": p.to_string(), "origin": *o}))
+                    .collect::<Vec<Value>>();
+                serde_json::to_writer_pretty(std::io::stdout(), &data).unwrap();
+            } else {
+                for pair in prefix_origin_pairs {
+                    println!("{},{}", pair.0, pair.1);
+                }
             }
         }
     }
