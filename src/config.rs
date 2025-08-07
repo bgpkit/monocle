@@ -1,6 +1,6 @@
+use config::Config;
 use std::collections::HashMap;
 use std::path::Path;
-use config::Config;
 
 pub struct MonocleConfig {
     /// path to the directory to hold Monocle's data
@@ -22,12 +22,11 @@ impl MonocleConfig {
         // config dir
         let monocle_dir = format!("{}/.monocle", home_dir.as_str());
 
-
         // Add in toml configuration file
         match path {
             Some(p) => {
                 let path = Path::new(p.as_str());
-                if path.exists(){
+                if path.exists() {
                     builder = builder.add_source(config::File::with_name(path.to_str().unwrap()));
                 } else {
                     std::fs::write(p.as_str(), EMPTY_CONFIG).expect("Unable to create config file");
@@ -36,10 +35,11 @@ impl MonocleConfig {
             None => {
                 std::fs::create_dir_all(monocle_dir.as_str()).unwrap();
                 let p = format!("{}/monocle.toml", monocle_dir.as_str());
-                if Path::new(p.as_str()).exists(){
+                if Path::new(p.as_str()).exists() {
                     builder = builder.add_source(config::File::with_name(p.as_str()));
                 } else {
-                    std::fs::write(p.as_str(), EMPTY_CONFIG).unwrap_or_else(|_| panic!("Unable to create config file {}", p.as_str()));
+                    std::fs::write(p.as_str(), EMPTY_CONFIG)
+                        .unwrap_or_else(|_| panic!("Unable to create config file {}", p.as_str()));
                 }
             }
         }
@@ -47,8 +47,9 @@ impl MonocleConfig {
         // Eg.. `MONOCLE_DEBUG=1 ./target/app` would set the `debug` key
         builder = builder.add_source(config::Environment::with_prefix("MONOCLE"));
 
-        let settings = builder.build() .unwrap();
-        let config = settings.try_deserialize::<HashMap<String, String>>()
+        let settings = builder.build().unwrap();
+        let config = settings
+            .try_deserialize::<HashMap<String, String>>()
             .unwrap();
 
         // check data directory config
@@ -56,7 +57,7 @@ impl MonocleConfig {
             Some(p) => {
                 let path = Path::new(p);
                 path.to_str().unwrap().to_string()
-            },
+            }
             None => {
                 let dir = format!("{}/.monocle/", dirs::home_dir().unwrap().to_str().unwrap());
                 std::fs::create_dir_all(dir.as_str()).unwrap();
@@ -64,6 +65,6 @@ impl MonocleConfig {
             }
         };
 
-        MonocleConfig{ data_dir }
+        MonocleConfig { data_dir }
     }
 }

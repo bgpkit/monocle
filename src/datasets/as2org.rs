@@ -194,6 +194,41 @@ impl As2org {
             )
             .unwrap();
 
+        // Add indexes for better query performance
+        db.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_as_org_id ON as2org_as(org_id)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_as_name ON as2org_as(name)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_org_name ON as2org_org(name)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_org_country ON as2org_org(country)",
+                [],
+            )
+            .unwrap();
+
+        // Enable SQLite performance optimizations
+        let _: String = db
+            .conn
+            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+            .unwrap();
+        db.conn.execute("PRAGMA synchronous=NORMAL", []).unwrap();
+        db.conn.execute("PRAGMA cache_size=100000", []).unwrap();
+        db.conn.execute("PRAGMA temp_store=MEMORY", []).unwrap();
+
         // views
 
         db.conn
@@ -232,38 +267,6 @@ impl As2org {
             .unwrap();
     }
 
-    fn insert_as(&self, as_entry: &JsonAs) -> Result<()> {
-        self.db.conn.execute(
-            r#"
-        INSERT INTO as2org_as (asn, name, org_id, source)
-        VALUES (?1, ?2, ?3, ?4)
-        "#,
-            (
-                as_entry.asn.parse::<u32>().unwrap(),
-                as_entry.name.as_str(),
-                as_entry.org_id.as_str(),
-                as_entry.source.as_str(),
-            ),
-        )?;
-        Ok(())
-    }
-
-    fn insert_org(&self, org_entry: &JsonOrg) -> Result<()> {
-        self.db.conn.execute(
-            r#"
-        INSERT INTO as2org_org (org_id, name, country, source)
-        VALUES (?1, ?2, ?3, ?4)
-        "#,
-            (
-                org_entry.org_id.as_str(),
-                org_entry.name.as_str(),
-                org_entry.country.as_str(),
-                org_entry.source.as_str(),
-            ),
-        )?;
-        Ok(())
-    }
-
     pub fn clear_db(&self) {
         self.db
             .conn
@@ -295,16 +298,42 @@ impl As2org {
         info!("start parsing as2org file at {}", url.as_str());
         let entries = As2org::parse_as2org_file(url.as_str())?;
         info!("parsing as2org file done. inserting to sqlite db now");
-        for entry in &entries {
-            match entry {
-                DataEntry::Org(e) => {
-                    self.insert_org(e)?;
-                }
-                DataEntry::As(e) => {
-                    self.insert_as(e)?;
+
+        // Use a transaction for all inserts
+        let tx = self.db.conn.unchecked_transaction()?;
+
+        {
+            // Prepare statements for better performance
+            let mut stmt_as = tx.prepare(
+                "INSERT INTO as2org_as (asn, name, org_id, source) VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            let mut stmt_org = tx.prepare(
+                "INSERT INTO as2org_org (org_id, name, country, source) VALUES (?1, ?2, ?3, ?4)",
+            )?;
+
+            for entry in &entries {
+                match entry {
+                    DataEntry::Org(e) => {
+                        stmt_org.execute((
+                            e.org_id.as_str(),
+                            e.name.as_str(),
+                            e.country.as_str(),
+                            e.source.as_str(),
+                        ))?;
+                    }
+                    DataEntry::As(e) => {
+                        stmt_as.execute((
+                            e.asn.parse::<u32>().unwrap(),
+                            e.name.as_str(),
+                            e.org_id.as_str(),
+                            e.source.as_str(),
+                        ))?;
+                    }
                 }
             }
-        }
+        } // statements are dropped here
+
+        tx.commit()?;
         info!("as2org data loading finished");
         Ok(())
     }

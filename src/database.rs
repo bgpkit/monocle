@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bgpkit_parser::models::{ElemType, MetaCommunity};
+use bgpkit_parser::models::ElemType;
 use bgpkit_parser::BgpElem;
 use itertools::Itertools;
 use rusqlite::Connection;
@@ -16,15 +16,6 @@ impl MonocleDatabase {
         };
         Ok(MonocleDatabase { conn })
     }
-}
-macro_rules! option_to_string {
-    ($a:expr) => {
-        if let Some(v) = $a {
-            format!("'{}'", v)
-        } else {
-            "NULL".to_string()
-        }
-    };
 }
 
 pub struct MsgStore {
@@ -67,62 +58,94 @@ impl MsgStore {
                 [],
             )
             .unwrap();
-    }
 
-    #[inline(always)]
-    fn option_to_string_communities(o: &Option<Vec<MetaCommunity>>) -> String {
-        if let Some(v) = o {
-            format!("'{}'", v.iter().join(" "))
-        } else {
-            "NULL".to_string()
-        }
+        // Add indexes for common query patterns
+        db.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_timestamp ON elems(timestamp)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_peer_asn ON elems(peer_asn)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute("CREATE INDEX IF NOT EXISTS idx_prefix ON elems(prefix)", [])
+            .unwrap();
+        db.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_collector ON elems(collector)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_elem_type ON elems(elem_type)",
+                [],
+            )
+            .unwrap();
+
+        // Enable SQLite performance optimizations
+        db.conn.execute("PRAGMA journal_mode=WAL", []).unwrap();
+        db.conn.execute("PRAGMA synchronous=NORMAL", []).unwrap();
+        db.conn.execute("PRAGMA cache_size=100000", []).unwrap();
+        db.conn.execute("PRAGMA temp_store=MEMORY", []).unwrap();
     }
 
     pub fn insert_elems(&self, elems: &[(BgpElem, String)]) {
-        for elems in elems.chunks(10000) {
-            let values = elems
-                .iter()
-                .map(|(elem, collector)| {
+        const BATCH_SIZE: usize = 50000;
+
+        for batch in elems.chunks(BATCH_SIZE) {
+            // Use a transaction for batch inserts
+            let tx = self.db.conn.unchecked_transaction().unwrap();
+
+            {
+                // Use prepared statement for better performance
+                let mut stmt = tx.prepare_cached(
+                    "INSERT INTO elems (timestamp, elem_type, collector, peer_ip, peer_asn, 
+                     prefix, next_hop, as_path, origin_asns, origin, local_pref, med, 
+                     communities, atomic, aggr_asn, aggr_ip) 
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
+                ).unwrap();
+
+                for (elem, collector) in batch {
                     let t = match elem.elem_type {
-                        // bgpkit_parser::ElemType::ANNOUNCE => "A",
-                        // bgpkit_parser::ElemType::WITHDRAW => "W",
                         ElemType::ANNOUNCE => "A",
                         ElemType::WITHDRAW => "W",
                     };
-                    let origin_string = elem.origin_asns.as_ref().map(|asns| asns.first().unwrap());
-                    format!(
-                        "('{}','{}','{}', '{}','{}','{}', {},{},{},{},{},{},{},'{}',{},{})",
+                    let origin_string = elem
+                        .origin_asns
+                        .as_ref()
+                        .and_then(|asns| asns.first())
+                        .map(|asn| asn.to_string());
+                    let communities_str = elem.communities.as_ref().map(|v| v.iter().join(" "));
+
+                    stmt.execute(rusqlite::params![
                         elem.timestamp as u32,
                         t,
                         collector,
-                        elem.peer_ip,
-                        elem.peer_asn,
-                        elem.prefix,
-                        option_to_string!(&elem.next_hop),
-                        option_to_string!(&elem.as_path),
-                        option_to_string!(origin_string),
-                        option_to_string!(&elem.origin),
-                        option_to_string!(&elem.local_pref),
-                        option_to_string!(&elem.med),
-                        Self::option_to_string_communities(&elem.communities),
-                        match &elem.atomic {
-                            true => "AG",
-                            false => "NAG",
-                        },
-                        option_to_string!(&elem.aggr_asn),
-                        option_to_string!(&elem.aggr_ip),
-                    )
-                })
-                .join(", ")
-                .to_string();
-            let query = format!(
-                "INSERT INTO elems (\
-            timestamp, elem_type, collector, peer_ip, peer_asn, prefix, next_hop, \
-            as_path, origin_asns, origin, local_pref, med, communities,\
-            atomic, aggr_asn, aggr_ip)\
-            VALUES {values};"
-            );
-            self.db.conn.execute(query.as_str(), []).unwrap();
+                        elem.peer_ip.to_string(),
+                        elem.peer_asn.to_u32(),
+                        elem.prefix.to_string(),
+                        elem.next_hop.as_ref().map(|v| v.to_string()),
+                        elem.as_path.as_ref().map(|v| v.to_string()),
+                        origin_string,
+                        elem.origin.as_ref().map(|v| v.to_string()),
+                        elem.local_pref,
+                        elem.med,
+                        communities_str,
+                        if elem.atomic { "AG" } else { "NAG" },
+                        elem.aggr_asn.map(|asn| asn.to_u32()),
+                        elem.aggr_ip.as_ref().map(|v| v.to_string()),
+                    ])
+                    .unwrap();
+                }
+            } // stmt is dropped here
+
+            tx.commit().unwrap();
         }
     }
 }
