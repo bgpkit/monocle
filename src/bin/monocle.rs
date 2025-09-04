@@ -302,8 +302,20 @@ fn main() {
                 return;
             }
 
-            let file_path = file_path.to_str().unwrap();
-            let parser = filters.to_parser(file_path).unwrap();
+            let file_path = match file_path.to_str() {
+                Some(path) => path,
+                None => {
+                    eprintln!("Invalid file path");
+                    std::process::exit(1);
+                }
+            };
+            let parser = match filters.to_parser(file_path) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("Failed to create parser for {}: {}", file_path, e);
+                    std::process::exit(1);
+                }
+            };
 
             let mut stdout = std::io::stdout();
 
@@ -380,7 +392,13 @@ fn main() {
             let show_progress = sqlite_db.is_some() || mrt_path.is_some();
 
             // it's fine to unwrap as the filters.validate() function has already checked for issues
-            let items = filters.to_broker_items().unwrap();
+            let items = match filters.to_broker_items() {
+                Ok(items) => items,
+                Err(e) => {
+                    eprintln!("Failed to convert filters to broker items: {}", e);
+                    std::process::exit(1);
+                }
+            };
 
             let total_items = items.len();
 
@@ -510,7 +528,13 @@ fn main() {
                     let url = item.url;
                     let collector = item.collector_id;
                     info!("start parsing {}", url.as_str());
-                    let parser = filters.to_parser(url.as_str()).unwrap();
+                    let parser = match filters.to_parser(url.as_str()) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            eprintln!("Failed to parse {}: {}", url.as_str(), e);
+                            return;
+                        }
+                    };
 
                     let mut elems_count = 0;
                     for elem in parser {
@@ -544,7 +568,10 @@ fn main() {
 
             if update {
                 // if the update flag is set, clear existing as2org data and re-download later
-                as2org.clear_db();
+                if let Err(e) = as2org.clear_db() {
+                    eprintln!("Failed to clear database: {}", e);
+                    std::process::exit(1);
+                }
             }
 
             if as2org.is_db_empty() {
