@@ -188,7 +188,7 @@ pub fn list_by_prefix(prefix: &IpNet) -> Result<Vec<RoaResource>> {
         .set("Content-Type", "application/json")
         .send_json(ureq::json!({ "query": query_string }))?
         .into_json::<Value>()?;
-    
+
     let res = response
         .get("data")
         .ok_or_else(|| anyhow::anyhow!("No 'data' field in response"))?
@@ -226,7 +226,7 @@ pub fn list_by_asn(asn: u32) -> Result<Vec<RoaResource>> {
         .set("Content-Type", "application/json")
         .send_json(ureq::json!({ "query": query_string }))?
         .into_json::<Value>()?;
-    
+
     let res = response
         .get("data")
         .ok_or_else(|| anyhow::anyhow!("No 'data' field in response"))?

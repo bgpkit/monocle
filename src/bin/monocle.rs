@@ -251,7 +251,12 @@ enum RadarCommands {
     },
 }
 
-fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool, collector: &str) -> Result<String, anyhow::Error> {
+fn elem_to_string(
+    elem: &BgpElem,
+    json: bool,
+    pretty: bool,
+    collector: &str,
+) -> Result<String, anyhow::Error> {
     if json {
         let mut val = json!(elem);
         val.as_object_mut()
@@ -451,13 +456,14 @@ fn main() {
                     msg_count += 1;
 
                     if display_stdout {
-                        let output_str = match elem_to_string(&elem, json, pretty, collector.as_str()) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                eprintln!("Failed to format element: {}", e);
-                                continue;
-                            }
-                        };
+                        let output_str =
+                            match elem_to_string(&elem, json, pretty, collector.as_str()) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    eprintln!("Failed to format element: {}", e);
+                                    continue;
+                                }
+                            };
                         println!("{output_str}");
                         continue;
                     }

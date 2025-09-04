@@ -114,7 +114,11 @@ impl ParseFilters {
             // this case is start_ts AND end_ts
             match (start_ts, end_ts) {
                 (Some(start), Some(end)) => return Ok((start.timestamp(), end.timestamp())),
-                _ => return Err(anyhow!("Both start_ts and end_ts must be provided when duration is not set")),
+                _ => {
+                    return Err(anyhow!(
+                        "Both start_ts and end_ts must be provided when duration is not set"
+                    ))
+                }
             }
         }
 
