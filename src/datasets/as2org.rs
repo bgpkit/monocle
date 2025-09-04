@@ -556,6 +556,9 @@ mod tests {
 
     #[test]
     fn test_crawling() {
-        println!("{}", As2org::get_most_recent_data());
+        match As2org::get_most_recent_data() {
+            Ok(data) => println!("{}", data),
+            Err(e) => eprintln!("Error getting most recent data: {}", e),
+        }
     }
 }

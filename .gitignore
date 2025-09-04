@@ -9,3 +9,6 @@
 *.sqlite3
 
 .env*
+
+.claude
+CLAUDE.md
