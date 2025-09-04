@@ -7,7 +7,9 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
@@ -22,7 +24,49 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tabled::settings::{Merge, Style};
 use tabled::{Table, Tabled};
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
+
+/// Maximum number of retry attempts (3 attempts total including the first attempt)
+const MAX_RETRIES: u32 = 3;
+
+/// Initial retry delay in seconds
+const INITIAL_DELAY: u64 = 1;
+
+/// Maximum retry delay in seconds
+const MAX_DELAY: u64 = 30;
+
+/// Structure to track failed processing attempts for retry mechanism
+#[derive(Debug, Clone)]
+struct FailedItem {
+    item: bgpkit_broker::BrokerItem,
+    attempt_count: u32,
+    last_error: String,
+}
+
+impl FailedItem {
+    fn new(item: bgpkit_broker::BrokerItem, error: String) -> Self {
+        Self {
+            item,
+            attempt_count: 1,
+            last_error: error,
+        }
+    }
+
+    fn next_delay(&self) -> Duration {
+        let base_delay = INITIAL_DELAY * 2_u64.pow(self.attempt_count - 1);
+        let delay = std::cmp::min(base_delay, MAX_DELAY);
+        Duration::from_secs(delay)
+    }
+
+    fn should_retry(&self) -> bool {
+        self.attempt_count < MAX_RETRIES
+    }
+
+    fn increment_attempt(&mut self, error: String) {
+        self.attempt_count += 1;
+        self.last_error = error;
+    }
+}
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -344,7 +388,13 @@ fn main() {
                     }
                 }
                 Some(p) => {
-                    let path = p.to_str().unwrap().to_string();
+                    let path = match p.to_str() {
+                        Some(path) => path.to_string(),
+                        None => {
+                            eprintln!("Invalid MRT path");
+                            std::process::exit(1);
+                        }
+                    };
                     println!("processing. filtered messages output to {}...", &path);
                     let mut encoder = MrtUpdatesEncoder::new();
                     let mut writer = match oneio::get_writer(&path) {
@@ -359,7 +409,9 @@ fn main() {
                         total_count += 1;
                         encoder.process_elem(&elem);
                     }
-                    writer.write_all(&encoder.export_bytes()).unwrap();
+                    if let Err(e) = writer.write_all(&encoder.export_bytes()) {
+                        eprintln!("Failed to write MRT data: {}", e);
+                    }
                     drop(writer);
                     println!("done. total of {} message wrote", total_count);
                 }
@@ -380,18 +432,16 @@ fn main() {
 
             let mut sqlite_path_str = "".to_string();
             let sqlite_db = sqlite_path.and_then(|p| {
-                p.to_str()
-                    .map(|s| {
-                        sqlite_path_str = s.to_string();
-                        match MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset) {
-                            Ok(store) => Some(store),
-                            Err(e) => {
-                                eprintln!("Failed to create SQLite store: {}", e);
-                                std::process::exit(1);
-                            }
+                p.to_str().map(|s| {
+                    sqlite_path_str = s.to_string();
+                    match MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset) {
+                        Ok(store) => store,
+                        Err(e) => {
+                            eprintln!("Failed to create SQLite store: {}", e);
+                            std::process::exit(1);
                         }
-                    })
-                    .flatten()
+                    }
+                })
             });
             let mrt_path = mrt_path.and_then(|p| p.to_str().map(|s| s.to_string()));
             let show_progress = sqlite_db.is_some() || mrt_path.is_some();
@@ -442,12 +492,16 @@ fn main() {
             // dedicated thread for handling output of results
             let writer_thread = thread::spawn(move || {
                 let display_stdout = sqlite_db.is_none() && mrt_path.is_none();
-                let mut mrt_writer = mrt_path.map(|p| {
-                    (
-                        MrtUpdatesEncoder::new(),
-                        oneio::get_writer(p.as_str()).unwrap(),
-                    )
-                });
+                let mut mrt_writer = match mrt_path {
+                    Some(p) => match oneio::get_writer(p.as_str()) {
+                        Ok(writer) => Some((MrtUpdatesEncoder::new(), writer)),
+                        Err(e) => {
+                            eprintln!("Failed to create MRT writer: {}", e);
+                            None
+                        }
+                    },
+                    None => None,
+                };
 
                 let mut msg_cache = vec![];
                 let mut msg_count = 0;
@@ -498,7 +552,9 @@ fn main() {
                 }
                 if let Some((encoder, writer)) = &mut mrt_writer {
                     let bytes = encoder.export_bytes();
-                    writer.write_all(&bytes).unwrap();
+                    if let Err(e) = writer.write_all(&bytes) {
+                        eprintln!("Failed to write MRT data: {}", e);
+                    }
                 }
                 drop(mrt_writer);
 
@@ -516,7 +572,7 @@ fn main() {
                 let sty = indicatif::ProgressStyle::with_template(
                     "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} left; {msg}",
                 )
-                .unwrap()
+                .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar())
                 .progress_chars("##-");
                 let pb = indicatif::ProgressBar::new(total_items as u64);
                 pb.set_style(sty);
@@ -528,35 +584,175 @@ fn main() {
                 }
             });
 
-            items
-                .into_par_iter()
-                .for_each_with((sender, pb_sender), |(s, pb_sender), item| {
-                    let url = item.url;
-                    let collector = item.collector_id;
+            // Create shared structure to collect failed items
+            let failed_items = Arc::new(Mutex::new(Vec::<FailedItem>::new()));
+            let failed_items_clone = Arc::clone(&failed_items);
+
+            // Initial parallel processing with failure collection
+            let pb_sender_clone = pb_sender.clone();
+            items.into_par_iter().for_each_with(
+                (sender.clone(), pb_sender_clone, failed_items_clone),
+                |(s, pb_sender, failed_items), item| {
+                    let url = item.url.clone();
+                    let collector = item.collector_id.clone();
                     info!("start parsing {}", url.as_str());
                     let parser = match filters.to_parser(url.as_str()) {
                         Ok(p) => p,
                         Err(e) => {
-                            eprintln!("Failed to parse {}: {}", url.as_str(), e);
+                            let error_msg = format!("Failed to parse {}: {}", url.as_str(), e);
+                            eprintln!("{}", error_msg);
+                            // Store failed item for retry
+                            if let Ok(mut failed) = failed_items.lock() {
+                                failed.push(FailedItem::new(item, error_msg));
+                            }
                             return;
                         }
                     };
 
                     let mut elems_count = 0;
                     for elem in parser {
-                        s.send((elem, collector.clone())).unwrap();
+                        if s.send((elem, collector.clone())).is_err() {
+                            // Channel closed, break out
+                            break;
+                        }
                         elems_count += 1;
                     }
 
-                    if show_progress {
-                        pb_sender.send(elems_count).unwrap();
+                    if show_progress && pb_sender.send(elems_count).is_err() {
+                        // Progress channel closed, ignore
                     }
                     info!("finished parsing {}", url.as_str());
-                });
+                },
+            );
+
+            // Retry phase for failed items
+            let failed_count = {
+                match failed_items.lock() {
+                    Ok(failed) => failed.len(),
+                    Err(e) => {
+                        warn!("Failed to lock failed_items mutex: {}", e);
+                        0
+                    }
+                }
+            };
+
+            if failed_count > 0 {
+                info!("Starting retry phase for {} failed items", failed_count);
+
+                // Process retries sequentially to avoid overwhelming servers
+                let mut retry_queue = {
+                    match failed_items.lock() {
+                        Ok(failed) => failed.clone(),
+                        Err(e) => {
+                            warn!("Failed to lock failed_items mutex for retry: {}", e);
+                            vec![]
+                        }
+                    }
+                };
+
+                let mut retry_stats = HashMap::new();
+                let mut total_retries = 0;
+                let mut successful_retries = 0;
+
+                while !retry_queue.is_empty() {
+                    let mut new_failures = Vec::new();
+
+                    for mut failed_item in retry_queue {
+                        if !failed_item.should_retry() {
+                            // Max retries reached
+                            *retry_stats.entry("max_retries_reached").or_insert(0) += 1;
+                            continue;
+                        }
+
+                        let delay = failed_item.next_delay();
+                        info!(
+                            "Retrying {} (attempt {}/{}) after {}s delay",
+                            failed_item.item.url.as_str(),
+                            failed_item.attempt_count + 1,
+                            MAX_RETRIES,
+                            delay.as_secs()
+                        );
+
+                        thread::sleep(delay);
+                        total_retries += 1;
+
+                        let parser = match filters.to_parser(failed_item.item.url.as_str()) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                let error_msg = format!(
+                                    "Retry failed to parse {}: {}",
+                                    failed_item.item.url.as_str(),
+                                    e
+                                );
+                                warn!("{}", error_msg);
+                                failed_item.increment_attempt(error_msg);
+                                new_failures.push(failed_item);
+                                continue;
+                            }
+                        };
+
+                        let mut elems_count = 0;
+                        let mut parse_successful = true;
+
+                        for elem in parser {
+                            if sender
+                                .send((elem, failed_item.item.collector_id.clone()))
+                                .is_err()
+                            {
+                                // Channel closed, mark as failed
+                                parse_successful = false;
+                                break;
+                            }
+                            elems_count += 1;
+                        }
+
+                        if parse_successful {
+                            successful_retries += 1;
+                            if show_progress && pb_sender.send(elems_count).is_err() {
+                                // Progress channel closed, ignore
+                            }
+                            info!(
+                                "Successfully retried {} (found {} messages)",
+                                failed_item.item.url.as_str(),
+                                elems_count
+                            );
+                        } else {
+                            let error_msg =
+                                "Retry failed: channel closed during processing".to_string();
+                            failed_item.increment_attempt(error_msg);
+                            new_failures.push(failed_item);
+                        }
+                    }
+
+                    retry_queue = new_failures;
+                }
+
+                // Log retry statistics
+                let final_failures = retry_queue.len();
+                info!(
+                    "Retry phase completed: {} total retry attempts, {} successful, {} final failures",
+                    total_retries, successful_retries, final_failures
+                );
+
+                if final_failures > 0 {
+                    warn!(
+                        "Warning: {} files could not be processed after {} retry attempts",
+                        final_failures, MAX_RETRIES
+                    );
+                }
+            }
+
+            // Close channels to signal completion
+            drop(sender);
+            drop(pb_sender);
 
             // wait for the output thread to stop
-            writer_thread.join().unwrap();
-            progress_thread.join().unwrap();
+            if let Err(e) = writer_thread.join() {
+                eprintln!("Writer thread failed: {:?}", e);
+            }
+            if let Err(e) = progress_thread.join() {
+                eprintln!("Progress thread failed: {:?}", e);
+            }
         }
         Commands::Whois {
             query,
@@ -570,7 +766,13 @@ fn main() {
             psv,
         } => {
             let data_dir = config.data_dir.as_str();
-            let as2org = As2org::new(&Some(format!("{data_dir}/monocle-data.sqlite3"))).unwrap();
+            let as2org = match As2org::new(&Some(format!("{data_dir}/monocle-data.sqlite3"))) {
+                Ok(as2org) => as2org,
+                Err(e) => {
+                    eprintln!("Failed to create AS2org database: {}", e);
+                    std::process::exit(1);
+                }
+            };
 
             if update {
                 // if the update flag is set, clear existing as2org data and re-download later
@@ -582,7 +784,10 @@ fn main() {
 
             if as2org.is_db_empty() {
                 println!("bootstrapping as2org data now... (it will take about one minute)");
-                as2org.parse_insert_as2org(None).unwrap();
+                if let Err(e) = as2org.parse_insert_as2org(None) {
+                    eprintln!("Failed to bootstrap AS2org data: {}", e);
+                    std::process::exit(1);
+                }
                 println!("bootstrapping as2org data finished");
             }
 
@@ -602,11 +807,15 @@ fn main() {
 
             let mut res = query
                 .into_iter()
-                .flat_map(|q| {
-                    as2org
-                        .search(q.as_str(), &search_type, full_country)
-                        .unwrap()
-                })
+                .flat_map(
+                    |q| match as2org.search(q.as_str(), &search_type, full_country) {
+                        Ok(results) => results,
+                        Err(e) => {
+                            eprintln!("Search error for '{}': {}", q, e);
+                            Vec::new()
+                        }
+                    },
+                )
                 .collect::<Vec<SearchResult>>();
 
             // order search results by AS number
@@ -691,7 +900,14 @@ fn main() {
         }
         Commands::Rpki { commands } => match commands {
             RpkiCommands::ReadRoa { file_path } => {
-                let res = match read_roa(file_path.to_str().unwrap()) {
+                let file_str = match file_path.to_str() {
+                    Some(s) => s,
+                    None => {
+                        eprintln!("Invalid ROA file path");
+                        return;
+                    }
+                };
+                let res = match read_roa(file_str) {
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("ERROR: unable to read ROA file: {}", e);
@@ -704,7 +920,14 @@ fn main() {
                 file_path,
                 no_merge_dups,
             } => {
-                let res = match read_aspa(file_path.to_str().unwrap()) {
+                let file_str = match file_path.to_str() {
+                    Some(s) => s,
+                    None => {
+                        eprintln!("Invalid ASPA file path");
+                        return;
+                    }
+                };
+                let res = match read_aspa(file_str) {
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("ERROR: unable to read ASPA file: {}", e);
@@ -745,9 +968,21 @@ fn main() {
             }
             RpkiCommands::List { resource } => {
                 let resources = match resource.parse::<u32>() {
-                    Ok(asn) => list_by_asn(asn).unwrap(),
+                    Ok(asn) => match list_by_asn(asn) {
+                        Ok(resources) => resources,
+                        Err(e) => {
+                            eprintln!("Failed to list ROAs for ASN {}: {}", asn, e);
+                            return;
+                        }
+                    },
                     Err(_) => match resource.parse::<IpNet>() {
-                        Ok(prefix) => list_by_prefix(&prefix).unwrap(),
+                        Ok(prefix) => match list_by_prefix(&prefix) {
+                            Ok(resources) => resources,
+                            Err(e) => {
+                                eprintln!("Failed to list ROAs for prefix {}: {}", prefix, e);
+                                return;
+                            }
+                        },
                         Err(_) => {
                             eprintln!(
                                 "ERROR: list resource not an AS number or a prefix: {}",
@@ -771,14 +1006,26 @@ fn main() {
             RpkiCommands::Summary { asns } => {
                 let res: Vec<SummaryTableItem> = asns
                     .into_iter()
-                    .map(|v| summarize_asn(v).unwrap())
+                    .filter_map(|v| match summarize_asn(v) {
+                        Ok(summary) => Some(summary),
+                        Err(e) => {
+                            eprintln!("Failed to summarize ASN {}: {}", v, e);
+                            None
+                        }
+                    })
                     .collect();
 
                 println!("{}", Table::new(res).with(Style::markdown()));
             }
         },
         Commands::Radar { commands } => {
-            let client = RadarClient::new().unwrap();
+            let client = match RadarClient::new() {
+                Ok(client) => client,
+                Err(e) => {
+                    eprintln!("Failed to create Radar client: {}", e);
+                    std::process::exit(1);
+                }
+            };
 
             match commands {
                 RadarCommands::Stats { query } => {
@@ -895,7 +1142,10 @@ fn main() {
                         },
                     ];
                     if json {
-                        println!("{}", serde_json::to_string_pretty(&table_data).unwrap());
+                        match serde_json::to_string_pretty(&table_data) {
+                            Ok(json_str) => println!("{}", json_str),
+                            Err(e) => eprintln!("Failed to serialize JSON: {}", e),
+                        }
                     } else {
                         println!("{}", Table::new(table_data).with(Style::modern()));
                         println!("\nData generated at {} UTC.", res.meta.data_time);
@@ -965,7 +1215,10 @@ fn main() {
                         })
                         .collect::<Vec<Pfx2origin>>();
                     if json {
-                        println!("{}", serde_json::to_string_pretty(&table_data).unwrap());
+                        match serde_json::to_string_pretty(&table_data) {
+                            Ok(json_str) => println!("{}", json_str),
+                            Err(e) => eprintln!("Error serializing data to JSON: {}", e),
+                        }
                     } else {
                         println!("{}", Table::new(table_data).with(Style::modern()));
                         println!("\nData generated at {} UTC.", res.meta.data_time);
@@ -982,7 +1235,9 @@ fn main() {
 
                 let json_value = json!(&ipinfo);
                 if json {
-                    serde_json::to_writer_pretty(std::io::stdout(), &json_value).unwrap();
+                    if let Err(e) = serde_json::to_writer_pretty(std::io::stdout(), &json_value) {
+                        eprintln!("Error writing JSON to stdout: {}", e);
+                    }
                 } else {
                     let mut table = json_to_table(&json_value);
                     table.collapse();
@@ -1048,7 +1303,9 @@ fn main() {
                     .iter()
                     .map(|(p, o)| json!({"prefix": p.to_string(), "origins": o.iter().cloned().collect::<Vec<u32>>()}))
                     .collect::<Vec<Value>>();
-                serde_json::to_writer_pretty(std::io::stdout(), &data).unwrap();
+                if let Err(e) = serde_json::to_writer_pretty(std::io::stdout(), &data) {
+                    eprintln!("Error writing JSON to stdout: {}", e);
+                }
             } else {
                 for (prefix, origins) in prefix_origins_map {
                     let mut origins_vec = origins.iter().cloned().collect::<Vec<u32>>();
