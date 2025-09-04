@@ -44,6 +44,15 @@ enum WriterMessage {
     FileComplete,
 }
 
+/// Progress update messages for real-time display
+#[derive(Debug, Clone)]
+enum ProgressUpdate {
+    /// A file was completed with message count and success status
+    FileComplete { message_count: u32, success: bool },
+    /// A new page started processing
+    PageStarted { page_num: i64, timestamp: String },
+}
+
 /// Structure to track failed processing attempts for retry mechanism
 #[derive(Debug, Clone)]
 struct FailedItem {
@@ -484,10 +493,11 @@ fn main() {
             }
 
             let (sender, receiver): (Sender<WriterMessage>, Receiver<WriterMessage>) = channel();
-            // progress bar
-            let (pb_sender, pb_receiver): (Sender<u32>, Receiver<u32>) = channel();
-            // page info updates
-            let (page_sender, page_receiver): (Sender<String>, Receiver<String>) = channel();
+            // Single progress channel for all updates
+            let (progress_sender, progress_receiver): (
+                Sender<ProgressUpdate>,
+                Receiver<ProgressUpdate>,
+            ) = channel();
 
             // dedicated thread for handling output of results
             let writer_thread = thread::spawn(move || {
@@ -584,49 +594,57 @@ fn main() {
                 None
             };
 
-            // dedicated thread for progress updates from workers
+            // Simplified progress thread with single channel
             let pb_for_updates = pb.clone();
             let progress_thread = thread::spawn(move || {
                 let mut files_processed: u64 = 0;
                 let mut total_messages: u64 = 0;
-                let mut current_page_info = "".to_string();
+                let mut succeeded_files: u64 = 0;
+                let mut failed_files: u64 = 0;
+                let mut current_page: i64 = 1;
+                let mut current_timestamp = String::new();
 
-                loop {
-                    use std::sync::mpsc::TryRecvError;
-
-                    // Check for page info updates (non-blocking)
-                    match page_receiver.try_recv() {
-                        Ok(page_info) => {
-                            current_page_info = page_info;
+                for update in progress_receiver {
+                    match update {
+                        ProgressUpdate::FileComplete {
+                            message_count,
+                            success,
+                        } => {
+                            files_processed += 1;
+                            total_messages += message_count as u64;
+                            if success {
+                                succeeded_files += 1;
+                            } else {
+                                failed_files += 1;
+                            }
                         }
-                        Err(TryRecvError::Empty) => {} // No page update available
-                        Err(TryRecvError::Disconnected) => break, // Page sender closed
+                        ProgressUpdate::PageStarted {
+                            page_num,
+                            timestamp,
+                        } => {
+                            current_page = page_num;
+                            current_timestamp = timestamp;
+                        }
                     }
 
-                    // Check for file completion updates (blocking with timeout)
-                    match pb_receiver.recv_timeout(Duration::from_millis(100)) {
-                        Ok(count) => {
-                            files_processed += 1;
-                            total_messages += count as u64;
+                    // Update progress display
+                    if let Some(ref pb) = pb_for_updates {
+                        let page_info = if current_timestamp.is_empty() {
+                            format!(
+                                " | Page {} (succeeded: {}, failed: {})",
+                                current_page, succeeded_files, failed_files
+                            )
+                        } else {
+                            format!(
+                                " | Page {} (succeeded: {}, failed: {}) {}",
+                                current_page, succeeded_files, failed_files, current_timestamp
+                            )
+                        };
 
-                            // Update spinner with combined progress info
-                            if let Some(ref pb) = pb_for_updates {
-                                pb.set_message(format!(
-                                    "Processed {} files, found {} messages{}",
-                                    files_processed, total_messages, current_page_info
-                                ));
-                            }
-                        }
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                            // Update display even without new file completions (for page changes)
-                            if let Some(ref pb) = pb_for_updates {
-                                pb.set_message(format!(
-                                    "Processed {} files, found {} messages{}",
-                                    files_processed, total_messages, current_page_info
-                                ));
-                            }
-                        }
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break, // Sender closed
+                        pb.set_message(format!(
+                            "Processed {} files, found {} messages{}",
+                            files_processed, total_messages, page_info
+                        ));
                     }
                 }
             });
@@ -637,7 +655,6 @@ fn main() {
 
             // Paginated processing loop
             let mut page = 1i64;
-            let mut total_files = 0u32;
 
             loop {
                 let items = match base_broker.clone().page(page).query_single_page() {
@@ -654,47 +671,66 @@ fn main() {
                 }
 
                 let page_size = items.len();
-                total_files += page_size as u32;
 
-                // Send page info to progress thread and log
+                // Send page started update to progress thread
                 let time_info = if let Some(first_item) = items.first() {
-                    format!(" @ {}", first_item.ts_start.format("%Y-%m-%d %H:%M UTC"))
+                    format!("@ {}", first_item.ts_start.format("%Y-%m-%d %H:%M UTC"))
                 } else {
                     String::new()
                 };
 
-                let page_info = format!(
-                    " | Page {} ({} files, {} total){}",
-                    page, page_size, total_files, time_info
-                );
-
-                if page_sender.send(page_info).is_err() {
+                if progress_sender
+                    .send(ProgressUpdate::PageStarted {
+                        page_num: page,
+                        timestamp: time_info.clone(),
+                    })
+                    .is_err()
+                {
                     // Progress thread may have ended, continue
                 }
 
-                info!(
-                    "Starting page {} ({} files, {} total){}",
-                    page, page_size, total_files, time_info
-                );
-
-                info!("Processing page {} with {} items", page, page_size);
+                if !show_progress {
+                    info!("Starting page {} ({} files){}", page, page_size, time_info);
+                    info!("Processing page {} with {} items", page, page_size);
+                }
 
                 // Process this page's items using existing parallel logic
-                let pb_sender_clone = pb_sender.clone();
+                let progress_sender_clone = progress_sender.clone();
+
                 items.into_par_iter().for_each_with(
-                    (sender.clone(), pb_sender_clone, failed_items_clone.clone()),
-                    |(s, pb_sender, failed_items), item| {
+                    (
+                        sender.clone(),
+                        progress_sender_clone,
+                        failed_items_clone.clone(),
+                    ),
+                    |(s, progress_sender, failed_items), item| {
                         let url = item.url.clone();
                         let collector = item.collector_id.clone();
-                        info!("start parsing {}", url.as_str());
+
+                        if !show_progress {
+                            info!("start parsing {}", url.as_str());
+                        }
+
                         let parser = match filters.to_parser(url.as_str()) {
                             Ok(p) => p,
                             Err(e) => {
                                 let error_msg = format!("Failed to parse {}: {}", url.as_str(), e);
-                                eprintln!("{}", error_msg);
+                                if !show_progress {
+                                    eprintln!("{}", error_msg);
+                                }
                                 // Store failed item for retry
                                 if let Ok(mut failed) = failed_items.lock() {
                                     failed.push(FailedItem::new(item, error_msg));
+                                }
+                                // Send failure progress update
+                                if progress_sender
+                                    .send(ProgressUpdate::FileComplete {
+                                        message_count: 0,
+                                        success: false,
+                                    })
+                                    .is_err()
+                                {
+                                    // Progress thread may have ended, ignore
                                 }
                                 return;
                             }
@@ -716,12 +752,24 @@ fn main() {
                             // Channel closed, ignore
                         }
 
-                        if pb_sender.send(elems_count).is_err() {
-                            // Progress channel closed, ignore
+                        // Send success progress update
+                        if progress_sender
+                            .send(ProgressUpdate::FileComplete {
+                                message_count: elems_count,
+                                success: true,
+                            })
+                            .is_err()
+                        {
+                            // Progress thread may have ended, ignore
                         }
-                        info!("finished parsing {}", url.as_str());
+
+                        if !show_progress {
+                            info!("finished parsing {}", url.as_str());
+                        }
                     },
                 );
+
+                // Page processing complete - no need to update counters as they're updated in real-time
 
                 page += 1;
 
@@ -733,16 +781,13 @@ fn main() {
             }
 
             if let Some(pb) = pb {
-                let final_message =
-                    format!("Completed {} pages, {} total files", page - 1, total_files);
+                let final_message = format!("Completed {} pages", page - 1);
                 pb.finish_with_message(final_message);
             }
 
-            info!(
-                "Completed processing {} total files across {} pages",
-                total_files,
-                page - 1
-            );
+            if !show_progress {
+                info!("Completed processing across {} pages", page - 1);
+            }
 
             // Retry phase for failed items
             let failed_count = {
@@ -756,7 +801,9 @@ fn main() {
             };
 
             if failed_count > 0 {
-                info!("Starting retry phase for {} failed items", failed_count);
+                if !show_progress {
+                    info!("Starting retry phase for {} failed items", failed_count);
+                }
 
                 // Process retries sequentially to avoid overwhelming servers
                 let mut retry_queue = {
@@ -784,13 +831,15 @@ fn main() {
                         }
 
                         let delay = failed_item.next_delay();
-                        info!(
-                            "Retrying {} (attempt {}/{}) after {}s delay",
-                            failed_item.item.url.as_str(),
-                            failed_item.attempt_count + 1,
-                            MAX_RETRIES,
-                            delay.as_secs()
-                        );
+                        if !show_progress {
+                            info!(
+                                "Retrying {} (attempt {}/{}) after {}s delay",
+                                failed_item.item.url.as_str(),
+                                failed_item.attempt_count + 1,
+                                MAX_RETRIES,
+                                delay.as_secs()
+                            );
+                        }
 
                         thread::sleep(delay);
                         total_retries += 1;
@@ -803,7 +852,9 @@ fn main() {
                                     failed_item.item.url.as_str(),
                                     e
                                 );
-                                warn!("{}", error_msg);
+                                if !show_progress {
+                                    warn!("{}", error_msg);
+                                }
                                 failed_item.increment_attempt(error_msg);
                                 new_failures.push(failed_item);
                                 continue;
@@ -835,14 +886,14 @@ fn main() {
 
                         if parse_successful {
                             successful_retries += 1;
-                            if show_progress && pb_sender.send(elems_count).is_err() {
-                                // Progress channel closed, ignore
+                            // Retry successful - progress already tracked by main processing
+                            if !show_progress {
+                                info!(
+                                    "Successfully retried {} (found {} messages)",
+                                    failed_item.item.url.as_str(),
+                                    elems_count
+                                );
                             }
-                            info!(
-                                "Successfully retried {} (found {} messages)",
-                                failed_item.item.url.as_str(),
-                                elems_count
-                            );
                         } else {
                             let error_msg =
                                 "Retry failed: channel closed during processing".to_string();
@@ -856,23 +907,24 @@ fn main() {
 
                 // Log retry statistics
                 let final_failures = retry_queue.len();
-                info!(
-                    "Retry phase completed: {} total retry attempts, {} successful, {} final failures",
-                    total_retries, successful_retries, final_failures
-                );
-
-                if final_failures > 0 {
-                    warn!(
-                        "Warning: {} files could not be processed after {} retry attempts",
-                        final_failures, MAX_RETRIES
+                if !show_progress {
+                    info!(
+                        "Retry phase completed: {} total retry attempts, {} successful, {} final failures",
+                        total_retries, successful_retries, final_failures
                     );
+
+                    if final_failures > 0 {
+                        warn!(
+                            "Warning: {} files could not be processed after {} retry attempts",
+                            final_failures, MAX_RETRIES
+                        );
+                    }
                 }
             }
 
             // Close channels to signal completion
             drop(sender);
-            drop(pb_sender);
-            drop(page_sender);
+            drop(progress_sender);
 
             // wait for the output thread to stop
             if let Err(e) = writer_thread.join() {
