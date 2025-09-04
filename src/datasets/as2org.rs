@@ -123,7 +123,7 @@ pub struct SearchResultConcise {
 impl As2org {
     pub fn new(db_path: &Option<String>) -> Result<As2org> {
         let mut db = MonocleDatabase::new(db_path)?;
-        As2org::initialize_db(&mut db);
+        As2org::initialize_db(&mut db)?;
         let country_lookup = CountryLookup::new();
         Ok(As2org { db, country_lookup })
     }
@@ -162,14 +162,13 @@ impl As2org {
             .db
             .conn
             .query_row("select count(*) from as2org_as", [], |row| row.get(0))
-            .unwrap();
+            .unwrap_or(0);
         count == 0
     }
 
-    fn initialize_db(db: &mut MonocleDatabase) {
-        db.conn
-            .execute(
-                r#"
+    fn initialize_db(db: &mut MonocleDatabase) -> Result<()> {
+        db.conn.execute(
+            r#"
         create table if not exists as2org_as (
         asn INTEGER PRIMARY KEY,
         name TEXT,
@@ -177,12 +176,10 @@ impl As2org {
         source TEXT
         );
         "#,
-                [],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                r#"
+            [],
+        )?;
+        db.conn.execute(
+            r#"
         create table if not exists as2org_org (
         org_id TEXT PRIMARY KEY,
         name TEXT,
@@ -190,110 +187,90 @@ impl As2org {
         source TEXT
         );
         "#,
-                [],
-            )
-            .unwrap();
+            [],
+        )?;
 
         // Add indexes for better query performance
-        db.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_as_org_id ON as2org_as(org_id)",
-                [],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_as_name ON as2org_as(name)",
-                [],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_org_name ON as2org_org(name)",
-                [],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_org_country ON as2org_org(country)",
-                [],
-            )
-            .unwrap();
+        db.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_as_org_id ON as2org_as(org_id)",
+            [],
+        )?;
+        db.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_as_name ON as2org_as(name)",
+            [],
+        )?;
+        db.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_org_name ON as2org_org(name)",
+            [],
+        )?;
+        db.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_org_country ON as2org_org(country)",
+            [],
+        )?;
 
         // Enable SQLite performance optimizations
         let _: String = db
             .conn
-            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
-            .unwrap();
-        db.conn.execute("PRAGMA synchronous=NORMAL", []).unwrap();
-        db.conn.execute("PRAGMA cache_size=100000", []).unwrap();
-        db.conn.execute("PRAGMA temp_store=MEMORY", []).unwrap();
+            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
+        db.conn.execute("PRAGMA synchronous=NORMAL", [])?;
+        db.conn.execute("PRAGMA cache_size=100000", [])?;
+        db.conn.execute("PRAGMA temp_store=MEMORY", [])?;
 
         // views
 
-        db.conn
-            .execute(
-                r#"
+        db.conn.execute(
+            r#"
         create view if not exists as2org_both as
         select a.asn, a.name as 'as_name', b.name as 'org_name', b.org_id, b.country
         from as2org_as as a join as2org_org as b on a.org_id = b.org_id
         ;
         "#,
-                [],
-            )
-            .unwrap();
+            [],
+        )?;
 
-        db.conn
-            .execute(
-                r#"
+        db.conn.execute(
+            r#"
             create view if not exists as2org_count as
             select org_id, org_name, count(*) as count
             from as2org_both group by org_name
             order by count desc;
         "#,
-                [],
-            )
-            .unwrap();
+            [],
+        )?;
 
-        db.conn
-            .execute(
-                r#"
+        db.conn.execute(
+            r#"
             create view if not exists as2org_all as
             select a.*, b.count
             from as2org_both as a join as2org_count as b on a.org_id = b.org_id;
         "#,
-                [],
-            )
-            .unwrap();
+            [],
+        )?;
+        Ok(())
     }
 
-    pub fn clear_db(&self) {
-        self.db
-            .conn
-            .execute(
-                r#"
+    pub fn clear_db(&self) -> Result<()> {
+        self.db.conn.execute(
+            r#"
         DELETE FROM as2org_as
         "#,
-                [],
-            )
-            .unwrap();
-        self.db
-            .conn
-            .execute(
-                r#"
+            [],
+        )?;
+        self.db.conn.execute(
+            r#"
         DELETE FROM as2org_org
         "#,
-                [],
-            )
-            .unwrap();
+            [],
+        )?;
+        Ok(())
     }
 
     /// parse as2org data and insert into monocle sqlite database
     pub fn parse_insert_as2org(&self, url: Option<&str>) -> Result<()> {
-        self.clear_db();
+        self.clear_db()?;
         let url = match url {
             Some(u) => u.to_string(),
-            None => As2org::get_most_recent_data(),
+            None => As2org::get_most_recent_data()?,
         };
         info!("start parsing as2org file at {}", url.as_str());
         let entries = As2org::parse_as2org_file(url.as_str())?;
@@ -322,8 +299,12 @@ impl As2org {
                         ))?;
                     }
                     DataEntry::As(e) => {
+                        let asn = e
+                            .asn
+                            .parse::<u32>()
+                            .map_err(|_| anyhow!("Failed to parse ASN: {}", e.asn))?;
                         stmt_as.execute((
-                            e.asn.parse::<u32>().unwrap(),
+                            asn,
                             e.name.as_str(),
                             e.org_id.as_str(),
                             e.source.as_str(),
@@ -382,9 +363,12 @@ impl As2org {
                     ));
                 }
 
+                let first_country = countries
+                    .first()
+                    .ok_or_else(|| anyhow!("No country found"))?;
                 let mut stmt = self.db.conn.prepare(
                     format!(
-                        "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where LOWER(country)='{}' order by count desc", countries.first().unwrap().code.to_lowercase()).as_str()
+                        "SELECT asn, as_name, org_name, org_id, country, count FROM as2org_all where LOWER(country)='{}' order by count desc", first_country.code.to_lowercase()).as_str()
                 )?;
                 res = self.stmt_to_results(&mut stmt, full_country_name)?;
             }
@@ -412,7 +396,7 @@ impl As2org {
             true => {
                 let new_res = match query_type {
                     QueryType::ASN => SearchResult {
-                        asn: query.parse::<u32>().unwrap(),
+                        asn: query.parse::<u32>().unwrap_or(0),
                         as_name: "?".to_string(),
                         org_name: "?".to_string(),
                         org_id: "?".to_string(),
@@ -475,20 +459,23 @@ impl As2org {
         Ok(res)
     }
 
-    pub fn get_most_recent_data() -> String {
-        let data_link: Regex = Regex::new(r".*(........\.as-org2info\.jsonl\.gz).*").unwrap();
+    pub fn get_most_recent_data() -> Result<String> {
+        let data_link: Regex = Regex::new(r".*(........\.as-org2info\.jsonl\.gz).*")
+            .map_err(|e| anyhow!("Failed to create regex: {}", e))?;
         let content = ureq::get("https://publicdata.caida.org/datasets/as-organizations/")
             .call()
-            .unwrap()
+            .map_err(|e| anyhow!("Failed to fetch data: {}", e))?
             .into_string()
-            .unwrap();
+            .map_err(|e| anyhow!("Failed to parse response: {}", e))?;
         let res: Vec<String> = data_link
             .captures_iter(content.as_str())
             .map(|cap| cap[1].to_owned())
             .collect();
-        let file = res.last().unwrap().to_string();
+        let file = res.last().ok_or_else(|| anyhow!("No data files found"))?;
 
-        format!("https://publicdata.caida.org/datasets/as-organizations/{file}")
+        Ok(format!(
+            "https://publicdata.caida.org/datasets/as-organizations/{file}"
+        ))
     }
 }
 
@@ -517,13 +504,13 @@ mod tests {
         // approximately one minute insert time
         let _res = as2org.parse_insert_as2org(Some("tests/test-as2org.jsonl.gz"));
 
-        as2org.clear_db();
+        as2org.clear_db().unwrap();
     }
 
     #[test]
     fn test_search() {
         let as2org = As2org::new(&Some("./test.sqlite3".to_string())).unwrap();
-        as2org.clear_db();
+        as2org.clear_db().unwrap();
         assert!(as2org.is_db_empty());
         as2org
             .parse_insert_as2org(Some("tests/test-as2org.jsonl.gz"))
@@ -564,7 +551,7 @@ mod tests {
         assert_eq!(data[0].org_country, "US");
         assert_eq!(data[0].org_size, 1);
 
-        as2org.clear_db();
+        as2org.clear_db().unwrap();
     }
 
     #[test]

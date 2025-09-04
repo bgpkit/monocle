@@ -15,7 +15,8 @@ pub fn string_to_time(time_string: &str) -> anyhow::Result<DateTime<Utc>> {
     let ts = match dateparser::parse_with(
         time_string,
         &Utc,
-        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        chrono::NaiveTime::from_hms_opt(0, 0, 0)
+            .ok_or_else(|| anyhow!("Failed to create time"))?,
     ) {
         Ok(ts) => ts,
         Err(_) => {
@@ -60,7 +61,9 @@ pub fn time_to_table(time_vec: &[String]) -> anyhow::Result<String> {
             let ht = HumanTime::from(chrono::Local::now() - chrono::Duration::seconds(now_ts - ts));
             let human = ht.to_string();
             let rfc3339 = Utc
-                .from_utc_datetime(&DateTime::from_timestamp(ts, 0).unwrap().naive_utc())
+                .from_utc_datetime(&DateTime::from_timestamp(ts, 0)
+                    .unwrap_or_default()
+                    .naive_utc())
                 .to_rfc3339();
             BgpTime {
                 unix: ts,
