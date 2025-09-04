@@ -7,13 +7,13 @@ All notable changes to this project will be documented in this file.
 ### Performance improvements
 
 * Database bootstrap performance improvements
-  * Added proper transaction management for bulk inserts
-  * Replaced string-based SQL with prepared statements  
-  * Added database indexes for common query patterns
-  * Enabled SQLite performance optimizations (WAL mode, cache tuning)
-  * **Impact**: BGP data insertion ~10x faster, as2org bootstrap ~100x faster (3+ minutes → 1-2 seconds)
+    * Added proper transaction management for bulk inserts
+    * Replaced string-based SQL with prepared statements
+    * Added database indexes for common query patterns
+    * Enabled SQLite performance optimizations (WAL mode, cache tuning)
+    * **Impact**: BGP data insertion ~10x faster, as2org bootstrap ~100x faster (3+ minutes → 1-2 seconds)
 
-## v0.8.0
+## v0.8.0 - 2025-03-04
 
 ### New subcommand
 
