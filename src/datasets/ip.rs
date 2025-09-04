@@ -42,7 +42,7 @@ pub fn fetch_ip_info(ip_opt: Option<IpAddr>, simple: bool) -> Result<IpInfo> {
         params.push("simple=true".to_string());
     }
     let url = format!("{}?{}", IP_INFO_API, params.join("&"));
-    let resp = ureq::get(&url).call()?.into_json::<IpInfo>()?;
+    let resp = ureq::get(&url).call()?.body_mut().read_json::<IpInfo>()?;
     Ok(resp)
 }
 

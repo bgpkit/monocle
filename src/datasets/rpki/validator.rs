@@ -142,9 +142,10 @@ pub fn validate(asn: u32, prefix_str: &str) -> Result<(RpkiValidity, Vec<Roa>)> 
     );
 
     let res = ureq::post(CLOUDFLARE_RPKI_GRAPHQL)
-        .set("Content-Type", "application/json")
-        .send_json(ureq::json!({ "query": query_string }))?
-        .into_json::<Value>()?;
+        .header("Content-Type", "application/json")
+        .send_json(serde_json::json! ({ "query": query_string }))?
+        .body_mut()
+        .read_json::<Value>()?;
 
     let validation_res: ValidationResult = serde_json::from_value(
         res.get("data")
@@ -185,9 +186,10 @@ pub fn list_by_prefix(prefix: &IpNet) -> Result<Vec<RoaResource>> {
         &prefix, &prefix
     );
     let response = ureq::post(CLOUDFLARE_RPKI_GRAPHQL)
-        .set("Content-Type", "application/json")
-        .send_json(ureq::json!({ "query": query_string }))?
-        .into_json::<Value>()?;
+        .header("Content-Type", "application/json")
+        .send_json(serde_json::json!({ "query": query_string }))?
+        .body_mut()
+        .read_json::<Value>()?;
 
     let res = response
         .get("data")
@@ -223,9 +225,10 @@ pub fn list_by_asn(asn: u32) -> Result<Vec<RoaResource>> {
     );
 
     let response = ureq::post(CLOUDFLARE_RPKI_GRAPHQL)
-        .set("Content-Type", "application/json")
-        .send_json(ureq::json!({ "query": query_string }))?
-        .into_json::<Value>()?;
+        .header("Content-Type", "application/json")
+        .send_json(serde_json::json!({ "query": query_string }))?
+        .body_mut()
+        .read_json::<Value>()?;
 
     let res = response
         .get("data")
@@ -268,9 +271,10 @@ pub fn list_routed_by_state(asn: u32, state: ValidationState) -> Result<Vec<BgpE
     );
 
     let res = ureq::post(CLOUDFLARE_RPKI_GRAPHQL)
-        .set("Content-Type", "application/json")
-        .send_json(ureq::json!({ "query": query_string }))?
-        .into_json::<Value>()?;
+        .header("Content-Type", "application/json")
+        .send_json(serde_json::json!({ "query": query_string }))?
+        .body_mut()
+        .read_json::<Value>()?;
 
     let bgp_res: Vec<BgpEntry> = serde_json::from_value(
         res.get("data")

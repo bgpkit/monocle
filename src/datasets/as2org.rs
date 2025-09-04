@@ -465,7 +465,8 @@ impl As2org {
         let content = ureq::get("https://publicdata.caida.org/datasets/as-organizations/")
             .call()
             .map_err(|e| anyhow!("Failed to fetch data: {}", e))?
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| anyhow!("Failed to parse response: {}", e))?;
         let res: Vec<String> = data_link
             .captures_iter(content.as_str())
