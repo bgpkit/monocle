@@ -148,9 +148,9 @@ pub fn validate(asn: u32, prefix_str: &str) -> Result<(RpkiValidity, Vec<Roa>)> 
 
     let validation_res: ValidationResult = serde_json::from_value(
         res.get("data")
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("No 'data' field in response"))?
             .get("validation")
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("No 'validation' field in response data"))?
             .to_owned(),
     )?;
 
@@ -184,17 +184,20 @@ pub fn list_by_prefix(prefix: &IpNet) -> Result<Vec<RoaResource>> {
     "#,
         &prefix, &prefix
     );
-    let res = ureq::post(CLOUDFLARE_RPKI_GRAPHQL)
+    let response = ureq::post(CLOUDFLARE_RPKI_GRAPHQL)
         .set("Content-Type", "application/json")
         .send_json(ureq::json!({ "query": query_string }))?
-        .into_json::<Value>()?
+        .into_json::<Value>()?;
+
+    let res = response
         .get("data")
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("No 'data' field in response"))?
         .get("roas")
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("No 'roas' field in response data"))?
         .to_owned();
 
-    let resources: Vec<RoaResource> = serde_json::from_value(res).unwrap();
+    let resources: Vec<RoaResource> = serde_json::from_value(res)
+        .map_err(|e| anyhow::anyhow!("Failed to parse ROA resources: {}", e))?;
     Ok(resources)
 }
 
@@ -219,17 +222,20 @@ pub fn list_by_asn(asn: u32) -> Result<Vec<RoaResource>> {
         asn
     );
 
-    let res = ureq::post(CLOUDFLARE_RPKI_GRAPHQL)
+    let response = ureq::post(CLOUDFLARE_RPKI_GRAPHQL)
         .set("Content-Type", "application/json")
         .send_json(ureq::json!({ "query": query_string }))?
-        .into_json::<Value>()?
+        .into_json::<Value>()?;
+
+    let res = response
         .get("data")
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("No 'data' field in response"))?
         .get("roas")
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("No 'roas' field in response data"))?
         .to_owned();
 
-    let resources: Vec<RoaResource> = serde_json::from_value(res).unwrap();
+    let resources: Vec<RoaResource> = serde_json::from_value(res)
+        .map_err(|e| anyhow::anyhow!("Failed to parse ROA resources: {}", e))?;
     Ok(resources)
 }
 
@@ -266,8 +272,13 @@ pub fn list_routed_by_state(asn: u32, state: ValidationState) -> Result<Vec<BgpE
         .send_json(ureq::json!({ "query": query_string }))?
         .into_json::<Value>()?;
 
-    let bgp_res: Vec<BgpEntry> =
-        serde_json::from_value(res.get("data").unwrap().get("bgp").unwrap().to_owned())?;
+    let bgp_res: Vec<BgpEntry> = serde_json::from_value(
+        res.get("data")
+            .ok_or_else(|| anyhow::anyhow!("No 'data' field in response"))?
+            .get("bgp")
+            .ok_or_else(|| anyhow::anyhow!("No 'bgp' field in response data"))?
+            .to_owned(),
+    )?;
     Ok(bgp_res)
 }
 

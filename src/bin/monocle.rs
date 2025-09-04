@@ -1,4 +1,6 @@
 #![allow(clippy::type_complexity)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -249,19 +251,24 @@ enum RadarCommands {
     },
 }
 
-fn elem_to_string(elem: &BgpElem, json: bool, pretty: bool, collector: &str) -> String {
+fn elem_to_string(
+    elem: &BgpElem,
+    json: bool,
+    pretty: bool,
+    collector: &str,
+) -> Result<String, anyhow::Error> {
     if json {
         let mut val = json!(elem);
         val.as_object_mut()
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("Expected JSON object"))?
             .insert("collector".to_string(), collector.into());
         if pretty {
-            serde_json::to_string_pretty(&val).unwrap()
+            Ok(serde_json::to_string_pretty(&val)?)
         } else {
-            val.to_string()
+            Ok(val.to_string())
         }
     } else {
-        format!("{}|{}", elem, collector)
+        Ok(format!("{}|{}", elem, collector))
     }
 }
 
@@ -269,7 +276,13 @@ fn main() {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
 
-    let config = MonocleConfig::new(&cli.config);
+    let config = match MonocleConfig::new(&cli.config) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to load configuration: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     if cli.debug {
         tracing_subscriber::fmt()
@@ -294,8 +307,20 @@ fn main() {
                 return;
             }
 
-            let file_path = file_path.to_str().unwrap();
-            let parser = filters.to_parser(file_path).unwrap();
+            let file_path = match file_path.to_str() {
+                Some(path) => path,
+                None => {
+                    eprintln!("Invalid file path");
+                    std::process::exit(1);
+                }
+            };
+            let parser = match filters.to_parser(file_path) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("Failed to create parser for {}: {}", file_path, e);
+                    std::process::exit(1);
+                }
+            };
 
             let mut stdout = std::io::stdout();
 
@@ -303,7 +328,13 @@ fn main() {
                 None => {
                     for elem in parser {
                         // output to stdout
-                        let output_str = elem_to_string(&elem, json, pretty, "");
+                        let output_str = match elem_to_string(&elem, json, pretty, "") {
+                            Ok(s) => s,
+                            Err(e) => {
+                                eprintln!("Failed to format element: {}", e);
+                                continue;
+                            }
+                        };
                         if let Err(e) = writeln!(stdout, "{}", &output_str) {
                             if e.kind() != std::io::ErrorKind::BrokenPipe {
                                 eprintln!("ERROR: {e}");
@@ -348,15 +379,31 @@ fn main() {
             }
 
             let mut sqlite_path_str = "".to_string();
-            let sqlite_db = sqlite_path.map(|p| {
-                sqlite_path_str = p.to_str().unwrap().to_string();
-                MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset)
+            let sqlite_db = sqlite_path.and_then(|p| {
+                p.to_str()
+                    .map(|s| {
+                        sqlite_path_str = s.to_string();
+                        match MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset) {
+                            Ok(store) => Some(store),
+                            Err(e) => {
+                                eprintln!("Failed to create SQLite store: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    })
+                    .flatten()
             });
-            let mrt_path = mrt_path.map(|p| p.to_str().unwrap().to_string());
+            let mrt_path = mrt_path.and_then(|p| p.to_str().map(|s| s.to_string()));
             let show_progress = sqlite_db.is_some() || mrt_path.is_some();
 
             // it's fine to unwrap as the filters.validate() function has already checked for issues
-            let items = filters.to_broker_items().unwrap();
+            let items = match filters.to_broker_items() {
+                Ok(items) => items,
+                Err(e) => {
+                    eprintln!("Failed to convert filters to broker items: {}", e);
+                    std::process::exit(1);
+                }
+            };
 
             let total_items = items.len();
 
@@ -409,7 +456,14 @@ fn main() {
                     msg_count += 1;
 
                     if display_stdout {
-                        let output_str = elem_to_string(&elem, json, pretty, collector.as_str());
+                        let output_str =
+                            match elem_to_string(&elem, json, pretty, collector.as_str()) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    eprintln!("Failed to format element: {}", e);
+                                    continue;
+                                }
+                            };
                         println!("{output_str}");
                         continue;
                     }
@@ -417,7 +471,9 @@ fn main() {
                     msg_cache.push((elem, collector));
                     if msg_cache.len() >= 100000 {
                         if let Some(db) = &sqlite_db {
-                            db.insert_elems(&msg_cache);
+                            if let Err(e) = db.insert_elems(&msg_cache) {
+                                eprintln!("Failed to insert elements to database: {}", e);
+                            }
                         }
                         if let Some((encoder, _writer)) = &mut mrt_writer {
                             for (elem, _) in &msg_cache {
@@ -430,7 +486,9 @@ fn main() {
 
                 if !msg_cache.is_empty() {
                     if let Some(db) = &sqlite_db {
-                        db.insert_elems(&msg_cache);
+                        if let Err(e) = db.insert_elems(&msg_cache) {
+                            eprintln!("Failed to insert elements to database: {}", e);
+                        }
                     }
                     if let Some((encoder, _writer)) = &mut mrt_writer {
                         for (elem, _) in &msg_cache {
@@ -476,7 +534,13 @@ fn main() {
                     let url = item.url;
                     let collector = item.collector_id;
                     info!("start parsing {}", url.as_str());
-                    let parser = filters.to_parser(url.as_str()).unwrap();
+                    let parser = match filters.to_parser(url.as_str()) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            eprintln!("Failed to parse {}: {}", url.as_str(), e);
+                            return;
+                        }
+                    };
 
                     let mut elems_count = 0;
                     for elem in parser {
@@ -510,7 +574,10 @@ fn main() {
 
             if update {
                 // if the update flag is set, clear existing as2org data and re-download later
-                as2org.clear_db();
+                if let Err(e) = as2org.clear_db() {
+                    eprintln!("Failed to clear database: {}", e);
+                    std::process::exit(1);
+                }
             }
 
             if as2org.is_db_empty() {

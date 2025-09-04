@@ -1,3 +1,6 @@
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
+
 mod config;
 mod database;
 mod datasets;

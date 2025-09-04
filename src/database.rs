@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bgpkit_parser::models::ElemType;
 use bgpkit_parser::BgpElem;
 use itertools::Itertools;
@@ -23,19 +23,18 @@ pub struct MsgStore {
 }
 
 impl MsgStore {
-    pub fn new(db_path: &Option<String>, reset: bool) -> MsgStore {
-        let mut db = MonocleDatabase::new(db_path).unwrap();
-        Self::initialize_msgs_db(&mut db, reset);
-        MsgStore { db }
+    pub fn new(db_path: &Option<String>, reset: bool) -> Result<MsgStore> {
+        let mut db = MonocleDatabase::new(db_path)?;
+        Self::initialize_msgs_db(&mut db, reset)?;
+        Ok(MsgStore { db })
     }
 
-    fn initialize_msgs_db(db: &mut MonocleDatabase, reset: bool) {
+    fn initialize_msgs_db(db: &mut MonocleDatabase, reset: bool) -> Result<()> {
         if reset {
-            db.conn.execute("drop table if exists elems", []).unwrap();
+            db.conn.execute("drop table if exists elems", [])?;
         }
-        db.conn
-            .execute(
-                r#"
+        db.conn.execute(
+            r#"
         create table if not exists elems (
             timestamp INTEGER,
             elem_type TEXT,
@@ -55,52 +54,43 @@ impl MsgStore {
             aggr_ip TEXT
         );
         "#,
-                [],
-            )
-            .unwrap();
+            [],
+        )?;
 
         // Add indexes for common query patterns
+        db.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_timestamp ON elems(timestamp)",
+            [],
+        )?;
+        db.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_peer_asn ON elems(peer_asn)",
+            [],
+        )?;
         db.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_timestamp ON elems(timestamp)",
-                [],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_peer_asn ON elems(peer_asn)",
-                [],
-            )
-            .unwrap();
-        db.conn
-            .execute("CREATE INDEX IF NOT EXISTS idx_prefix ON elems(prefix)", [])
-            .unwrap();
-        db.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_collector ON elems(collector)",
-                [],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_elem_type ON elems(elem_type)",
-                [],
-            )
-            .unwrap();
+            .execute("CREATE INDEX IF NOT EXISTS idx_prefix ON elems(prefix)", [])?;
+        db.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_collector ON elems(collector)",
+            [],
+        )?;
+        db.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_elem_type ON elems(elem_type)",
+            [],
+        )?;
 
         // Enable SQLite performance optimizations
-        db.conn.execute("PRAGMA journal_mode=WAL", []).unwrap();
-        db.conn.execute("PRAGMA synchronous=NORMAL", []).unwrap();
-        db.conn.execute("PRAGMA cache_size=100000", []).unwrap();
-        db.conn.execute("PRAGMA temp_store=MEMORY", []).unwrap();
+        db.conn.execute("PRAGMA journal_mode=WAL", [])?;
+        db.conn.execute("PRAGMA synchronous=NORMAL", [])?;
+        db.conn.execute("PRAGMA cache_size=100000", [])?;
+        db.conn.execute("PRAGMA temp_store=MEMORY", [])?;
+        Ok(())
     }
 
-    pub fn insert_elems(&self, elems: &[(BgpElem, String)]) {
+    pub fn insert_elems(&self, elems: &[(BgpElem, String)]) -> Result<()> {
         const BATCH_SIZE: usize = 50000;
 
         for batch in elems.chunks(BATCH_SIZE) {
             // Use a transaction for batch inserts
-            let tx = self.db.conn.unchecked_transaction().unwrap();
+            let tx = self.db.conn.unchecked_transaction()?;
 
             {
                 // Use prepared statement for better performance
@@ -109,7 +99,7 @@ impl MsgStore {
                      prefix, next_hop, as_path, origin_asns, origin, local_pref, med, 
                      communities, atomic, aggr_asn, aggr_ip) 
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
-                ).unwrap();
+                ).map_err(|e| anyhow!("Failed to prepare statement: {}", e))?;
 
                 for (elem, collector) in batch {
                     let t = match elem.elem_type {
@@ -141,11 +131,13 @@ impl MsgStore {
                         elem.aggr_asn.map(|asn| asn.to_u32()),
                         elem.aggr_ip.as_ref().map(|v| v.to_string()),
                     ])
-                    .unwrap();
+                    .map_err(|e| anyhow!("Failed to execute statement: {}", e))?;
                 }
             } // stmt is dropped here
 
-            tx.commit().unwrap();
+            tx.commit()
+                .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
         }
+        Ok(())
     }
 }

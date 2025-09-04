@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use config::Config;
 use std::collections::HashMap;
 use std::path::Path;
@@ -15,10 +16,14 @@ const EMPTY_CONFIG: &str = r#"### monocle configuration file
 
 impl MonocleConfig {
     /// function to create and initialize a new configuration
-    pub fn new(path: &Option<String>) -> MonocleConfig {
+    pub fn new(path: &Option<String>) -> Result<MonocleConfig> {
         let mut builder = Config::builder();
         // by default use $HOME/.monocle.toml as the configuration file path
-        let home_dir = dirs::home_dir().unwrap().to_str().unwrap().to_owned();
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| anyhow!("Could not find home directory"))?
+            .to_str()
+            .ok_or_else(|| anyhow!("Could not convert home directory path to string"))?
+            .to_owned();
         // config dir
         let monocle_dir = format!("{}/.monocle", home_dir.as_str());
 
@@ -27,19 +32,25 @@ impl MonocleConfig {
             Some(p) => {
                 let path = Path::new(p.as_str());
                 if path.exists() {
-                    builder = builder.add_source(config::File::with_name(path.to_str().unwrap()));
+                    let path_str = path
+                        .to_str()
+                        .ok_or_else(|| anyhow!("Could not convert path to string"))?;
+                    builder = builder.add_source(config::File::with_name(path_str));
                 } else {
-                    std::fs::write(p.as_str(), EMPTY_CONFIG).expect("Unable to create config file");
+                    std::fs::write(p.as_str(), EMPTY_CONFIG)
+                        .map_err(|e| anyhow!("Unable to create config file: {}", e))?;
                 }
             }
             None => {
-                std::fs::create_dir_all(monocle_dir.as_str()).unwrap();
+                std::fs::create_dir_all(monocle_dir.as_str())
+                    .map_err(|e| anyhow!("Unable to create monocle directory: {}", e))?;
                 let p = format!("{}/monocle.toml", monocle_dir.as_str());
                 if Path::new(p.as_str()).exists() {
                     builder = builder.add_source(config::File::with_name(p.as_str()));
                 } else {
-                    std::fs::write(p.as_str(), EMPTY_CONFIG)
-                        .unwrap_or_else(|_| panic!("Unable to create config file {}", p.as_str()));
+                    std::fs::write(p.as_str(), EMPTY_CONFIG).map_err(|e| {
+                        anyhow!("Unable to create config file {}: {}", p.as_str(), e)
+                    })?;
                 }
             }
         }
@@ -47,24 +58,34 @@ impl MonocleConfig {
         // Eg.. `MONOCLE_DEBUG=1 ./target/app` would set the `debug` key
         builder = builder.add_source(config::Environment::with_prefix("MONOCLE"));
 
-        let settings = builder.build().unwrap();
+        let settings = builder
+            .build()
+            .map_err(|e| anyhow!("Failed to build configuration: {}", e))?;
         let config = settings
             .try_deserialize::<HashMap<String, String>>()
-            .unwrap();
+            .map_err(|e| anyhow!("Failed to deserialize configuration: {}", e))?;
 
         // check data directory config
         let data_dir = match config.get("data_dir") {
             Some(p) => {
                 let path = Path::new(p);
-                path.to_str().unwrap().to_string()
+                path.to_str()
+                    .ok_or_else(|| anyhow!("Could not convert data_dir path to string"))?
+                    .to_string()
             }
             None => {
-                let dir = format!("{}/.monocle/", dirs::home_dir().unwrap().to_str().unwrap());
-                std::fs::create_dir_all(dir.as_str()).unwrap();
+                let home =
+                    dirs::home_dir().ok_or_else(|| anyhow!("Could not find home directory"))?;
+                let home_str = home
+                    .to_str()
+                    .ok_or_else(|| anyhow!("Could not convert home directory path to string"))?;
+                let dir = format!("{}/.monocle/", home_str);
+                std::fs::create_dir_all(dir.as_str())
+                    .map_err(|e| anyhow!("Unable to create data directory: {}", e))?;
                 dir
             }
         };
 
-        MonocleConfig { data_dir }
+        Ok(MonocleConfig { data_dir })
     }
 }
