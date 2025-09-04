@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased changes
+## v0.9.0 - 2025-09-04
+
+### New features
+
+* Added retry mechanism for failed search operations with exponential backoff
+* Implemented real-time success/failure progress tracking during search
+* Added paginated search processing for large time ranges to handle memory efficiently
 
 ### Performance improvements
 
@@ -12,6 +18,18 @@ All notable changes to this project will be documented in this file.
     * Added database indexes for common query patterns
     * Enabled SQLite performance optimizations (WAL mode, cache tuning)
     * **Impact**: BGP data insertion ~10x faster, as2org bootstrap ~100x faster (3+ minutes → 1-2 seconds)
+
+### Bug fixes
+
+* Fixed network error handling in multi-file processing to prevent thread panics
+
+### Code improvements
+
+* Replaced unwrap/expect calls with proper error handling
+* Added clippy lints to deny unsafe unwrap_used and expect_used patterns
+* Updated CI workflow to include formatting and clippy checks
+* Enhanced database operations with proper Result types
+* Improved RPKI validator error handling
 
 ## v0.8.0 - 2025-03-04
 
