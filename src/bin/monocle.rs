@@ -35,6 +35,15 @@ const INITIAL_DELAY: u64 = 1;
 /// Maximum retry delay in seconds
 const MAX_DELAY: u64 = 30;
 
+/// Message types sent through the writer channel
+#[derive(Debug)]
+enum WriterMessage {
+    /// BGP element with its collector ID
+    Element(Box<BgpElem>, String),
+    /// Signal that a file has been completely processed
+    FileComplete,
+}
+
 /// Structure to track failed processing attempts for retry mechanism
 #[derive(Debug, Clone)]
 struct FailedItem {
@@ -446,48 +455,39 @@ fn main() {
             let mrt_path = mrt_path.and_then(|p| p.to_str().map(|s| s.to_string()));
             let show_progress = sqlite_db.is_some() || mrt_path.is_some();
 
-            // it's fine to unwrap as the filters.validate() function has already checked for issues
-            let items = match filters.to_broker_items() {
-                Ok(items) => items,
+            // Create base broker for pagination
+            let base_broker = match filters.build_broker() {
+                Ok(broker) => broker,
                 Err(e) => {
-                    eprintln!("Failed to convert filters to broker items: {}", e);
+                    eprintln!("Failed to create broker: {}", e);
                     std::process::exit(1);
                 }
             };
 
-            let total_items = items.len();
-
-            let total_size: i64 = items
-                .iter()
-                .map(|x| {
-                    info!(
-                        "{},{},{}",
-                        x.collector_id.as_str(),
-                        x.url.as_str(),
-                        x.rough_size
-                    );
-                    x.rough_size
-                })
-                .sum::<i64>();
-            info!(
-                "total of {} files, {} bytes to parse",
-                items.len(),
-                total_size
-            );
-
             if dry_run {
+                // For dry run, get first page to show what would be processed
+                let items = match base_broker.clone().page(1).query_single_page() {
+                    Ok(items) => items,
+                    Err(e) => {
+                        eprintln!("Failed to query broker for dry run: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+
+                let total_size: i64 = items.iter().map(|x| x.rough_size).sum();
                 println!(
-                    "total of {} files, {} bytes to parse",
+                    "First page: {} files, {} bytes (will process all pages with ~1000 files each)",
                     items.len(),
                     total_size
                 );
                 return;
             }
 
-            let (sender, receiver): (Sender<(BgpElem, String)>, Receiver<(BgpElem, String)>) =
-                channel();
+            let (sender, receiver): (Sender<WriterMessage>, Receiver<WriterMessage>) = channel();
             // progress bar
             let (pb_sender, pb_receiver): (Sender<u32>, Receiver<u32>) = channel();
+            // page info updates
+            let (page_sender, page_receiver): (Sender<String>, Receiver<String>) = channel();
 
             // dedicated thread for handling output of results
             let writer_thread = thread::spawn(move || {
@@ -503,53 +503,62 @@ fn main() {
                     None => None,
                 };
 
-                let mut msg_cache = vec![];
-                let mut msg_count = 0;
+                let mut current_file_cache = vec![];
+                let mut total_msg_count = 0;
 
-                for (elem, collector) in receiver {
-                    msg_count += 1;
+                for msg in receiver {
+                    match msg {
+                        WriterMessage::Element(elem, collector) => {
+                            total_msg_count += 1;
 
-                    if display_stdout {
-                        let output_str =
-                            match elem_to_string(&elem, json, pretty, collector.as_str()) {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    eprintln!("Failed to format element: {}", e);
-                                    continue;
+                            if display_stdout {
+                                let output_str =
+                                    match elem_to_string(&elem, json, pretty, collector.as_str()) {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            eprintln!("Failed to format element: {}", e);
+                                            continue;
+                                        }
+                                    };
+                                println!("{output_str}");
+                                continue;
+                            }
+
+                            current_file_cache.push((*elem, collector));
+                        }
+                        WriterMessage::FileComplete => {
+                            // Commit current file's data to SQLite
+                            if !current_file_cache.is_empty() {
+                                if let Some(db) = &sqlite_db {
+                                    if let Err(e) = db.insert_elems(&current_file_cache) {
+                                        eprintln!("Failed to insert elements to database: {}", e);
+                                    }
                                 }
-                            };
-                        println!("{output_str}");
-                        continue;
-                    }
-
-                    msg_cache.push((elem, collector));
-                    if msg_cache.len() >= 100000 {
-                        if let Some(db) = &sqlite_db {
-                            if let Err(e) = db.insert_elems(&msg_cache) {
-                                eprintln!("Failed to insert elements to database: {}", e);
+                                if let Some((encoder, _writer)) = &mut mrt_writer {
+                                    for (elem, _) in &current_file_cache {
+                                        encoder.process_elem(elem);
+                                    }
+                                }
+                                current_file_cache.clear();
                             }
                         }
-                        if let Some((encoder, _writer)) = &mut mrt_writer {
-                            for (elem, _) in &msg_cache {
-                                encoder.process_elem(elem);
-                            }
-                        }
-                        msg_cache.clear();
                     }
                 }
 
-                if !msg_cache.is_empty() {
+                // Handle any remaining data in cache (in case last file didn't send FileComplete)
+                if !current_file_cache.is_empty() {
                     if let Some(db) = &sqlite_db {
-                        if let Err(e) = db.insert_elems(&msg_cache) {
+                        if let Err(e) = db.insert_elems(&current_file_cache) {
                             eprintln!("Failed to insert elements to database: {}", e);
                         }
                     }
                     if let Some((encoder, _writer)) = &mut mrt_writer {
-                        for (elem, _) in &msg_cache {
+                        for (elem, _) in &current_file_cache {
                             encoder.process_elem(elem);
                         }
                     }
                 }
+
                 if let Some((encoder, writer)) = &mut mrt_writer {
                     let bytes = encoder.export_bytes();
                     if let Err(e) = writer.write_all(&bytes) {
@@ -559,28 +568,66 @@ fn main() {
                 drop(mrt_writer);
 
                 if !display_stdout {
-                    println!("processed {total_items} files, found {msg_count} messages, written into file {sqlite_path_str}");
+                    println!(
+                        "found {total_msg_count} messages, written into file {sqlite_path_str}"
+                    );
                 }
             });
 
-            // dedicated thread for progress bar
-            let progress_thread = thread::spawn(move || {
-                if !show_progress {
-                    return;
-                }
+            // Setup spinner for paginated processing
+            let pb = if show_progress {
+                let pb = indicatif::ProgressBar::new_spinner();
+                pb.set_message("Processed 0 files, found 0 messages");
+                pb.enable_steady_tick(Duration::from_millis(100));
+                Some(pb)
+            } else {
+                None
+            };
 
-                let sty = indicatif::ProgressStyle::with_template(
-                    "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {eta} left; {msg}",
-                )
-                .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar())
-                .progress_chars("##-");
-                let pb = indicatif::ProgressBar::new(total_items as u64);
-                pb.set_style(sty);
-                let mut total_count: u64 = 0;
-                for count in pb_receiver.iter() {
-                    total_count += count as u64;
-                    pb.set_message(format!("found {total_count} messages"));
-                    pb.inc(1);
+            // dedicated thread for progress updates from workers
+            let pb_for_updates = pb.clone();
+            let progress_thread = thread::spawn(move || {
+                let mut files_processed: u64 = 0;
+                let mut total_messages: u64 = 0;
+                let mut current_page_info = "".to_string();
+
+                loop {
+                    use std::sync::mpsc::TryRecvError;
+
+                    // Check for page info updates (non-blocking)
+                    match page_receiver.try_recv() {
+                        Ok(page_info) => {
+                            current_page_info = page_info;
+                        }
+                        Err(TryRecvError::Empty) => {} // No page update available
+                        Err(TryRecvError::Disconnected) => break, // Page sender closed
+                    }
+
+                    // Check for file completion updates (blocking with timeout)
+                    match pb_receiver.recv_timeout(Duration::from_millis(100)) {
+                        Ok(count) => {
+                            files_processed += 1;
+                            total_messages += count as u64;
+
+                            // Update spinner with combined progress info
+                            if let Some(ref pb) = pb_for_updates {
+                                pb.set_message(format!(
+                                    "Processed {} files, found {} messages{}",
+                                    files_processed, total_messages, current_page_info
+                                ));
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            // Update display even without new file completions (for page changes)
+                            if let Some(ref pb) = pb_for_updates {
+                                pb.set_message(format!(
+                                    "Processed {} files, found {} messages{}",
+                                    files_processed, total_messages, current_page_info
+                                ));
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break, // Sender closed
+                    }
                 }
             });
 
@@ -588,41 +635,113 @@ fn main() {
             let failed_items = Arc::new(Mutex::new(Vec::<FailedItem>::new()));
             let failed_items_clone = Arc::clone(&failed_items);
 
-            // Initial parallel processing with failure collection
-            let pb_sender_clone = pb_sender.clone();
-            items.into_par_iter().for_each_with(
-                (sender.clone(), pb_sender_clone, failed_items_clone),
-                |(s, pb_sender, failed_items), item| {
-                    let url = item.url.clone();
-                    let collector = item.collector_id.clone();
-                    info!("start parsing {}", url.as_str());
-                    let parser = match filters.to_parser(url.as_str()) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            let error_msg = format!("Failed to parse {}: {}", url.as_str(), e);
-                            eprintln!("{}", error_msg);
-                            // Store failed item for retry
-                            if let Ok(mut failed) = failed_items.lock() {
-                                failed.push(FailedItem::new(item, error_msg));
+            // Paginated processing loop
+            let mut page = 1i64;
+            let mut total_files = 0u32;
+
+            loop {
+                let items = match base_broker.clone().page(page).query_single_page() {
+                    Ok(items) => items,
+                    Err(e) => {
+                        eprintln!("Failed to fetch page {}: {}", page, e);
+                        break;
+                    }
+                };
+
+                if items.is_empty() {
+                    info!("Reached empty page {}, finishing", page);
+                    break;
+                }
+
+                let page_size = items.len();
+                total_files += page_size as u32;
+
+                // Send page info to progress thread and log
+                let time_info = if let Some(first_item) = items.first() {
+                    format!(" @ {}", first_item.ts_start.format("%Y-%m-%d %H:%M UTC"))
+                } else {
+                    String::new()
+                };
+
+                let page_info = format!(
+                    " | Page {} ({} files, {} total){}",
+                    page, page_size, total_files, time_info
+                );
+
+                if page_sender.send(page_info).is_err() {
+                    // Progress thread may have ended, continue
+                }
+
+                info!(
+                    "Starting page {} ({} files, {} total){}",
+                    page, page_size, total_files, time_info
+                );
+
+                info!("Processing page {} with {} items", page, page_size);
+
+                // Process this page's items using existing parallel logic
+                let pb_sender_clone = pb_sender.clone();
+                items.into_par_iter().for_each_with(
+                    (sender.clone(), pb_sender_clone, failed_items_clone.clone()),
+                    |(s, pb_sender, failed_items), item| {
+                        let url = item.url.clone();
+                        let collector = item.collector_id.clone();
+                        info!("start parsing {}", url.as_str());
+                        let parser = match filters.to_parser(url.as_str()) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                let error_msg = format!("Failed to parse {}: {}", url.as_str(), e);
+                                eprintln!("{}", error_msg);
+                                // Store failed item for retry
+                                if let Ok(mut failed) = failed_items.lock() {
+                                    failed.push(FailedItem::new(item, error_msg));
+                                }
+                                return;
                             }
-                            return;
-                        }
-                    };
+                        };
 
-                    let mut elems_count = 0;
-                    for elem in parser {
-                        if s.send((elem, collector.clone())).is_err() {
-                            // Channel closed, break out
-                            break;
+                        let mut elems_count = 0;
+                        for elem in parser {
+                            if s.send(WriterMessage::Element(Box::new(elem), collector.clone()))
+                                .is_err()
+                            {
+                                // Channel closed, break out
+                                break;
+                            }
+                            elems_count += 1;
                         }
-                        elems_count += 1;
-                    }
 
-                    if show_progress && pb_sender.send(elems_count).is_err() {
-                        // Progress channel closed, ignore
-                    }
-                    info!("finished parsing {}", url.as_str());
-                },
+                        // Send file completion signal to trigger per-file commit
+                        if s.send(WriterMessage::FileComplete).is_err() {
+                            // Channel closed, ignore
+                        }
+
+                        if pb_sender.send(elems_count).is_err() {
+                            // Progress channel closed, ignore
+                        }
+                        info!("finished parsing {}", url.as_str());
+                    },
+                );
+
+                page += 1;
+
+                // Early exit if partial page (last page)
+                if page_size < 1000 {
+                    info!("Processed final page {} with {} items", page - 1, page_size);
+                    break;
+                }
+            }
+
+            if let Some(pb) = pb {
+                let final_message =
+                    format!("Completed {} pages, {} total files", page - 1, total_files);
+                pb.finish_with_message(final_message);
+            }
+
+            info!(
+                "Completed processing {} total files across {} pages",
+                total_files,
+                page - 1
             );
 
             // Retry phase for failed items
@@ -696,7 +815,10 @@ fn main() {
 
                         for elem in parser {
                             if sender
-                                .send((elem, failed_item.item.collector_id.clone()))
+                                .send(WriterMessage::Element(
+                                    Box::new(elem),
+                                    failed_item.item.collector_id.clone(),
+                                ))
                                 .is_err()
                             {
                                 // Channel closed, mark as failed
@@ -704,6 +826,11 @@ fn main() {
                                 break;
                             }
                             elems_count += 1;
+                        }
+
+                        // Send file completion signal for retry as well
+                        if parse_successful && sender.send(WriterMessage::FileComplete).is_err() {
+                            parse_successful = false;
                         }
 
                         if parse_successful {
@@ -745,6 +872,7 @@ fn main() {
             // Close channels to signal completion
             drop(sender);
             drop(pb_sender);
+            drop(page_sender);
 
             // wait for the output thread to stop
             if let Err(e) = writer_thread.join() {
