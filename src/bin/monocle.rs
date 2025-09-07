@@ -127,6 +127,26 @@ enum Commands {
         filters: ParseFilters,
     },
 
+    Broker {
+        #[clap(long, short = 't')]
+        start_ts: Option<i64>,
+
+        #[clap(long, short = 'T')]
+        end_ts: Option<i64>,
+
+        #[clap(long, short = 'c')]
+        collector: Option<String>,
+
+        #[clap(long, short = 'P')]
+        project: Option<String>,
+
+        #[clap(long)]
+        data_type: Option<String>,
+
+        #[clap(long, default_value_t = 1)]
+        page: i64,
+    },
+
     /// Search BGP messages from all available public MRT files.
     Search {
         /// Dry-run, do not download or parse.
@@ -934,6 +954,94 @@ fn main() {
                 eprintln!("Progress thread failed: {:?}", e);
             }
         }
+
+        Commands::Broker {
+            start_ts,
+            end_ts,
+            collector,
+            project,
+            data_type,
+            page,
+        } => {
+            use chrono::{Duration, Utc};
+
+            let mut broker = bgpkit_broker::BgpkitBroker::new();
+
+            if start_ts.is_none() && end_ts.is_none() {
+                let now = Utc::now();
+                let yesterday = now - Duration::days(1);
+
+                broker = broker
+                    .ts_start(yesterday.to_rfc3339())
+                    .ts_end(now.to_rfc3339());
+            } else {
+                if let Some(ts) = start_ts {
+                    broker = broker.ts_start(ts);
+                }
+                if let Some(ts) = end_ts {
+                    broker = broker.ts_end(ts);
+                }
+            }
+
+            if let Some(c) = collector {
+                broker = broker.collector_id(c.as_str());
+            }
+            if let Some(p) = project {
+                broker = broker.project(p.as_str());
+            }
+            if let Some(dt) = data_type {
+                broker = broker.data_type(dt.as_str());
+            }
+
+            broker = broker.page(page);
+
+            match broker.query_single_page() {
+                Ok(items) => {
+                    if items.is_empty() {
+                        println!("No MRT files found");
+                        return;
+                    }
+
+                    if json {
+                        match serde_json::to_string_pretty(&items) {
+                            Ok(json_str) => println!("{}", json_str),
+                            Err(e) => eprintln!("Error serializing: {}", e),
+                        }
+                    } else {
+                        #[derive(Tabled)]
+                        struct BrokerItemDisplay {
+                            #[tabled(rename = "Collector")]
+                            collector_id: String,
+                            #[tabled(rename = "Type")]
+                            data_type: String,
+                            #[tabled(rename = "Start Time (UTC)")]
+                            ts_start: String,
+                            #[tabled(rename = "URL")]
+                            url: String,
+                            #[tabled(rename = "Size (Bytes)")]
+                            rough_size: i64,
+                        }
+
+                        let display_items: Vec<BrokerItemDisplay> = items
+                            .into_iter()
+                            .map(|item| BrokerItemDisplay {
+                                collector_id: item.collector_id,
+                                data_type: item.data_type,
+                                ts_start: item.ts_start.format("%Y-%m-%d %H:%M:%S").to_string(),
+                                url: item.url,
+                                rough_size: item.rough_size,
+                            })
+                            .collect();
+
+                        println!("{}", Table::new(display_items).with(Style::markdown()));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("ERROR: failed to query{}", e);
+                }
+            }
+        }
+
         Commands::Whois {
             query,
             name_only,
