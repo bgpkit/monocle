@@ -126,25 +126,35 @@ enum Commands {
         #[clap(flatten)]
         filters: ParseFilters,
     },
-
+    /// Query BGPKIT Broker for the meta data of available MRT files.
     Broker {
+        /// starting timestamp (RFC3339 or unix epoch)
         #[clap(long, short = 't')]
-        start_ts: Option<i64>,
+        start_ts: String,
 
+        /// ending timestamp (RFC3339 or unix epoch)
         #[clap(long, short = 'T')]
-        end_ts: Option<i64>,
+        end_ts: String,
 
+        /// BGP collector name: e.g. rrc00, route-views2
         #[clap(long, short = 'c')]
         collector: Option<String>,
 
+        /// BGP collection project name, e.g. routeviews, or riperis
         #[clap(long, short = 'P')]
         project: Option<String>,
 
+        /// Data type, e.g., updates or rib
         #[clap(long)]
         data_type: Option<String>,
 
-        #[clap(long, default_value_t = 1)]
-        page: i64,
+        /// Page number to fetch (1-based). If set, only this page will be fetched.
+        #[clap(long)]
+        page: Option<i64>,
+
+        /// Page size for broker queries (default 1000)
+        #[clap(long)]
+        page_size: Option<i64>,
     },
 
     /// Search BGP messages from all available public MRT files.
@@ -962,26 +972,27 @@ fn main() {
             project,
             data_type,
             page,
+            page_size,
         } => {
-            use chrono::{Duration, Utc};
-
-            let mut broker = bgpkit_broker::BgpkitBroker::new();
-
-            if start_ts.is_none() && end_ts.is_none() {
-                let now = Utc::now();
-                let yesterday = now - Duration::days(1);
-
-                broker = broker
-                    .ts_start(yesterday.to_rfc3339())
-                    .ts_end(now.to_rfc3339());
-            } else {
-                if let Some(ts) = start_ts {
-                    broker = broker.ts_start(ts);
+            // parse time strings similar to Search subcommand
+            let ts_start = match string_to_time(&start_ts) {
+                Ok(t) => t.timestamp(),
+                Err(_) => {
+                    eprintln!("start-ts is not a valid time string: {}", start_ts);
+                    std::process::exit(1);
                 }
-                if let Some(ts) = end_ts {
-                    broker = broker.ts_end(ts);
+            };
+            let ts_end = match string_to_time(&end_ts) {
+                Ok(t) => t.timestamp(),
+                Err(_) => {
+                    eprintln!("end-ts is not a valid time string: {}", end_ts);
+                    std::process::exit(1);
                 }
-            }
+            };
+
+            let mut broker = bgpkit_broker::BgpkitBroker::new()
+                .ts_start(ts_start)
+                .ts_end(ts_end);
 
             if let Some(c) = collector {
                 broker = broker.collector_id(c.as_str());
@@ -993,9 +1004,26 @@ fn main() {
                 broker = broker.data_type(dt.as_str());
             }
 
-            broker = broker.page(page);
+            let page_size = page_size.unwrap_or(1000);
+            broker = broker.page_size(page_size);
 
-            match broker.query_single_page() {
+            let res = if let Some(p) = page {
+                broker.page(p).query_single_page()
+            } else {
+                // Use query() and limit to at most 10 pages worth of items
+                match broker.query() {
+                    Ok(mut v) => {
+                        let max_items = (page_size * 10) as usize;
+                        if v.len() > max_items {
+                            v.truncate(max_items);
+                        }
+                        Ok(v)
+                    }
+                    Err(e) => Err(e),
+                }
+            };
+
+            match res {
                 Ok(items) => {
                     if items.is_empty() {
                         println!("No MRT files found");
@@ -1005,7 +1033,7 @@ fn main() {
                     if json {
                         match serde_json::to_string_pretty(&items) {
                             Ok(json_str) => println!("{}", json_str),
-                            Err(e) => eprintln!("Error serializing: {}", e),
+                            Err(e) => eprintln!("error serializing: {}", e),
                         }
                     } else {
                         #[derive(Tabled)]
@@ -1027,7 +1055,7 @@ fn main() {
                             .map(|item| BrokerItemDisplay {
                                 collector_id: item.collector_id,
                                 data_type: item.data_type,
-                                ts_start: item.ts_start.format("%Y-%m-%d %H:%M:%S").to_string(),
+                                ts_start: item.ts_start.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                                 url: item.url,
                                 rough_size: item.rough_size,
                             })
@@ -1037,7 +1065,7 @@ fn main() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("ERROR: failed to query{}", e);
+                    eprintln!("failed to query: {}", e);
                 }
             }
         }

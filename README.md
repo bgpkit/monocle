@@ -43,6 +43,7 @@ Subcommands:
 
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
+- `broker`: query BGPKIT Broker for available MRT metadata
 - `whois`: search AS and organization information by ASN or name
 - `country`: utility to look up country name and code
 - `time`: utility to convert time between unix timestamp and RFC3339 string
@@ -139,6 +140,72 @@ Options:
   -a, --as-path <AS_PATH>          Filter by AS path regex string
   -h, --help                       Print help
   -V, --version                    Print version
+```
+
+### `monocle broker`
+
+Query BGPKIT Broker for the metadata of available MRT files. This subcommand returns file listings
+that match your filters and time window. By default, results are printed as a table; use `--json` to
+print JSON.
+
+Usage:
+
+```text
+monocle broker \
+  --start-ts <START_TS> \
+  --end-ts <END_TS> \
+  [--collector <COLLECTOR>] \
+  [--project <PROJECT>] \
+  [--data-type <DATA_TYPE>] \
+  [--page <PAGE>] \
+  [--page-size <PAGE_SIZE>] \
+  [--json]
+```
+
+Notes:
+
+- <START_TS> and <END_TS> accept either RFC3339 time strings (e.g., 2024-01-01T00:00:00Z)
+  or Unix timestamps in seconds. The same flexible time parsing is used by the `search` subcommand.
+- If `--page` is specified (1-based), monocle queries only that single page using Broker's
+  `query_single_page()`.
+- If `--page` is NOT specified, monocle uses Broker's `query()` and returns at most 10 pages worth
+  of results (calculated as `page-size * 10`). Use `--page` and `--page-size` to manually iterate
+  if you need more than 10 pages.
+- `--page-size` defaults to `1000` if not provided.
+- `--data-type` can be `updates` or `rib` (case-insensitive behavior depends on Broker),
+  or omitted to retrieve both.
+
+Examples:
+
+- List RIPE RIS rrc00 updates during the first hour of 2024 (table output):
+
+```bash
+monocle broker \
+  --start-ts 2024-01-01T00:00:00Z \
+  --end-ts 2024-01-01T01:00:00Z \
+  --collector rrc00 \
+  --project riperis \
+  --data-type updates
+```
+
+- Fetch page 2 with a custom page size (manual iteration):
+
+```bash
+monocle broker \
+  --start-ts 2024-01-01T00:00:00Z \
+  --end-ts 2024-01-01T02:00:00Z \
+  --page 2 \
+  --page-size 500
+```
+
+- Output as JSON:
+
+```bash
+monocle broker \
+  --start-ts 1704067200 \
+  --end-ts 1704070800 \
+  --project routeviews \
+  --json
 ```
 
 ### `monocle time`
@@ -634,3 +701,4 @@ Displaying the information in JSON format:
 ## Built with ❤️ by BGPKIT Team
 
 <a href="https://bgpkit.com"><img src="https://bgpkit.com/Original%20Logo%20Cropped.png" alt="https://bgpkit.com/favicon.ico" width="200"/></a>
+
