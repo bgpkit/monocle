@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Maintenance
+
+* update dependencies
+    * `oneio` -> v0.20.0
+    * `bgpkit-parser` -> v0.12.0
+    * `bgpkit-broker` -> v0.9.0
+
 ## v0.9.0 - 2025-09-04
 
 ### New features
