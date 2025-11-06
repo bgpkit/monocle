@@ -460,7 +460,7 @@ impl As2org {
     }
 
     pub fn get_most_recent_data() -> Result<String> {
-        let data_link: Regex = Regex::new(r".*(........\.as-org2info\.jsonl\.gz).*")
+        let data_link: Regex = Regex::new(r".*(\d{8}\.as-org2info\.jsonl\.gz).*")
             .map_err(|e| anyhow!("Failed to create regex: {}", e))?;
         let content = ureq::get("https://publicdata.caida.org/datasets/as-organizations/")
             .call()
