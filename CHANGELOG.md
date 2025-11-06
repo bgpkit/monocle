@@ -2,14 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.9.1 - 2025-11-05
 
 ### Maintenance
 
 * update dependencies
     * `oneio` -> v0.20.0
     * `bgpkit-parser` -> v0.12.0
-    * `bgpkit-broker` -> v0.9.0
+    * `bgpkit-broker` -> v0.9.1
+
+### Bug fixes
+
+* Fix an issue where monocle fails to locate the latest CAIDA as2org dataset file
 
 ## v0.9.0 - 2025-09-04
 
