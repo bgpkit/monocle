@@ -1,7 +1,5 @@
-mod aspa;
-mod roa;
+mod commons;
 mod validator;
 
-pub use aspa::*;
-pub use roa::*;
+pub use commons::*;
 pub use validator::*;

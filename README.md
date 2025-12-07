@@ -371,9 +371,11 @@ Example runs:
 
 ### `monocle rpki`:
 
-Check RPKI validity for given prefix-ASN pair and provide utility to read ROA and ASPA files from the RPKI archive.
+RPKI utilities for checking validity, listing ROAs/ASPAs, and querying historical RPKI data.
 
-We use [Cloudflare RPKI validator](https://rpki.cloudflare.com) as our data source.
+Data sources:
+- Real-time validation: [Cloudflare RPKI validator](https://rpki.cloudflare.com)
+- Historical data: [RIPE NCC RPKI archives](https://ftp.ripe.net/rpki/) and [RPKIviews](https://rpkiviews.org/)
 
 ```text
 ➜  monocle rpki --help
@@ -382,29 +384,29 @@ RPKI utilities
 Usage: monocle rpki <COMMAND>
 
 Commands:
-  read-roa   parse a RPKI ROA file
-  read-aspa  parse a RPKI ASPA file
-  check      validate a prefix-asn pair with a RPKI validator
-  list       list ROAs by ASN or prefix
-  summary    summarize RPKI status for a list of given ASNs
-  help       Print this message or the help of the given subcommand(s)
+  check    validate a prefix-asn pair with a RPKI validator (Cloudflare)
+  list     list ROAs by ASN or prefix (Cloudflare real-time)
+  summary  summarize RPKI status for a list of given ASNs (Cloudflare)
+  roas     list ROAs from RPKI data (current or historical via bgpkit-commons)
+  aspas    list ASPAs from RPKI data (current or historical via bgpkit-commons)
+  help     Print this message or the help of the given subcommand(s)
 ```
 
 #### `monocle rpki check`
 
-Check RPKI validity for a given prefix-ASN pair.
-We use RIPE NCC's [routinator instance](https://rpki-validator.ripe.net)
-as the data source.
+Check RPKI validity for a given prefix-ASN pair using Cloudflare's RPKI validator.
 
 ```text
 ➜  monocle rpki check --help
-validate a prefix-asn pair with a RPKI validator
+validate a prefix-asn pair with a RPKI validator (Cloudflare)
 
-Usage: monocle rpki check --asn <ASN> --prefix <PREFIX>
+Usage: monocle rpki check [OPTIONS] --asn <ASN> --prefix <PREFIX>
 
 Options:
   -a, --asn <ASN>        
   -p, --prefix <PREFIX>  
+      --debug            Print debug information
+      --json             Output as JSON objects
   -h, --help             Print help
   -V, --version          Print version
 ```
@@ -431,37 +433,13 @@ Covering prefixes:
 | asn    | prefix            | max_length |
 |--------|-------------------|------------|
 | 400644 | 2620:aa:a000::/48 | 48         |
-
 ```
 
-#### `monocle rpki read-roa`
-
-Parse a given RPKI ROA file and display the prefix-ASN pairs with max length.
+JSON output:
 
 ```text
-➜  monocle rpki read-roa https://spaces.bgpkit.org/parser/bgpkit.roa
-
-| asn    | prefix            | max_len |
-|--------|-------------------|---------|
-| 393949 | 192.67.222.0/24   | 24      |
-| 393949 | 192.195.251.0/24  | 24      |
-| 393949 | 2620:98:4000::/44 | 48      |
-```
-
-#### `monocle rpki read-aspa`
-
-Parse a given RPKI ASPA file and display the allowed upstreams.
-
-```text
-➜  monocle rpki read-aspa https://spaces.bgpkit.org/parser/as945.asa
-| asn | afi_limit | allowed_upstream |
-|-----|-----------|------------------|
-| 945 | none      | 1299             |
-|     |           | 6939             |
-|     |           | 7480             |
-|     |           | 32097            |
-|     |           | 50058            |
-|     |           | 61138            |
+➜  monocle rpki check --asn 400644 --prefix 2620:AA:A000::/48 --json
+{"covering_roas":[{"asn":400644,"max_length":48,"prefix":"2620:aa:a000::/48"}],"validation":{"asn":400644,"prefix":"2620:aa:a000::/48","validity":"Valid"}}
 ```
 
 #### `monocle rpki list`
@@ -505,6 +483,108 @@ Summarize RPKI status for a list of given ASNs.
 ```
 
 **NOTE**: due to Cloudflare API's current limitation, the maximum number of entries per `routed_` category is `1000`.
+
+#### `monocle rpki roas`
+
+List ROAs from RPKI data. Supports both current (Cloudflare) and historical (RIPE NCC, RPKIviews) data sources.
+
+```text
+➜  monocle rpki roas --help
+list ROAs from RPKI data (current or historical via bgpkit-commons)
+
+Usage: monocle rpki roas [OPTIONS]
+
+Options:
+      --origin <ORIGIN>        Filter by origin ASN
+      --prefix <PREFIX>        Filter by prefix
+      --date <DATE>            Load historical data for this date (YYYY-MM-DD)
+      --source <SOURCE>        Historical data source: ripe, rpkiviews (default: ripe)
+      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle (default: soborost)
+      --debug                  Print debug information
+      --json                   Output as JSON objects
+  -h, --help                   Print help
+  -V, --version                Print version
+```
+
+List ROAs for a specific origin ASN from historical data:
+
+```text
+➜  monocle rpki roas --origin 400644 --date 2024-01-04
+Found 1 ROAs (historical data from 2024-01-04)
+| prefix            | max_length | origin_asn | ta   |
+|-------------------|------------|------------|------|
+| 2620:aa:a000::/48 | 48         | 400644     | ARIN |
+```
+
+List ROAs from RPKIviews historical data:
+
+```text
+➜  monocle rpki roas --origin 400644 --date 2024-01-04 --source rpkiviews
+Found 1 ROAs (historical data from 2024-01-04)
+| prefix            | max_length | origin_asn | ta   |
+|-------------------|------------|------------|------|
+| 2620:aa:a000::/48 | 48         | 400644     | ARIN |
+```
+
+JSON output:
+
+```text
+➜  monocle rpki roas --origin 400644 --date 2024-01-04 --json
+[{"prefix":"2620:aa:a000::/48","max_length":48,"origin_asn":400644,"ta":"ARIN"}]
+```
+
+#### `monocle rpki aspas`
+
+List ASPAs (AS Provider Authorizations) from RPKI data. Supports both current and historical data sources.
+
+```text
+➜  monocle rpki aspas --help
+list ASPAs from RPKI data (current or historical via bgpkit-commons)
+
+Usage: monocle rpki aspas [OPTIONS]
+
+Options:
+      --customer <CUSTOMER>    Filter by customer ASN
+      --provider <PROVIDER>    Filter by provider ASN
+      --date <DATE>            Load historical data for this date (YYYY-MM-DD)
+      --source <SOURCE>        Historical data source: ripe, rpkiviews (default: ripe)
+      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle (default: soborost)
+      --debug                  Print debug information
+      --json                   Output as JSON objects
+  -h, --help                   Print help
+  -V, --version                Print version
+```
+
+List ASPAs for a specific customer ASN:
+
+```text
+➜  monocle rpki aspas --customer 15562 --date 2024-01-04
+Found 1 ASPAs (historical data from 2024-01-04)
+| customer_asn | providers                 |
+|--------------|---------------------------|
+| 15562        | 2914, 8283, 51088, 206238 |
+```
+
+List all ASPAs that have a specific provider:
+
+```text
+➜  monocle rpki aspas --provider 6939 --date 2024-01-04
+Found 27 ASPAs (historical data from 2024-01-04)
+| customer_asn | providers |
+|--------------|-----------|
+| 7480         | 6939      |
+| 40544        | 6939      |
+| 47272        | 6939      |
+| 47311        | 6939      |
+...
+```
+
+JSON output (providers as array):
+
+```text
+➜  monocle rpki aspas --customer 15562 --date 2024-01-04 --json
+[{"customer_asn":15562,"providers":[2914,8283,51088,206238]}]
+```
 
 ### `monocle radar`:
 

@@ -1,92 +1,17 @@
 //! AS2Org data handling utility.
 //!
-//! Data source:
-//! The CAIDA AS Organizations Dataset,
-//!      http://www.caida.org/data/as-organizations
+//! Data source: bgpkit-commons asinfo module with as2org data from CAIDA.
+//! The data is loaded from bgpkit-commons and cached in a local SQLite database.
 
 use crate::database::MonocleDatabase;
 use crate::CountryLookup;
 use anyhow::{anyhow, Result};
+use bgpkit_commons::BgpkitCommons;
 use itertools::Itertools;
-use regex::Regex;
 use rusqlite::Statement;
-use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use tabled::Tabled;
 use tracing::info;
-
-/// Organization JSON format
-///
-/// --------------------
-/// Organization fields
-/// --------------------
-/// org_id  : unique ID for the given organization
-///            some will be created by the WHOIS entry and others will be
-///            created by our scripts
-/// changed : the changed date provided by its WHOIS entry
-/// name    : name could be selected from the AUT entry tied to the
-///            organization, the AUT entry with the largest customer cone,
-///           listed for the organization (if there existed an stand alone
-///            organization), or a human maintained file.
-/// country : some WHOIS provide as a individual field. In other cases
-///            we inferred it from the addresses
-/// source  : the RIR or NIR database which was contained this entry
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsonOrg {
-    #[serde(alias = "organizationId")]
-    org_id: String,
-
-    changed: Option<String>,
-
-    #[serde(default)]
-    name: String,
-
-    country: String,
-
-    /// The RIR or NIR database that contained this entry
-    source: String,
-
-    #[serde(alias = "type")]
-    data_type: String,
-}
-
-/// AS Json format
-///
-/// ----------
-/// AS fields
-/// ----------
-/// asn     : the AS number
-/// changed : the changed date provided by its WHOIS entry
-/// name    : the name provide for the individual AS number
-/// org_id  : maps to an organization entry
-/// opaque_id   : opaque identifier used by RIR extended delegation format
-/// source  : the RIR or NIR database which was contained this entry
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsonAs {
-    asn: String,
-
-    changed: Option<String>,
-
-    #[serde(default)]
-    name: String,
-
-    #[serde(alias = "opaqueId")]
-    opaque_id: Option<String>,
-
-    #[serde(alias = "organizationId")]
-    org_id: String,
-
-    /// The RIR or NIR database that contained this entry
-    source: String,
-
-    #[serde(rename = "type")]
-    data_type: String,
-}
-
-#[derive(Debug)]
-pub enum DataEntry {
-    Org(JsonOrg),
-    As(JsonAs),
-}
 
 pub struct As2org {
     db: MonocleDatabase,
@@ -265,57 +190,93 @@ impl As2org {
         Ok(())
     }
 
-    /// parse as2org data and insert into monocle sqlite database
-    pub fn parse_insert_as2org(&self, url: Option<&str>) -> Result<()> {
+    /// Load as2org data from bgpkit-commons and insert into monocle sqlite database
+    pub fn parse_insert_as2org(&self, _url: Option<&str>) -> Result<()> {
         self.clear_db()?;
-        let url = match url {
-            Some(u) => u.to_string(),
-            None => As2org::get_most_recent_data()?,
-        };
-        info!("start parsing as2org file at {}", url.as_str());
-        let entries = As2org::parse_as2org_file(url.as_str())?;
-        info!("parsing as2org file done. inserting to sqlite db now");
+
+        info!("loading AS info with as2org data from bgpkit-commons...");
+
+        // Load AS info with as2org data from bgpkit-commons
+        let mut commons = BgpkitCommons::new();
+        commons
+            .load_asinfo(true, false, false, false)
+            .map_err(|e| anyhow!("Failed to load asinfo from bgpkit-commons: {}", e))?;
+
+        let asinfo_map = commons
+            .asinfo_all()
+            .map_err(|e| anyhow!("Failed to get asinfo map: {}", e))?;
+
+        info!(
+            "loaded {} AS entries from bgpkit-commons, inserting to sqlite db now",
+            asinfo_map.len()
+        );
 
         // Use a transaction for all inserts
         let tx = self.db.conn.unchecked_transaction()?;
 
+        // Track which org_ids we've already inserted to avoid duplicates
+        let mut inserted_orgs: HashSet<String> = HashSet::new();
+
         {
             // Prepare statements for better performance
             let mut stmt_as = tx.prepare(
-                "INSERT INTO as2org_as (asn, name, org_id, source) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT OR REPLACE INTO as2org_as (asn, name, org_id, source) VALUES (?1, ?2, ?3, ?4)",
             )?;
             let mut stmt_org = tx.prepare(
-                "INSERT INTO as2org_org (org_id, name, country, source) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT OR REPLACE INTO as2org_org (org_id, name, country, source) VALUES (?1, ?2, ?3, ?4)",
             )?;
 
-            for entry in &entries {
-                match entry {
-                    DataEntry::Org(e) => {
+            for (asn, info) in &asinfo_map {
+                // Get organization info from as2org data if available
+                if let Some(as2org) = &info.as2org {
+                    // Insert organization if not already inserted
+                    if !inserted_orgs.contains(&as2org.org_id) {
                         stmt_org.execute((
-                            e.org_id.as_str(),
-                            e.name.as_str(),
-                            e.country.as_str(),
-                            e.source.as_str(),
+                            as2org.org_id.as_str(),
+                            as2org.org_name.as_str(),
+                            as2org.country.as_str(),
+                            "bgpkit-commons", // source
                         ))?;
+                        inserted_orgs.insert(as2org.org_id.clone());
                     }
-                    DataEntry::As(e) => {
-                        let asn = e
-                            .asn
-                            .parse::<u32>()
-                            .map_err(|_| anyhow!("Failed to parse ASN: {}", e.asn))?;
-                        stmt_as.execute((
-                            asn,
-                            e.name.as_str(),
-                            e.org_id.as_str(),
-                            e.source.as_str(),
+
+                    // Insert AS entry
+                    stmt_as.execute((
+                        *asn,
+                        info.name.as_str(),
+                        as2org.org_id.as_str(),
+                        "bgpkit-commons", // source
+                    ))?;
+                } else {
+                    // AS without as2org data - create a synthetic org entry
+                    let synthetic_org_id = format!("UNKNOWN-{}", asn);
+
+                    if !inserted_orgs.contains(&synthetic_org_id) {
+                        stmt_org.execute((
+                            synthetic_org_id.as_str(),
+                            info.name.as_str(),     // use AS name as org name
+                            info.country.as_str(),  // use AS country
+                            "bgpkit-commons-synth", // source
                         ))?;
+                        inserted_orgs.insert(synthetic_org_id.clone());
                     }
+
+                    stmt_as.execute((
+                        *asn,
+                        info.name.as_str(),
+                        synthetic_org_id.as_str(),
+                        "bgpkit-commons",
+                    ))?;
                 }
             }
         } // statements are dropped here
 
         tx.commit()?;
-        info!("as2org data loading finished");
+        info!(
+            "as2org data loading finished: {} ASes, {} organizations",
+            asinfo_map.len(),
+            inserted_orgs.len()
+        );
         Ok(())
     }
 
@@ -425,59 +386,6 @@ impl As2org {
             false => Ok(res),
         }
     }
-
-    /// parse remote AS2Org file into Vec of DataEntry
-    pub fn parse_as2org_file(path: &str) -> Result<Vec<DataEntry>> {
-        let mut res: Vec<DataEntry> = vec![];
-
-        for line in oneio::read_lines(path)? {
-            let line = line?;
-            if line.contains(r#""type":"ASN""#) {
-                let data = serde_json::from_str::<JsonAs>(line.as_str());
-                match data {
-                    Ok(data) => {
-                        res.push(DataEntry::As(data));
-                    }
-                    Err(e) => {
-                        eprintln!("error parsing line:\n{}", line.as_str());
-                        return Err(anyhow!(e));
-                    }
-                }
-            } else {
-                let data = serde_json::from_str::<JsonOrg>(line.as_str());
-                match data {
-                    Ok(data) => {
-                        res.push(DataEntry::Org(data));
-                    }
-                    Err(e) => {
-                        eprintln!("error parsing line:\n{}", line.as_str());
-                        return Err(anyhow!(e));
-                    }
-                }
-            }
-        }
-        Ok(res)
-    }
-
-    pub fn get_most_recent_data() -> Result<String> {
-        let data_link: Regex = Regex::new(r".*(\d{8}\.as-org2info\.jsonl\.gz).*")
-            .map_err(|e| anyhow!("Failed to create regex: {}", e))?;
-        let content = ureq::get("https://publicdata.caida.org/datasets/as-organizations/")
-            .call()
-            .map_err(|e| anyhow!("Failed to fetch data: {}", e))?
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| anyhow!("Failed to parse response: {}", e))?;
-        let res: Vec<String> = data_link
-            .captures_iter(content.as_str())
-            .map(|cap| cap[1].to_owned())
-            .collect();
-        let file = res.last().ok_or_else(|| anyhow!("No data files found"))?;
-
-        Ok(format!(
-            "https://publicdata.caida.org/datasets/as-organizations/{file}"
-        ))
-    }
 }
 
 #[cfg(test)]
@@ -485,81 +393,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parsing_json_organization() {
-        let test_str1 = r#"{"changed":"20121010","country":"US","name":"99MAIN NETWORK SERVICES","organizationId":"9NS-ARIN","source":"ARIN","type":"Organization"}
-"#;
-        let test_str2 = r#"{"country":"JP","name":"Nagasaki Cable Media Inc.","organizationId":"@aut-10000-JPNIC","source":"JPNIC","type":"Organization"}
-"#;
-        assert!(serde_json::from_str::<JsonOrg>(test_str1).is_ok());
-        assert!(serde_json::from_str::<JsonOrg>(test_str2).is_ok());
-    }
-    #[test]
-    fn test_parsing_json_as() {
-        let test_str1 = r#"{"asn":"400644","changed":"20220418","name":"BGPKIT-LLC","opaqueId":"059b5fb85e8a50e0f722f235be7457a0_ARIN","organizationId":"BL-1057-ARIN","source":"ARIN","type":"ASN"}"#;
-        assert!(serde_json::from_str::<JsonAs>(test_str1).is_ok());
-    }
-
-    #[test]
     fn test_creating_db() {
         let as2org = As2org::new(&Some("./test.sqlite3".to_string())).unwrap();
-        // approximately one minute insert time
-        let _res = as2org.parse_insert_as2org(Some("tests/test-as2org.jsonl.gz"));
-
         as2org.clear_db().unwrap();
     }
 
     #[test]
-    fn test_search() {
+    fn test_search_empty() {
         let as2org = As2org::new(&Some("./test.sqlite3".to_string())).unwrap();
-        as2org.clear_db().unwrap();
-        assert!(as2org.is_db_empty());
-        as2org
-            .parse_insert_as2org(Some("tests/test-as2org.jsonl.gz"))
-            .unwrap();
 
-        let res = as2org.search("400644", &SearchType::AsnOnly, false);
-        assert!(res.is_ok());
-        let data = res.unwrap();
-        assert_eq!(data.len(), 1);
-        assert_eq!(data[0].asn, 400644);
-
-        let res = as2org.search("0", &SearchType::AsnOnly, false);
+        // Test that searching with empty DB returns "?" placeholder
+        let res = as2org.search("12345", &SearchType::AsnOnly, false);
         assert!(res.is_ok());
         let data = res.unwrap();
         assert_eq!(data.len(), 1);
         assert_eq!(data[0].as_name, "?");
-
-        let res = as2org.search("bgpkit", &SearchType::NameOnly, false);
-        assert!(res.is_ok());
-        let data = res.unwrap();
-        assert_eq!(data.len(), 1);
-        assert_eq!(data[0].asn, 400644);
-
-        let res = as2org.search("400644", &SearchType::Guess, false);
-        assert!(res.is_ok());
-        let data = res.unwrap();
-        assert_eq!(data.len(), 1);
-        assert_eq!(data[0].asn, 400644);
-
-        let res = as2org.search("bgpkit", &SearchType::Guess, false);
-        assert!(res.is_ok());
-        let data = res.unwrap();
-        assert_eq!(data.len(), 1);
-        assert_eq!(data[0].asn, 400644);
-        assert_eq!(data[0].as_name, "BGPKIT-LLC");
-        assert_eq!(data[0].org_name, "BGPKIT LLC");
-        assert_eq!(data[0].org_id, "BL-1057-ARIN");
-        assert_eq!(data[0].org_country, "US");
-        assert_eq!(data[0].org_size, 1);
-
-        as2org.clear_db().unwrap();
-    }
-
-    #[test]
-    fn test_crawling() {
-        match As2org::get_most_recent_data() {
-            Ok(data) => println!("{}", data),
-            Err(e) => eprintln!("Error getting most recent data: {}", e),
-        }
     }
 }
