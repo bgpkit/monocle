@@ -20,14 +20,14 @@ pub struct AsnRouteInfo {
     pub prefix: IpNet,
     pub rpki: RpkiValidationState,
     pub name: String,
-    pub country: String,
+    pub country: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpInfo {
     pub ip: String,
     #[serde(rename(serialize = "location"))]
-    pub country: String,
+    pub country: Option<String>,
     #[serde(rename(serialize = "network"))]
     pub asn: Option<AsnRouteInfo>,
 }
