@@ -106,6 +106,87 @@ Options:
   -V, --version                  Print version
 ```
 
+#### Output Format
+
+**Default (pipe-separated) format:**
+
+```text
+A|1704067200|45.61.0.85|22652|154.88.8.0/24|22652 6939 60171 328608|IGP|45.61.0.85|0|0|0:2906 0:12989|false|||
+W|1704067200|2a00:1ca8:2a::e0|202365|2406:840:fe40::/48|||||||false|||
+```
+
+The pipe-separated fields are:
+1. **type** - Message type: `A` (announce) or `W` (withdraw)
+2. **timestamp** - Unix timestamp of the message
+3. **peer_ip** - IP address of the BGP peer
+4. **peer_asn** - ASN of the BGP peer
+5. **prefix** - The announced/withdrawn IP prefix
+6. **as_path** - AS path (space-separated), empty for withdrawals
+7. **origin** - Origin type: `IGP`, `EGP`, or `INCOMPLETE`, empty for withdrawals
+8. **next_hop** - Next hop IP address, empty for withdrawals
+9. **local_pref** - Local preference value
+10. **med** - Multi-Exit Discriminator value
+11. **communities** - BGP communities (space-separated `asn:value` format)
+12. **atomic** - Atomic aggregate flag (`true`/`false`)
+13. **aggr_asn** - Aggregator ASN (if present)
+14. **aggr_ip** - Aggregator IP (if present)
+15. **collector** - Collector ID (when available)
+
+**JSON format** (`--json`):
+
+```json
+{
+  "type": "ANNOUNCE",
+  "timestamp": 1704067200.0,
+  "peer_ip": "45.61.0.85",
+  "peer_asn": 22652,
+  "prefix": "154.88.8.0/24",
+  "as_path": [22652, 6939, 60171, 328608],
+  "origin": "IGP",
+  "origin_asns": [328608],
+  "next_hop": "45.61.0.85",
+  "local_pref": 0,
+  "med": 0,
+  "communities": [{"Custom": [0, 2906]}, {"Custom": [0, 12989]}],
+  "atomic": false,
+  "aggr_asn": null,
+  "aggr_ip": null,
+  "only_to_customer": null,
+  "unknown": null,
+  "deprecated": null,
+  "collector": ""
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | `ANNOUNCE` or `WITHDRAW` |
+| `timestamp` | float | Unix timestamp with sub-second precision |
+| `peer_ip` | string | IP address of the BGP session peer |
+| `peer_asn` | integer | ASN of the BGP session peer |
+| `prefix` | string | The IP prefix being announced or withdrawn |
+| `as_path` | array | List of ASNs in the path (null for withdrawals) |
+| `origin` | string | Origin type: `IGP`, `EGP`, or `INCOMPLETE` (null for withdrawals) |
+| `origin_asns` | array | Origin ASN(s) extracted from AS path (null for withdrawals) |
+| `next_hop` | string | Next hop IP address (null for withdrawals) |
+| `local_pref` | integer | LOCAL_PREF attribute value (null for withdrawals) |
+| `med` | integer | MED (Multi-Exit Discriminator) value (null for withdrawals) |
+| `communities` | array | BGP communities as objects (null if none) |
+| `atomic` | boolean | ATOMIC_AGGREGATE flag |
+| `aggr_asn` | integer | Aggregator ASN (null if not present) |
+| `aggr_ip` | string | Aggregator IP address (null if not present) |
+| `only_to_customer` | integer | OTC attribute for route leak prevention (null if not present) |
+| `unknown` | object | Unknown/unrecognized attributes (null if none) |
+| `deprecated` | object | Deprecated attributes (null if none) |
+| `collector` | string | Collector ID (populated in search results) |
+
+**Community types in JSON:**
+- `{"Custom": [asn, value]}` - Standard community (ASN:value)
+- `{"NoExport": null}` - Well-known NO_EXPORT
+- `{"NoPeer": null}` - Well-known NO_PEER  
+- `{"NoAdvertise": null}` - Well-known NO_ADVERTISE
+- Large and extended communities are also supported
+
 ### `monocle search`
 
 Search for BGP messages across publicly available BGP route collectors and parse relevant
