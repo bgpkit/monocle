@@ -9,6 +9,31 @@ See through all Border Gateway Protocol (BGP) data with a monocle.
 
 ![](https://spaces.bgpkit.org/assets/monocle/monocle-emoji.png)
 
+## Table of Contents
+
+- [Install](#install)
+  - [Using `cargo`](#using-cargo)
+  - [Using `homebrew` on macOS](#using-homebrew-on-macos)
+  - [Using `cargo-binstall`](#using-cargo-binstall)
+- [Usage](#usage)
+  - [`monocle parse`](#monocle-parse)
+    - [Output Format](#output-format)
+  - [`monocle search`](#monocle-search)
+  - [`monocle broker`](#monocle-broker)
+  - [`monocle time`](#monocle-time)
+  - [`monocle whois`](#monocle-whois)
+  - [`monocle country`](#monocle-country)
+  - [`monocle rpki`](#monocle-rpki)
+    - [`monocle rpki check`](#monocle-rpki-check)
+    - [`monocle rpki list`](#monocle-rpki-list)
+    - [`monocle rpki summary`](#monocle-rpki-summary)
+    - [`monocle rpki roas`](#monocle-rpki-roas)
+    - [`monocle rpki aspas`](#monocle-rpki-aspas)
+  - [`monocle radar`](#monocle-radar)
+    - [`monocle radar stats`: routing statistics](#monocle-radar-stats-routing-statistics)
+    - [`monocle radar pfx2asn`: prefix-to-ASN mapping](#monocle-radar-pfx2asn-prefix-to-asn-mapping)
+  - [`monocle ip`](#monocle-ip)
+
 ## Install
 
 ### Using `cargo`
@@ -862,4 +887,3 @@ Displaying the information in JSON format:
 ## Built with ❤️ by BGPKIT Team
 
 <a href="https://bgpkit.com"><img src="https://bgpkit.com/Original%20Logo%20Cropped.png" alt="https://bgpkit.com/favicon.ico" width="200"/></a>
-
