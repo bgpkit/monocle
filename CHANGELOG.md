@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Breaking Changes
+
+* **RPKI commands refactored**: Removed `rpki read-roa` and `rpki read-aspa` commands
+  * These commands relied on the outdated `rpki` crate for parsing individual ROA/ASPA files
+  * Replaced with new `rpki roas` and `rpki aspas` commands that use `bgpkit-commons` for data access
+
+### New Features
+
+* **New `rpki roas` command**: List ROAs from RPKI data (current or historical)
+  * `--origin <ASN>`: Filter by origin ASN
+  * `--prefix <PREFIX>`: Filter by prefix
+  * `--date <YYYY-MM-DD>`: Load historical data for a specific date
+  * `--source <ripe|rpkiviews>`: Select historical data source (default: ripe)
+  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector (default: soborost)
+  * Supports JSON output with `--json` flag
+
+* **New `rpki aspas` command**: List ASPAs from RPKI data (current or historical)
+  * `--customer <ASN>`: Filter by customer ASN
+  * `--provider <ASN>`: Filter by provider ASN
+  * `--date <YYYY-MM-DD>`: Load historical data for a specific date
+  * `--source <ripe|rpkiviews>`: Select historical data source (default: ripe)
+  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector (default: soborost)
+  * Results grouped by customer ASN with providers as comma-separated list (table) or array (JSON)
+  * Supports JSON output with `--json` flag
+
+* **JSON output support**: All RPKI commands now support `--json` flag for JSON output
+  * `rpki check`: Returns validation result and covering ROAs as JSON
+  * `rpki list`: Returns ROAs as JSON array
+  * `rpki summary`: Returns summary as JSON array
+  * `rpki roas`: Returns ROAs as JSON array
+  * `rpki aspas`: Returns ASPAs as JSON array with providers as numeric array
+
+### Improvements
+
+* **as2org data source**: Replaced custom CAIDA as2org file parsing with `bgpkit-commons` asinfo module
+  * SQLite caching is preserved for fast repeated queries
+  * `whois --update` now reloads data from `bgpkit-commons`
+  * Maintains backward compatibility with existing search behavior
+
+* **Table formatting**: ASPA table output now wraps long provider lists at 60 characters for better readability
+
+### Dependencies
+
+* Added `bgpkit-commons` v0.10 with features: `asinfo`, `rpki`, `countries`
+* Removed `rpki` crate dependency
+
 ## v0.9.1 - 2025-11-05
 
 ### Maintenance

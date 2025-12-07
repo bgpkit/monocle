@@ -6,7 +6,7 @@ use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use tabled::Tabled;
 
-#[derive(Debug, Tabled)]
+#[derive(Debug, Tabled, Serialize)]
 pub struct RpkiValidity {
     asn: u32,
     prefix: IpNet,
@@ -34,7 +34,7 @@ pub struct RoaPrefix {
     pub max_length: u8,
 }
 
-#[derive(Tabled)]
+#[derive(Tabled, Serialize)]
 pub struct RoaTableItem {
     asn: u32,
     prefix: String,
@@ -65,7 +65,7 @@ impl From<RoaResource> for Vec<RoaTableItem> {
     }
 }
 
-#[derive(Tabled)]
+#[derive(Tabled, Serialize)]
 pub struct SummaryTableItem {
     asn: u32,
     signed: usize,

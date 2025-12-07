@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
+use chrono::NaiveDate;
 use clap::{Parser, Subcommand};
 use ipnet::IpNet;
 use itertools::Itertools;
@@ -22,7 +23,9 @@ use radar_rs::RadarClient;
 use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::{json, Value};
-use tabled::settings::{Merge, Style};
+use tabled::settings::object::Columns;
+use tabled::settings::width::Width;
+use tabled::settings::Style;
 use tabled::{Table, Tabled};
 use tracing::{info, warn, Level};
 
@@ -282,24 +285,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum RpkiCommands {
-    /// parse a RPKI ROA file
-    ReadRoa {
-        /// File path to a ROA file (.roa), local or remote.
-        #[clap(name = "FILE")]
-        file_path: PathBuf,
-    },
-
-    /// parse a RPKI ASPA file
-    ReadAspa {
-        /// File path to an ASPA file (.asa), local or remote.
-        #[clap(name = "FILE")]
-        file_path: PathBuf,
-
-        #[clap(long)]
-        no_merge_dups: bool,
-    },
-
-    /// validate a prefix-asn pair with a RPKI validator
+    /// validate a prefix-asn pair with a RPKI validator (Cloudflare)
     Check {
         #[clap(short, long)]
         asn: u32,
@@ -308,17 +294,63 @@ enum RpkiCommands {
         prefix: String,
     },
 
-    /// list ROAs by ASN or prefix
+    /// list ROAs by ASN or prefix (Cloudflare real-time)
     List {
         /// prefix or ASN
         #[clap()]
         resource: String,
     },
 
-    /// summarize RPKI status for a list of given ASNs
+    /// summarize RPKI status for a list of given ASNs (Cloudflare)
     Summary {
         #[clap()]
         asns: Vec<u32>,
+    },
+
+    /// list ROAs from RPKI data (current or historical via bgpkit-commons)
+    Roas {
+        /// Filter by origin ASN
+        #[clap(long)]
+        origin: Option<u32>,
+
+        /// Filter by prefix
+        #[clap(long)]
+        prefix: Option<String>,
+
+        /// Load historical data for this date (YYYY-MM-DD)
+        #[clap(long)]
+        date: Option<String>,
+
+        /// Historical data source: ripe, rpkiviews (default: ripe)
+        #[clap(long, default_value = "ripe")]
+        source: String,
+
+        /// RPKIviews collector: soborost, massars, attn, kerfuffle (default: soborost)
+        #[clap(long, default_value = "soborost")]
+        collector: String,
+    },
+
+    /// list ASPAs from RPKI data (current or historical via bgpkit-commons)
+    Aspas {
+        /// Filter by customer ASN
+        #[clap(long)]
+        customer: Option<u32>,
+
+        /// Filter by provider ASN
+        #[clap(long)]
+        provider: Option<u32>,
+
+        /// Load historical data for this date (YYYY-MM-DD)
+        #[clap(long)]
+        date: Option<String>,
+
+        /// Historical data source: ripe, rpkiviews (default: ripe)
+        #[clap(long, default_value = "ripe")]
+        source: String,
+
+        /// RPKIviews collector: soborost, massars, attn, kerfuffle (default: soborost)
+        #[clap(long, default_value = "soborost")]
+        collector: String,
     },
 }
 
@@ -1215,51 +1247,6 @@ fn main() {
             println!("{}", Table::new(res).with(Style::rounded()));
         }
         Commands::Rpki { commands } => match commands {
-            RpkiCommands::ReadRoa { file_path } => {
-                let file_str = match file_path.to_str() {
-                    Some(s) => s,
-                    None => {
-                        eprintln!("Invalid ROA file path");
-                        return;
-                    }
-                };
-                let res = match read_roa(file_str) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        eprintln!("ERROR: unable to read ROA file: {}", e);
-                        return;
-                    }
-                };
-                println!("{}", Table::new(res).with(Style::markdown()));
-            }
-            RpkiCommands::ReadAspa {
-                file_path,
-                no_merge_dups,
-            } => {
-                let file_str = match file_path.to_str() {
-                    Some(s) => s,
-                    None => {
-                        eprintln!("Invalid ASPA file path");
-                        return;
-                    }
-                };
-                let res = match read_aspa(file_str) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        eprintln!("ERROR: unable to read ASPA file: {}", e);
-                        return;
-                    }
-                };
-                match no_merge_dups {
-                    true => println!("{}", Table::new(res).with(Style::markdown())),
-                    false => println!(
-                        "{}",
-                        Table::new(res)
-                            .with(Style::markdown())
-                            .with(Merge::vertical())
-                    ),
-                };
-            }
             RpkiCommands::Check { asn, prefix } => {
                 let (validity, roas) = match validate(asn, prefix.as_str()) {
                     Ok((v1, v2)) => (v1, v2),
@@ -1268,19 +1255,29 @@ fn main() {
                         return;
                     }
                 };
-                println!("RPKI validation result:");
-                println!("{}", Table::new(vec![validity]).with(Style::markdown()));
-                println!();
-                println!("Covering prefixes:");
-                println!(
-                    "{}",
-                    Table::new(
-                        roas.into_iter()
-                            .map(RoaTableItem::from)
-                            .collect::<Vec<RoaTableItem>>()
-                    )
-                    .with(Style::markdown())
-                );
+                if json {
+                    let roa_items: Vec<RoaTableItem> =
+                        roas.into_iter().map(RoaTableItem::from).collect();
+                    let output = json!({
+                        "validation": validity,
+                        "covering_roas": roa_items
+                    });
+                    println!("{}", output);
+                } else {
+                    println!("RPKI validation result:");
+                    println!("{}", Table::new(vec![validity]).with(Style::markdown()));
+                    println!();
+                    println!("Covering prefixes:");
+                    println!(
+                        "{}",
+                        Table::new(
+                            roas.into_iter()
+                                .map(RoaTableItem::from)
+                                .collect::<Vec<RoaTableItem>>()
+                        )
+                        .with(Style::markdown())
+                    );
+                }
             }
             RpkiCommands::List { resource } => {
                 let resources = match resource.parse::<u32>() {
@@ -1313,7 +1310,12 @@ fn main() {
                     .into_iter()
                     .flat_map(Into::<Vec<RoaTableItem>>::into)
                     .collect();
-                if roas.is_empty() {
+                if json {
+                    match serde_json::to_string(&roas) {
+                        Ok(json_str) => println!("{}", json_str),
+                        Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                    }
+                } else if roas.is_empty() {
                     println!("no matching ROAS found for {}", resource);
                 } else {
                     println!("{}", Table::new(roas).with(Style::markdown()));
@@ -1331,7 +1333,141 @@ fn main() {
                     })
                     .collect();
 
-                println!("{}", Table::new(res).with(Style::markdown()));
+                if json {
+                    match serde_json::to_string(&res) {
+                        Ok(json_str) => println!("{}", json_str),
+                        Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                    }
+                } else {
+                    println!("{}", Table::new(res).with(Style::markdown()));
+                }
+            }
+            RpkiCommands::Roas {
+                origin,
+                prefix,
+                date,
+                source,
+                collector,
+            } => {
+                // Parse date if provided
+                let parsed_date = match &date {
+                    Some(d) => match NaiveDate::parse_from_str(d, "%Y-%m-%d") {
+                        Ok(date) => Some(date),
+                        Err(e) => {
+                            eprintln!("ERROR: Invalid date format '{}': {}. Use YYYY-MM-DD", d, e);
+                            return;
+                        }
+                    },
+                    None => None,
+                };
+
+                // Load RPKI data
+                let commons = match load_rpki_data(
+                    parsed_date,
+                    Some(source.as_str()),
+                    Some(collector.as_str()),
+                ) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("ERROR: Failed to load RPKI data: {}", e);
+                        return;
+                    }
+                };
+
+                // Get ROAs with filters
+                let roas = match get_roas(&commons, prefix.as_deref(), origin) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("ERROR: Failed to get ROAs: {}", e);
+                        return;
+                    }
+                };
+
+                if json {
+                    match serde_json::to_string(&roas) {
+                        Ok(json_str) => println!("{}", json_str),
+                        Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                    }
+                } else if roas.is_empty() {
+                    println!("No ROAs found matching the criteria");
+                } else {
+                    println!(
+                        "Found {} ROAs{}",
+                        roas.len(),
+                        match &date {
+                            Some(d) => format!(" (historical data from {})", d),
+                            None => " (current data)".to_string(),
+                        }
+                    );
+                    println!("{}", Table::new(roas).with(Style::markdown()));
+                }
+            }
+            RpkiCommands::Aspas {
+                customer,
+                provider,
+                date,
+                source,
+                collector,
+            } => {
+                // Parse date if provided
+                let parsed_date = match &date {
+                    Some(d) => match NaiveDate::parse_from_str(d, "%Y-%m-%d") {
+                        Ok(date) => Some(date),
+                        Err(e) => {
+                            eprintln!("ERROR: Invalid date format '{}': {}. Use YYYY-MM-DD", d, e);
+                            return;
+                        }
+                    },
+                    None => None,
+                };
+
+                // Load RPKI data
+                let commons = match load_rpki_data(
+                    parsed_date,
+                    Some(source.as_str()),
+                    Some(collector.as_str()),
+                ) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("ERROR: Failed to load RPKI data: {}", e);
+                        return;
+                    }
+                };
+
+                // Get ASPAs with filters
+                let aspas = match get_aspas(&commons, customer, provider) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        eprintln!("ERROR: Failed to get ASPAs: {}", e);
+                        return;
+                    }
+                };
+
+                if json {
+                    match serde_json::to_string(&aspas) {
+                        Ok(json_str) => println!("{}", json_str),
+                        Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                    }
+                } else if aspas.is_empty() {
+                    println!("No ASPAs found matching the criteria");
+                } else {
+                    println!(
+                        "Found {} ASPAs{}",
+                        aspas.len(),
+                        match &date {
+                            Some(d) => format!(" (historical data from {})", d),
+                            None => " (current data)".to_string(),
+                        }
+                    );
+                    let table_entries: Vec<AspaTableEntry> =
+                        aspas.iter().map(AspaTableEntry::from).collect();
+                    println!(
+                        "{}",
+                        Table::new(table_entries)
+                            .with(Style::markdown())
+                            .modify(Columns::last(), Width::wrap(60).keep_words(true))
+                    );
+                }
             }
         },
         Commands::Radar { commands } => {
