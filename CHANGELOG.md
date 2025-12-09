@@ -45,6 +45,10 @@ All notable changes to this project will be documented in this file.
 
 * **Table formatting**: ASPA table output now wraps long provider lists at 60 characters for better readability
 
+### Code Improvements
+
+* Refactored CLI command modules: moved CLI argument definitions from main file to individual command submodules for better code organization and maintainability
+
 ### Dependencies
 
 * Added `bgpkit-commons` v0.10 with features: `asinfo`, `rpki`, `countries`
