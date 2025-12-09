@@ -19,7 +19,7 @@ path = "src/bin/monocle.rs"
 [dependencies]
 anyhow = "1.0"
 bgpkit-broker = "0.10.1"
-bgpkit-parser = { version = "0.12.0", features = ["serde"] }
+bgpkit-parser = { version = "0.13.0", features = ["serde"] }
 config = { version = "0.15", features = ["toml"] }
 chrono = "0.4"
 chrono-humanize = "0.2"
@@ -36,7 +36,6 @@ json_to_table = "0.12.0"
 oneio = { version = "0.20.0", default-features = false, features = ["https", "gz", "bz", "json"] }
 radar-rs = "0.1.0"
 rayon = "1.8"
-regex = "1.10"
 bgpkit-commons = { version = "0.10", features = ["asinfo", "rpki", "countries"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }

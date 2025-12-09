@@ -214,7 +214,7 @@ dependencies = [
  "chrono",
  "ipnet",
  "ipnet-trie",
- "oneio 0.20.0",
+ "oneio",
  "regex",
  "reqwest 0.12.24",
  "serde",
@@ -226,9 +226,9 @@ dependencies = [
 
 [[package]]
 name = "bgpkit-parser"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d499d85a2285cbd2ab3bb84a727d0b93f62ba35e5758f5cc432ffad56eb071c1"
+checksum = "6b7b1569f2ecafd08ddfb94f6627f8b038a77dd2be684b789fcbf6abb3e07c61"
 dependencies = [
  "bitflags 2.10.0",
  "bytes",
@@ -237,7 +237,7 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "num_enum",
- "oneio 0.19.2",
+ "oneio",
  "regex",
  "serde",
 ]
@@ -1709,10 +1709,9 @@ dependencies = [
  "ipnet-trie",
  "itertools 0.14.0",
  "json_to_table",
- "oneio 0.20.0",
+ "oneio",
  "radar-rs",
  "rayon",
- "regex",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1806,21 +1805,6 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
-name = "oneio"
-version = "0.19.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "215a69ce9148910859f500c5f4d261fe1fb06cfe093f31f51abf216be06bd552"
-dependencies = [
- "bzip2",
- "dotenvy",
- "flate2",
- "reqwest 0.12.24",
- "rust-s3",
- "suppaftp",
- "thiserror 2.0.17",
-]
 
 [[package]]
 name = "oneio"
