@@ -11,6 +11,7 @@ use tracing::Level;
 mod commands;
 
 // Re-export argument types from command modules for use in the Commands enum
+use commands::as2rel::As2relArgs;
 use commands::broker::BrokerArgs;
 use commands::country::CountryArgs;
 use commands::ip::IpArgs;
@@ -79,6 +80,9 @@ enum Commands {
 
     /// Bulk prefix-to-AS mapping lookup with the pre-generated data file.
     Pfx2as(Pfx2asArgs),
+
+    /// AS-level relationship lookup between ASNs.
+    As2rel(As2relArgs),
 }
 
 pub(crate) fn elem_to_string(
@@ -136,5 +140,6 @@ fn main() {
         Commands::Radar { commands } => commands::radar::run(commands, json),
         Commands::Ip(args) => commands::ip::run(args, json),
         Commands::Pfx2as(args) => commands::pfx2as::run(args, json),
+        Commands::As2rel(args) => commands::as2rel::run(&config, args, json),
     }
 }

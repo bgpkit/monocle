@@ -91,6 +91,52 @@ impl As2org {
         count == 0
     }
 
+    /// Simple lookup of org_name for a given ASN
+    /// Returns None if ASN not found or database is empty
+    pub fn lookup_org_name(&self, asn: u32) -> Option<String> {
+        self.db
+            .conn
+            .query_row(
+                "SELECT org_name FROM as2org_all WHERE asn = ?1 LIMIT 1",
+                [asn],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+
+    /// Batch lookup of org_names for multiple ASNs
+    /// Returns a HashMap of ASN -> org_name
+    pub fn lookup_org_names_batch(&self, asns: &[u32]) -> std::collections::HashMap<u32, String> {
+        use std::collections::HashMap;
+        let mut result = HashMap::new();
+
+        if asns.is_empty() {
+            return result;
+        }
+
+        // Build a query with IN clause for batch lookup
+        let placeholders: Vec<String> = asns.iter().map(|_| "?".to_string()).collect();
+        let query = format!(
+            "SELECT asn, org_name FROM as2org_all WHERE asn IN ({})",
+            placeholders.join(",")
+        );
+
+        if let Ok(mut stmt) = self.db.conn.prepare(&query) {
+            let params: Vec<&dyn rusqlite::ToSql> =
+                asns.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
+
+            if let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
+                Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
+            }) {
+                for row in rows.flatten() {
+                    result.insert(row.0, row.1);
+                }
+            }
+        }
+
+        result
+    }
+
     fn initialize_db(db: &mut MonocleDatabase) -> Result<()> {
         db.conn.execute(
             r#"
