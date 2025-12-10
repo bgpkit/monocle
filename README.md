@@ -23,6 +23,7 @@ See through all Border Gateway Protocol (BGP) data with a monocle.
   - [`monocle time`](#monocle-time)
   - [`monocle whois`](#monocle-whois)
   - [`monocle country`](#monocle-country)
+  - [`monocle as2rel`](#monocle-as2rel)
   - [`monocle rpki`](#monocle-rpki)
     - [`monocle rpki check`](#monocle-rpki-check)
     - [`monocle rpki list`](#monocle-rpki-list)
@@ -473,6 +474,92 @@ Example runs:
 │ UM   │ United States Minor Outlying Islands │
 │ US   │ United States of America             │
 ╰──────┴──────────────────────────────────────╯
+```
+
+### `monocle as2rel`
+
+Query AS-level relationships between Autonomous Systems using BGPKIT's AS relationship data.
+
+Data source: [BGPKIT AS2Rel](https://data.bgpkit.com/as2rel/)
+
+```text
+➜  monocle as2rel --help
+AS-level relationship lookup between ASNs
+
+Usage: monocle as2rel [OPTIONS] <ASNS>...
+
+Arguments:
+  <ASNS>...  One or two ASNs to query relationships for
+
+Options:
+  -u, --update                     Force update the local as2rel database
+      --update-with <UPDATE_WITH>  Update with a custom data file (local path or URL)
+  -p, --pretty                     Output to pretty table, default markdown table
+      --no-explain                 Hide the explanation text
+      --sort-by-asn                Sort by ASN2 ascending instead of connected percentage descending
+      --show-name                  Show organization name for ASN2 (from as2org database)
+      --json                       Output as JSON objects
+  -h, --help                       Print help
+```
+
+Query relationship between two ASNs (e.g., Hurricane Electric and Cloudflare):
+
+```text
+➜  monocle as2rel 6939 13335
+
+Relationship data from BGPKIT (data.bgpkit.com/as2rel).
+Last updated: 2025-12-09T21:26:36+00:00 (2 hours ago)
+
+Column explanation:
+- asn1, asn2: The AS pair being queried
+- connected: Percentage of route collectors (1831 max) that see any connection between asn1 and asn2
+- peer: Percentage seeing pure peering only (connected - as1_upstream - as2_upstream)
+- as1_upstream: Percentage of route collectors that see asn1 as an upstream of asn2
+- as2_upstream: Percentage of route collectors that see asn2 as an upstream of asn1
+
+Percentages are calculated as: (count / max_peers_count) * 100%
+where max_peers_count = 1831 (the maximum peers_count observed in the dataset).
+
+| asn1 | asn2  | connected | peer | as1_upstream | as2_upstream |
+|------|-------|-----------|------|--------------|--------------|
+| 6939 | 13335 | 26.2%     | 1.3% | 24.9%        |              |
+```
+
+Query all relationships for a single ASN (sorted by connected % by default):
+
+```text
+➜  monocle as2rel --no-explain 400644
+| asn1   | asn2  | connected | peer  | as1_upstream | as2_upstream |
+|--------|-------|-----------|-------|--------------|--------------|
+| 400644 | 20473 | 78.0%     | 12.1% |              | 65.9%        |
+```
+
+Show organization names for ASN2:
+
+```text
+➜  monocle as2rel --no-explain --show-name 400644
+| asn1   | asn2  | asn2_name            | connected | peer  | as1_upstream | as2_upstream |
+|--------|-------|----------------------|-----------|-------|--------------|--------------|
+| 400644 | 20473 | The Constant Comp... | 78.0%     | 12.1% |              | 65.9%        |
+```
+
+JSON output:
+
+```text
+➜  monocle --json as2rel 6939 13335
+{
+  "max_peers_count": 1831,
+  "results": [
+    {
+      "as1_upstream": "24.9%",
+      "as2_upstream": "",
+      "asn1": 6939,
+      "asn2": 13335,
+      "connected": "26.2%",
+      "peer": "1.3%"
+    }
+  ]
+}
 ```
 
 ### `monocle rpki`:

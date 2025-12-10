@@ -29,6 +29,25 @@ All notable changes to this project will be documented in this file.
   * Results grouped by customer ASN with providers as comma-separated list (table) or array (JSON)
   * Supports JSON output with `--json` flag
 
+* **New `as2rel` command**: AS-level relationship lookup between ASNs
+  * Query relationships for one or two ASNs from BGPKIT's AS relationship data
+  * Data source: `https://data.bgpkit.com/as2rel/as2rel-latest.json.bz2`
+  * Output columns:
+    - `connected`: Percentage of route collectors that see any connection between asn1 and asn2
+    - `peer`: Percentage seeing pure peering only (connected - as1_upstream - as2_upstream)
+    - `as1_upstream`: Percentage of route collectors that see asn1 as an upstream of asn2
+    - `as2_upstream`: Percentage of route collectors that see asn2 as an upstream of asn1
+  * Percentages calculated as `count / max_peers_count * 100%`
+  * Displays last update time with human-readable relative time (e.g., "2 days ago")
+  * Local SQLite caching with automatic updates when data is older than 7 days
+  * `--update`: Force update the local database
+  * `--update-with <PATH>`: Update with a custom data file (local path or URL)
+  * `--pretty`: Output to pretty table (default: markdown table)
+  * `--no-explain`: Hide the explanation text in table output
+  * `--sort-by-asn`: Sort results by ASN2 ascending (default: sort by connected % descending)
+  * `--show-name`: Show organization name for ASN2 from local as2org database (truncated to 20 chars)
+  * Supports JSON output with `--json` flag
+
 * **JSON output support**: All RPKI commands now support `--json` flag for JSON output
   * `rpki check`: Returns validation result and covering ROAs as JSON
   * `rpki list`: Returns ROAs as JSON array
