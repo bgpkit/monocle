@@ -482,3 +482,5 @@ When adding new features:
 
 - [REVISION_PLAN.md](REVISION_PLAN.md) - Detailed refactoring plan and progress tracking
 - [CHANGELOG.md](CHANGELOG.md) - Version history and release notes
+- [WEB_API_DESIGN.md](WEB_API_DESIGN.md) - Web API design for REST and WebSocket endpoints
+- [DEVELOPMENT.md](DEVELOPMENT.md) - Contribution guidelines for adding lenses and web endpoints
