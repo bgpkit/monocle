@@ -113,7 +113,7 @@ impl TimeLens {
         Self
     }
 
-    /// Parse a single time string into a DateTime<Utc>
+    /// Parse a single time string into a `DateTime<Utc>`
     ///
     /// Accepts:
     /// - Unix timestamps (e.g., "1697043600")
