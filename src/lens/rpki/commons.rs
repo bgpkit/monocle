@@ -14,7 +14,7 @@ use tabled::Tabled;
 
 /// ROA entry for display
 #[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
-pub struct RoaEntry {
+pub struct RpkiRoaEntry {
     pub prefix: String,
     pub max_length: u8,
     pub origin_asn: u32,
@@ -23,21 +23,21 @@ pub struct RoaEntry {
 
 /// ASPA entry for display (grouped by customer ASN)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AspaEntry {
+pub struct RpkiAspaEntry {
     pub customer_asn: u32,
     pub providers: Vec<u32>,
 }
 
 /// ASPA entry for table display
 #[derive(Debug, Clone, Tabled)]
-pub struct AspaTableEntry {
+pub struct RpkiAspaTableEntry {
     pub customer_asn: u32,
     pub providers: String,
 }
 
-impl From<&AspaEntry> for AspaTableEntry {
-    fn from(entry: &AspaEntry) -> Self {
-        AspaTableEntry {
+impl From<&RpkiAspaEntry> for RpkiAspaTableEntry {
+    fn from(entry: &RpkiAspaEntry) -> Self {
+        RpkiAspaTableEntry {
             customer_asn: entry.customer_asn,
             providers: entry
                 .providers
@@ -118,8 +118,8 @@ pub fn get_roas(
     trie: &RpkiTrie,
     prefix_filter: Option<&str>,
     asn_filter: Option<u32>,
-) -> Result<Vec<RoaEntry>> {
-    let mut results: Vec<RoaEntry> = Vec::new();
+) -> Result<Vec<RpkiRoaEntry>> {
+    let mut results: Vec<RpkiRoaEntry> = Vec::new();
 
     // If prefix filter is provided, look up ROAs for that prefix
     if let Some(prefix_str) = prefix_filter {
@@ -134,7 +134,7 @@ pub fn get_roas(
                     continue;
                 }
             }
-            results.push(RoaEntry {
+            results.push(RpkiRoaEntry {
                 prefix: roa.prefix.to_string(),
                 max_length: roa.max_length,
                 origin_asn: roa.asn,
@@ -151,8 +151,8 @@ pub fn get_roas(
                         continue;
                     }
                 }
-                // Create RoaEntry with correct prefix from iteration
-                results.push(RoaEntry {
+                // Create RpkiRoaEntry with correct prefix from iteration
+                results.push(RpkiRoaEntry {
                     prefix: prefix.to_string(),
                     max_length: roa.max_length,
                     origin_asn: roa.asn,
@@ -174,8 +174,8 @@ pub fn get_aspas(
     trie: &RpkiTrie,
     customer_asn: Option<u32>,
     provider_asn: Option<u32>,
-) -> Result<Vec<AspaEntry>> {
-    let mut results: Vec<AspaEntry> = Vec::new();
+) -> Result<Vec<RpkiAspaEntry>> {
+    let mut results: Vec<RpkiAspaEntry> = Vec::new();
 
     for aspa in &trie.aspas {
         // Apply customer ASN filter
@@ -205,7 +205,7 @@ pub fn get_aspas(
         let mut sorted_providers = filtered_providers;
         sorted_providers.sort();
 
-        results.push(AspaEntry {
+        results.push(RpkiAspaEntry {
             customer_asn: aspa.customer_asn,
             providers: sorted_providers,
         });

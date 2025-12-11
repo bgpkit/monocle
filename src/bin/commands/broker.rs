@@ -1,5 +1,5 @@
 use clap::Args;
-use monocle::string_to_time;
+use monocle::lens::time::TimeLens;
 use serde_json;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
@@ -47,15 +47,17 @@ pub fn run(args: BrokerArgs, json: bool) {
         page_size,
     } = args;
 
+    let time_lens = TimeLens::new();
+
     // parse time strings similar to Search subcommand
-    let ts_start = match string_to_time(&start_ts) {
+    let ts_start = match time_lens.parse_time_string(&start_ts) {
         Ok(t) => t.timestamp(),
         Err(_) => {
             eprintln!("start-ts is not a valid time string: {}", start_ts);
             std::process::exit(1);
         }
     };
-    let ts_end = match string_to_time(&end_ts) {
+    let ts_end = match time_lens.parse_time_string(&end_ts) {
         Ok(t) => t.timestamp(),
         Err(_) => {
             eprintln!("end-ts is not a valid time string: {}", end_ts);
@@ -99,7 +101,11 @@ pub fn run(args: BrokerArgs, json: bool) {
     match res {
         Ok(items) => {
             if items.is_empty() {
-                println!("No MRT files found");
+                if json {
+                    println!("[]");
+                } else {
+                    println!("No MRT files found");
+                }
                 return;
             }
 

@@ -1,6 +1,6 @@
 use clap::Args;
 use json_to_table::json_to_table;
-use monocle::fetch_ip_info;
+use monocle::lens::ip::{IpLens, IpLookupArgs};
 use serde_json::json;
 use std::net::IpAddr;
 
@@ -19,7 +19,14 @@ pub struct IpArgs {
 pub fn run(args: IpArgs, json: bool) {
     let IpArgs { ip, simple } = args;
 
-    match fetch_ip_info(ip, simple) {
+    let lens = IpLens::new();
+    let lookup_args = IpLookupArgs {
+        ip,
+        simple,
+        ..Default::default()
+    };
+
+    match lens.lookup(&lookup_args) {
         Ok(ipinfo) => {
             if simple {
                 println!("{}", ipinfo.ip);

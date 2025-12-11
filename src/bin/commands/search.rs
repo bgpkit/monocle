@@ -9,7 +9,8 @@ use std::time::Duration;
 use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
 use clap::Args;
-use monocle::{MrtParserFilters, MsgStore, SearchFilters};
+use monocle::database::MsgStore;
+use monocle::lens::search::SearchFilters;
 use rayon::prelude::*;
 use tracing::{info, warn};
 
@@ -122,7 +123,7 @@ pub fn run(args: SearchArgs, json: bool) {
     let sqlite_db = sqlite_path.and_then(|p| {
         p.to_str().map(|s| {
             sqlite_path_str = s.to_string();
-            match MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset) {
+            match MsgStore::new_from_option(&Some(sqlite_path_str.clone()), sqlite_reset) {
                 Ok(store) => store,
                 Err(e) => {
                     eprintln!("Failed to create SQLite store: {}", e);
@@ -154,11 +155,24 @@ pub fn run(args: SearchArgs, json: bool) {
         };
 
         let total_size: i64 = items.iter().map(|x| x.rough_size).sum();
-        println!(
-            "First page: {} files, {} bytes (will process all pages with ~1000 files each)",
-            items.len(),
-            total_size
-        );
+        if json {
+            let dry_run_info = serde_json::json!({
+                "dry_run": true,
+                "first_page_files": items.len(),
+                "first_page_bytes": total_size,
+                "note": "will process all pages with ~1000 files each"
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&dry_run_info).unwrap_or_default()
+            );
+        } else {
+            println!(
+                "First page: {} files, {} bytes (will process all pages with ~1000 files each)",
+                items.len(),
+                total_size
+            );
+        }
         return;
     }
 
@@ -246,7 +260,7 @@ pub fn run(args: SearchArgs, json: bool) {
         drop(mrt_writer);
 
         if !display_stdout {
-            println!("found {total_msg_count} messages, written into file {sqlite_path_str}");
+            eprintln!("found {total_msg_count} messages, written into file {sqlite_path_str}");
         }
     });
 

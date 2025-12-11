@@ -147,7 +147,7 @@ fn run_stats(client: &RadarClient, query: Option<String>, json: bool) {
         }
     } else {
         println!("{}", Table::new(table_data).with(Style::modern()));
-        println!("\nData generated at {} UTC.", res.meta.data_time);
+        eprintln!("\nData generated at {} UTC.", res.meta.data_time);
     }
 }
 
@@ -186,7 +186,11 @@ fn run_pfx2as(client: &RadarClient, query: String, rpki_status: Option<String>, 
     }
 
     if res.prefix_origins.is_empty() {
-        println!("no prefix origins found for the given query");
+        if json {
+            println!("[]");
+        } else {
+            println!("no prefix origins found for the given query");
+        }
         return;
     }
 
@@ -218,6 +222,6 @@ fn run_pfx2as(client: &RadarClient, query: String, rpki_status: Option<String>, 
         }
     } else {
         println!("{}", Table::new(table_data).with(Style::modern()));
-        println!("\nData generated at {} UTC.", res.meta.data_time);
+        eprintln!("\nData generated at {} UTC.", res.meta.data_time);
     }
 }

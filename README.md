@@ -63,6 +63,116 @@ Then install `monocle` using `cargo binstall`
 cargo binstall monocle
 ```
 
+## Library Usage
+
+Monocle can also be used as a library in your Rust projects. Add it to your `Cargo.toml`:
+
+```toml
+[dependencies]
+# Full library with CLI argument support (default)
+monocle = "0.9"
+
+# Minimal library (no CLI dependencies, smaller binary)
+monocle = { version = "0.9", default-features = false }
+```
+
+### Architecture
+
+The library is organized into the following core modules:
+
+- **`database`**: All database functionality
+  - `core`: Connection management and schema definitions
+  - `session`: One-time storage (e.g., search results)
+  - `monocle`: Main monocle database (AS2Org, AS2Rel)
+
+- **`services`**: High-level business logic (reusable across CLI, API, GUI)
+  - `as2org`: AS-to-Organization lookup service
+  - `as2rel`: AS-level relationships service
+  - `country`: Country code/name lookup
+
+- **`filters`**: BGP message filtering (feature-gated clap derives)
+
+- **`utils`**: Standalone utility functions
+  - `ip`: IP information lookup
+  - `pfx2as`: Prefix-to-AS mapping
+  - `rpki`: RPKI validation and data access
+
+For detailed architecture documentation, see [`ARCHITECTURE.md`](ARCHITECTURE.md) and the module READMEs:
+- [`src/database/README.md`](src/database/README.md)
+- [`src/services/README.md`](src/services/README.md)
+
+### Example: Using Services
+
+```rust
+use monocle::MonocleDatabase;
+use monocle::services::{As2orgService, As2orgSearchArgs, As2orgOutputFormat};
+
+fn main() -> anyhow::Result<()> {
+    // Open the monocle database
+    let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+    
+    // Create a service
+    let service = As2orgService::new(&db);
+    
+    // Bootstrap data if needed
+    if service.needs_bootstrap() {
+        service.bootstrap()?;
+    }
+    
+    // Search
+    let args = As2orgSearchArgs::new("cloudflare");
+    let results = service.search(&args)?;
+    
+    // Format output
+    let output = service.format_results(&results, &As2orgOutputFormat::Json, false);
+    println!("{}", output);
+    
+    Ok(())
+}
+```
+
+### Example: Search BGP Messages
+
+Here's an example of searching for BGP announcement messages from the first hour of 2025 using the rrc00 collector:
+
+```rust
+use monocle::{DumpType, MrtParserFilters, ParseFilters, SearchFilters};
+
+fn main() -> anyhow::Result<()> {
+    // Create search filters
+    let filters = SearchFilters {
+        parse_filters: ParseFilters {
+            start_ts: Some("2025-01-01T00:00:00Z".to_string()),
+            end_ts: Some("2025-01-01T01:00:00Z".to_string()),
+            ..Default::default()
+        },
+        collector: Some("rrc00".to_string()),
+        project: Some("riperis".to_string()),
+        dump_type: DumpType::Updates,
+    };
+
+    // Build the broker query to find MRT files
+    let broker = filters.build_broker()?;
+    let items = broker.query()?;
+
+    // Process the first file
+    if let Some(item) = items.first() {
+        let parser = filters.to_parser(&item.url)?;
+        for elem in parser.take(10) {
+            println!("{:?}", elem);
+        }
+    }
+
+    Ok(())
+}
+```
+
+Run the full example with:
+
+```bash
+cargo run --example search_bgp_messages
+```
+
 ## Usage
 
 Subcommands:

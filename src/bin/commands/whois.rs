@@ -1,7 +1,7 @@
 use clap::Args;
-use monocle::{As2org, MonocleConfig, SearchResult, SearchResultConcise, SearchType};
-use tabled::settings::Style;
-use tabled::Table;
+use monocle::database::MonocleDatabase;
+use monocle::lens::as2org::{As2orgLens, As2orgOutputFormat, As2orgSearchArgs};
+use monocle::MonocleConfig;
 
 /// Arguments for the Whois command
 #[derive(Args)]
@@ -42,7 +42,7 @@ pub struct WhoisArgs {
     pub full_country: bool,
 }
 
-pub fn run(config: &MonocleConfig, args: WhoisArgs) {
+pub fn run(config: &MonocleConfig, args: WhoisArgs, json_output: bool) {
     let WhoisArgs {
         query,
         name_only,
@@ -55,114 +55,106 @@ pub fn run(config: &MonocleConfig, args: WhoisArgs) {
         psv,
     } = args;
 
+    // Open the monocle database
     let data_dir = config.data_dir.as_str();
-    let as2org = match As2org::new(&Some(format!("{data_dir}/monocle-data.sqlite3"))) {
-        Ok(as2org) => as2org,
+    let db_path = format!("{}/monocle-data.sqlite3", data_dir);
+    let db = match MonocleDatabase::open(&db_path) {
+        Ok(db) => db,
         Err(e) => {
-            eprintln!("Failed to create AS2org database: {}", e);
+            eprintln!("Failed to open database: {}", e);
             std::process::exit(1);
         }
     };
 
+    // Create the lens
+    let lens = As2orgLens::new(&db);
+
+    // Handle update request
     if update {
-        // if the update flag is set, clear existing as2org data and re-download later
-        if let Err(e) = as2org.clear_db() {
-            eprintln!("Failed to clear database: {}", e);
-            std::process::exit(1);
+        if !json_output {
+            println!("Updating AS2org data...");
+        }
+        match lens.bootstrap() {
+            Ok((as_count, org_count)) => {
+                if !json_output {
+                    println!(
+                        "AS2org data updated: {} ASes, {} organizations",
+                        as_count, org_count
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to update AS2org data: {}", e);
+                std::process::exit(1);
+            }
         }
     }
 
-    if as2org.is_db_empty() {
-        println!("bootstrapping as2org data now... (it will take about one minute)");
-        if let Err(e) = as2org.parse_insert_as2org(None) {
-            eprintln!("Failed to bootstrap AS2org data: {}", e);
-            std::process::exit(1);
+    // Bootstrap if needed
+    if lens.needs_bootstrap() {
+        if !json_output {
+            println!("Bootstrapping AS2org data now... (this may take about a minute)");
         }
-        println!("bootstrapping as2org data finished");
+        match lens.bootstrap() {
+            Ok((as_count, org_count)) => {
+                if !json_output {
+                    println!(
+                        "Bootstrapping complete: {} ASes, {} organizations",
+                        as_count, org_count
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to bootstrap AS2org data: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 
-    let mut search_type: SearchType = match (name_only, asn_only) {
-        (true, false) => SearchType::NameOnly,
-        (false, true) => SearchType::AsnOnly,
-        (false, false) => SearchType::Guess,
-        (true, true) => {
-            eprintln!("ERROR: name-only and asn-only cannot be both true");
-            return;
+    // Validate conflicting search type options
+    let exclusive_options = [name_only, asn_only, country_only];
+    if exclusive_options.iter().filter(|&&x| x).count() > 1 {
+        eprintln!("ERROR: conflicting search type options - only one of --name-only, --asn-only, or --country-only can be specified");
+        std::process::exit(1);
+    }
+
+    // Build search args
+    let search_args = As2orgSearchArgs {
+        query,
+        name_only,
+        asn_only,
+        country_only,
+        full_country,
+        full_table,
+    };
+
+    // Validate
+    if let Err(e) = search_args.validate() {
+        eprintln!("ERROR: {}", e);
+        std::process::exit(1);
+    }
+
+    // Perform search
+    let results = match lens.search(&search_args) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Search error: {}", e);
+            std::process::exit(1);
         }
     };
 
-    if country_only {
-        search_type = SearchType::CountryOnly;
-    }
+    // Determine output format
+    let format = if json_output {
+        As2orgOutputFormat::Json
+    } else if psv {
+        As2orgOutputFormat::Psv
+    } else if pretty {
+        As2orgOutputFormat::Pretty
+    } else {
+        As2orgOutputFormat::Markdown
+    };
 
-    let mut res = query
-        .into_iter()
-        .flat_map(
-            |q| match as2org.search(q.as_str(), &search_type, full_country) {
-                Ok(results) => results,
-                Err(e) => {
-                    eprintln!("Search error for '{}': {}", q, e);
-                    Vec::new()
-                }
-            },
-        )
-        .collect::<Vec<SearchResult>>();
-
-    // order search results by AS number
-    res.sort_by_key(|v| v.asn);
-
-    match full_table {
-        false => {
-            let res_concise = res.into_iter().map(|x: SearchResult| SearchResultConcise {
-                asn: x.asn,
-                as_name: x.as_name,
-                org_name: x.org_name,
-                org_country: x.org_country,
-            });
-            if psv {
-                println!("asn|asn_name|org_name|org_country");
-                for res in res_concise {
-                    println!(
-                        "{}|{}|{}|{}",
-                        res.asn, res.as_name, res.org_name, res.org_country
-                    );
-                }
-                return;
-            }
-
-            match pretty {
-                true => {
-                    println!("{}", Table::new(res_concise).with(Style::rounded()));
-                }
-                false => {
-                    println!("{}", Table::new(res_concise).with(Style::markdown()));
-                }
-            };
-        }
-        true => {
-            if psv {
-                println!("asn|asn_name|org_name|org_id|org_country|org_size");
-                for entry in res {
-                    println!(
-                        "{}|{}|{}|{}|{}|{}",
-                        entry.asn,
-                        entry.as_name,
-                        entry.org_name,
-                        entry.org_id,
-                        entry.org_country,
-                        entry.org_size
-                    );
-                }
-                return;
-            }
-            match pretty {
-                true => {
-                    println!("{}", Table::new(res).with(Style::rounded()));
-                }
-                false => {
-                    println!("{}", Table::new(res).with(Style::markdown()));
-                }
-            };
-        }
-    }
+    // Format and print results
+    let output = lens.format_results(&results, &format, full_table);
+    println!("{}", output);
 }

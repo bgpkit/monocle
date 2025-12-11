@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Breaking Changes
 
+* **Library API refactoring**: All public functions are now accessed through lens structs
+  * Internal helper functions (`ip_lookup`, `time_string_to_time`, `time_parse_to_rfc3339`, `time_to_table`) have been removed from public API
+  * Users should use lens methods directly (e.g., `IpLens::lookup()`, `TimeLens::parse_time_string()`)
+  * RPKI `commons` and `validator` submodules are now private; all functionality accessed through `RpkiLens`
+
 * **RPKI commands refactored**: Removed `rpki read-roa` and `rpki read-aspa` commands
   * These commands relied on the outdated `rpki` crate for parsing individual ROA/ASPA files
   * Replaced with new `rpki roas` and `rpki aspas` commands that use `bgpkit-commons` for data access
@@ -57,6 +62,13 @@ All notable changes to this project will be documented in this file.
 
 ### Improvements
 
+* **Clean JSON output**: When `--json` flag is set, commands now output only valid JSON to stdout
+  * Progress messages, status updates, and informational text are suppressed or redirected to stderr
+  * Empty results return `[]` instead of text messages
+  * Affected commands: `rpki`, `as2rel`, `broker`, `whois`, `search`, `parse`, `radar`
+
+* **`whois` command JSON support**: Added `--json` flag support for JSON output format
+
 * **as2org data source**: Replaced custom CAIDA as2org file parsing with `bgpkit-commons` asinfo module
   * SQLite caching is preserved for fast repeated queries
   * `whois --update` now reloads data from `bgpkit-commons`
@@ -67,6 +79,11 @@ All notable changes to this project will be documented in this file.
 ### Code Improvements
 
 * Refactored CLI command modules: moved CLI argument definitions from main file to individual command submodules for better code organization and maintainability
+
+* **Lens-based architecture**: All functionality is now accessed through lens structs
+  * Each lens module exports: a Lens struct, Args structs, and output types
+  * Internal implementation details (helper functions, API calls) are private
+  * CLI commands use lens methods directly for cleaner separation of concerns
 
 ### Dependencies
 

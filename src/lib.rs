@@ -1,14 +1,126 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
-mod config;
-mod database;
-mod datasets;
-mod filters;
-mod time;
+//! Monocle - A BGP information toolkit
+//!
+//! Monocle provides tools for searching, parsing, and processing BGP information
+//! from public sources. It can be used as both a command-line application and
+//! a library.
+//!
+//! # Architecture
+//!
+//! The library is organized into the following modules:
+//!
+//! - **[`database`]**: All database functionality
+//!   - `core`: Connection management and schema definitions
+//!   - `session`: One-time storage (e.g., search results)
+//!   - `monocle`: Main monocle database (AS2Org, AS2Rel)
+//!
+//! - **[`lens`]**: High-level business logic (reusable across CLI, API, GUI)
+//!   - `as2org`: AS-to-Organization lookup lens
+//!   - `as2rel`: AS-level relationships lens
+//!   - `country`: Country code/name lookup lens
+//!   - `ip`: IP information lookup lens
+//!   - `parse`: MRT file parsing lens
+//!   - `pfx2as`: Prefix-to-ASN mapping lens
+//!   - `rpki`: RPKI validation and data lens
+//!   - `search`: BGP message search lens
+//!   - `time`: Time parsing and formatting lens
+//!
+//! # Features
+//!
+//! Monocle supports the following Cargo features:
+//!
+//! - **`cli`** (default): Enables CLI support including clap derives for argument
+//!   structs, progress bars, and table formatting. Required for building the binary.
+//!
+//! - **`server`**: Placeholder for future web server support.
+//!
+//! - **`full`**: Enables all features (`cli` + `server`).
+//!
+//! ## Feature Usage
+//!
+//! ```toml
+//! # Minimal library (no CLI dependencies)
+//! monocle = { version = "0.9", default-features = false }
+//!
+//! # Library with CLI argument structs (for building CLI tools)
+//! monocle = { version = "0.9", features = ["cli"] }
+//!
+//! # Full build (default, same as just "monocle")
+//! monocle = { version = "0.9" }
+//! ```
+//!
+//! # Quick Start
+//!
+//! ```rust,ignore
+//! use monocle::database::MonocleDatabase;
+//! use monocle::lens::as2org::{As2orgLens, As2orgSearchArgs, As2orgOutputFormat};
+//!
+//! // Open the monocle database
+//! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+//!
+//! // Create a lens and search
+//! let lens = As2orgLens::new(&db);
+//!
+//! // Bootstrap data if needed
+//! if lens.needs_bootstrap() {
+//!     lens.bootstrap()?;
+//! }
+//!
+//! // Search
+//! let args = As2orgSearchArgs::new("cloudflare");
+//! let results = lens.search(&args)?;
+//!
+//! // Format output
+//! let output = lens.format_results(&results, &As2orgOutputFormat::Json, false);
+//! ```
+//!
+//! # Example: Using Lenses
+//!
+//! All functionality is accessed through lens structs. Each lens module exports:
+//! - A lens struct (the main entry point)
+//! - Args structs (input parameters)
+//! - Output types (return values and format enums)
+//!
+//! ```rust,ignore
+//! use monocle::lens::time::{TimeLens, TimeParseArgs, TimeOutputFormat};
+//! use monocle::lens::rpki::{RpkiLens, RpkiValidationArgs, RpkiListArgs};
+//! use monocle::lens::ip::{IpLens, IpLookupArgs};
+//!
+//! // Time parsing - all operations go through TimeLens
+//! let time_lens = TimeLens::new();
+//! let args = TimeParseArgs::new(vec!["2023-10-11T00:00:00Z".to_string()]);
+//! let results = time_lens.parse(&args)?;
+//! let output = time_lens.format_results(&results, &TimeOutputFormat::Table);
+//!
+//! // RPKI validation - all operations go through RpkiLens
+//! let rpki_lens = RpkiLens::new();
+//! let args = RpkiValidationArgs::new(13335, "1.1.1.0/24");
+//! let (validity, covering_roas) = rpki_lens.validate(&args)?;
+//!
+//! // List ROAs for an ASN
+//! let args = RpkiListArgs::for_asn(13335);
+//! let roas = rpki_lens.list_roas(&args)?;
+//!
+//! // IP lookup - all operations go through IpLens
+//! let ip_lens = IpLens::new();
+//! let args = IpLookupArgs::new("1.1.1.1".parse().unwrap());
+//! let info = ip_lens.lookup(&args)?;
+//! ```
 
-pub use crate::config::MonocleConfig;
-pub use crate::database::*;
-pub use crate::datasets::*;
-pub use crate::filters::*;
-pub use crate::time::*;
+mod config;
+pub mod database;
+pub mod lens;
+
+// =============================================================================
+// Configuration
+// =============================================================================
+
+pub use config::MonocleConfig;
+
+// =============================================================================
+// Database Module - Re-export commonly used types
+// =============================================================================
+
+pub use database::MonocleDatabase;

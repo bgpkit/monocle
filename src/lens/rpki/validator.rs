@@ -10,40 +10,40 @@ use tabled::Tabled;
 pub struct RpkiValidity {
     asn: u32,
     prefix: IpNet,
-    validity: ValidationState,
+    validity: RpkiValidationState,
 }
 
 const CLOUDFLARE_RPKI_GRAPHQL: &str = "https://rpki.cloudflare.com/api/graphql";
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ValidationResult {
-    covering: Vec<Roa>,
-    state: ValidationState,
+pub struct RpkiValidationResult {
+    covering: Vec<RpkiRoa>,
+    state: RpkiValidationState,
 }
 
-#[derive(Debug, Serialize, Deserialize, Tabled)]
-pub struct Roa {
+#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
+pub struct RpkiRoa {
     asn: u32,
-    prefix: RoaPrefix,
+    prefix: RpkiRoaPrefix,
 }
 
-#[derive(Debug, Serialize, Deserialize, Tabled)]
-pub struct RoaPrefix {
+#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
+pub struct RpkiRoaPrefix {
     pub prefix: String,
     #[serde(rename(deserialize = "maxLength"))]
     pub max_length: u8,
 }
 
 #[derive(Tabled, Serialize)]
-pub struct RoaTableItem {
+pub struct RpkiRoaTableItem {
     asn: u32,
     prefix: String,
     max_length: u8,
 }
 
-impl From<Roa> for RoaTableItem {
-    fn from(value: Roa) -> Self {
-        RoaTableItem {
+impl From<RpkiRoa> for RpkiRoaTableItem {
+    fn from(value: RpkiRoa) -> Self {
+        RpkiRoaTableItem {
             asn: value.asn,
             prefix: value.prefix.prefix,
             max_length: value.prefix.max_length,
@@ -51,12 +51,12 @@ impl From<Roa> for RoaTableItem {
     }
 }
 
-impl From<RoaResource> for Vec<RoaTableItem> {
-    fn from(value: RoaResource) -> Self {
+impl From<RpkiRoaResource> for Vec<RpkiRoaTableItem> {
+    fn from(value: RpkiRoaResource) -> Self {
         value
             .roas
             .into_iter()
-            .map(|p| RoaTableItem {
+            .map(|p| RpkiRoaTableItem {
                 asn: value.asn,
                 prefix: p.prefix,
                 max_length: p.max_length,
@@ -66,7 +66,7 @@ impl From<RoaResource> for Vec<RoaTableItem> {
 }
 
 #[derive(Tabled, Serialize)]
-pub struct SummaryTableItem {
+pub struct RpkiSummaryTableItem {
     asn: u32,
     signed: usize,
     routed_valid: usize,
@@ -75,9 +75,9 @@ pub struct SummaryTableItem {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct RoaResource {
+pub struct RpkiRoaResource {
     pub asn: u32,
-    pub roas: Vec<RoaPrefix>,
+    pub roas: Vec<RpkiRoaPrefix>,
     pub ta: String,
     #[serde(rename(deserialize = "validFrom"))]
     pub valid_from: i64,
@@ -85,36 +85,36 @@ pub struct RoaResource {
     pub valid_to: i64,
 }
 
-impl Display for RoaPrefix {
+impl Display for RpkiRoaPrefix {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} (max length: {})", self.prefix, self.max_length)
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum ValidationState {
+pub enum RpkiValidationState {
     NotFound,
     Valid,
     Invalid,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BgpEntry {
+pub struct RpkiBgpEntry {
     asn: u32,
     prefix: String,
-    validation: ValidationResult,
+    validation: RpkiValidationResult,
 }
 
-impl Display for ValidationState {
+impl Display for RpkiValidationState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ValidationState::NotFound => {
+            RpkiValidationState::NotFound => {
                 write!(f, "unknown")
             }
-            ValidationState::Valid => {
+            RpkiValidationState::Valid => {
                 write!(f, "valid")
             }
-            ValidationState::Invalid => {
+            RpkiValidationState::Invalid => {
                 write!(f, "invalid")
             }
         }
@@ -122,7 +122,7 @@ impl Display for ValidationState {
 }
 
 /// https://rpki-validator.ripe.net/api/v1/validity/13335/1.1.0.0/23
-pub fn validate(asn: u32, prefix_str: &str) -> Result<(RpkiValidity, Vec<Roa>)> {
+pub fn validate(asn: u32, prefix_str: &str) -> Result<(RpkiValidity, Vec<RpkiRoa>)> {
     let prefix = IpNet::from_str(prefix_str)?;
     let query_string = format!(
         r#"
@@ -147,7 +147,7 @@ pub fn validate(asn: u32, prefix_str: &str) -> Result<(RpkiValidity, Vec<Roa>)> 
         .body_mut()
         .read_json::<Value>()?;
 
-    let validation_res: ValidationResult = serde_json::from_value(
+    let validation_res: RpkiValidationResult = serde_json::from_value(
         res.get("data")
             .ok_or_else(|| anyhow::anyhow!("No 'data' field in response"))?
             .get("validation")
@@ -165,7 +165,7 @@ pub fn validate(asn: u32, prefix_str: &str) -> Result<(RpkiValidity, Vec<Roa>)> 
     ))
 }
 
-pub fn list_by_prefix(prefix: &IpNet) -> Result<Vec<RoaResource>> {
+pub fn list_by_prefix(prefix: &IpNet) -> Result<Vec<RpkiRoaResource>> {
     let query_string = format!(
         r#"
     query GetResources {{
@@ -198,12 +198,12 @@ pub fn list_by_prefix(prefix: &IpNet) -> Result<Vec<RoaResource>> {
         .ok_or_else(|| anyhow::anyhow!("No 'roas' field in response data"))?
         .to_owned();
 
-    let resources: Vec<RoaResource> = serde_json::from_value(res)
+    let resources: Vec<RpkiRoaResource> = serde_json::from_value(res)
         .map_err(|e| anyhow::anyhow!("Failed to parse ROA resources: {}", e))?;
     Ok(resources)
 }
 
-pub fn list_by_asn(asn: u32) -> Result<Vec<RoaResource>> {
+pub fn list_by_asn(asn: u32) -> Result<Vec<RpkiRoaResource>> {
     let query_string = format!(
         r#"
     query GetResources {{
@@ -237,16 +237,16 @@ pub fn list_by_asn(asn: u32) -> Result<Vec<RoaResource>> {
         .ok_or_else(|| anyhow::anyhow!("No 'roas' field in response data"))?
         .to_owned();
 
-    let resources: Vec<RoaResource> = serde_json::from_value(res)
+    let resources: Vec<RpkiRoaResource> = serde_json::from_value(res)
         .map_err(|e| anyhow::anyhow!("Failed to parse ROA resources: {}", e))?;
     Ok(resources)
 }
 
-pub fn list_routed_by_state(asn: u32, state: ValidationState) -> Result<Vec<BgpEntry>> {
+pub fn list_routed_by_state(asn: u32, state: RpkiValidationState) -> Result<Vec<RpkiBgpEntry>> {
     let route_state_str = match state {
-        ValidationState::NotFound => "NotFound",
-        ValidationState::Valid => "Valid",
-        ValidationState::Invalid => "Invalid",
+        RpkiValidationState::NotFound => "NotFound",
+        RpkiValidationState::Valid => "Valid",
+        RpkiValidationState::Invalid => "Invalid",
     };
 
     let query_string = format!(
@@ -276,7 +276,7 @@ pub fn list_routed_by_state(asn: u32, state: ValidationState) -> Result<Vec<BgpE
         .body_mut()
         .read_json::<Value>()?;
 
-    let bgp_res: Vec<BgpEntry> = serde_json::from_value(
+    let bgp_res: Vec<RpkiBgpEntry> = serde_json::from_value(
         res.get("data")
             .ok_or_else(|| anyhow::anyhow!("No 'data' field in response"))?
             .get("bgp")
@@ -286,18 +286,18 @@ pub fn list_routed_by_state(asn: u32, state: ValidationState) -> Result<Vec<BgpE
     Ok(bgp_res)
 }
 
-pub fn list_routed(asn: u32) -> Result<(Vec<BgpEntry>, Vec<BgpEntry>, Vec<BgpEntry>)> {
+pub fn list_routed(asn: u32) -> Result<(Vec<RpkiBgpEntry>, Vec<RpkiBgpEntry>, Vec<RpkiBgpEntry>)> {
     Ok((
-        list_routed_by_state(asn, ValidationState::Valid)?,
-        list_routed_by_state(asn, ValidationState::Invalid)?,
-        list_routed_by_state(asn, ValidationState::NotFound)?,
+        list_routed_by_state(asn, RpkiValidationState::Valid)?,
+        list_routed_by_state(asn, RpkiValidationState::Invalid)?,
+        list_routed_by_state(asn, RpkiValidationState::NotFound)?,
     ))
 }
 
-pub fn summarize_asn(asn: u32) -> Result<SummaryTableItem> {
+pub fn summarize_asn(asn: u32) -> Result<RpkiSummaryTableItem> {
     let (valid, invalid, unknown) = list_routed(asn)?;
     let signed = list_by_asn(asn)?;
-    Ok(SummaryTableItem {
+    Ok(RpkiSummaryTableItem {
         asn,
         signed: signed.len(),
         routed_valid: valid.len(),

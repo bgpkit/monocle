@@ -1,7 +1,7 @@
 use clap::Args;
 use ipnet::IpNet;
 use itertools::Itertools;
-use monocle::Pfx2as;
+use monocle::lens::pfx2as::Pfx2asLens;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -31,7 +31,7 @@ pub fn run(args: Pfx2asArgs, json: bool) {
         exact_match,
     } = args;
 
-    let pfx2as = match Pfx2as::new(Some(data_file_path)) {
+    let pfx2as = match Pfx2asLens::new(Some(data_file_path)) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("ERROR: unable to open data file: {}", e);

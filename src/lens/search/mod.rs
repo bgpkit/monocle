@@ -1,32 +1,26 @@
-use crate::filters::parse::ParseFilters;
-use crate::filters::MrtParserFilters;
+//! Search lens module
+//!
+//! This module provides filter types for searching BGP messages across multiple MRT files.
+//! The filter types can optionally derive Clap's Args trait when the `cli` feature is enabled.
+
+use crate::lens::parse::ParseFilters;
 use anyhow::Result;
 use bgpkit_broker::BrokerItem;
 use bgpkit_parser::BgpkitParser;
-use clap::{Args, ValueEnum};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Read;
 
-#[derive(Args, Debug, Clone)]
-pub struct SearchFilters {
-    #[clap(flatten)]
-    pub parse_filters: ParseFilters,
+#[cfg(feature = "cli")]
+use clap::{Args, ValueEnum};
 
-    /// Filter by collector, e.g., rrc00 or route-views2
-    #[clap(short = 'c', long)]
-    pub collector: Option<String>,
+// =============================================================================
+// Types
+// =============================================================================
 
-    /// Filter by route collection project, i.e., riperis or routeviews
-    #[clap(short = 'P', long)]
-    pub project: Option<String>,
-
-    /// Specify data dump type to search (updates or RIB dump)
-    #[clap(short = 'D', long, default_value_t, value_enum)]
-    pub dump_type: DumpType,
-}
-
-#[derive(ValueEnum, Clone, Debug, Default, Serialize)]
-pub enum DumpType {
+/// Dump type for BGP data
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
+pub enum SearchDumpType {
     /// BGP updates only
     #[default]
     Updates,
@@ -36,13 +30,41 @@ pub enum DumpType {
     RibUpdates,
 }
 
+// =============================================================================
+// Args
+// =============================================================================
+
+/// Filters for searching BGP messages across multiple MRT files
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(Args))]
+pub struct SearchFilters {
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    #[serde(flatten)]
+    pub parse_filters: ParseFilters,
+
+    /// Filter by collector, e.g., rrc00 or route-views2
+    #[cfg_attr(feature = "cli", clap(short = 'c', long))]
+    pub collector: Option<String>,
+
+    /// Filter by route collection project, i.e., riperis or routeviews
+    #[cfg_attr(feature = "cli", clap(short = 'P', long))]
+    pub project: Option<String>,
+
+    /// Specify data dump type to search (updates or RIB dump)
+    #[cfg_attr(feature = "cli", clap(short = 'D', long, default_value_t, value_enum))]
+    #[serde(default)]
+    pub dump_type: SearchDumpType,
+}
+
 impl SearchFilters {
+    /// Query broker items based on filters
     pub fn to_broker_items(&self) -> Result<Vec<BrokerItem>> {
         self.build_broker()?
             .query()
             .map_err(|_| anyhow::anyhow!("broker query error: please check filters are valid"))
     }
 
+    /// Build a broker from the filters
     pub fn build_broker(&self) -> Result<bgpkit_broker::BgpkitBroker> {
         let (ts_start, ts_end) = self.parse_filters.parse_start_end_strings()?;
 
@@ -59,36 +81,86 @@ impl SearchFilters {
         }
 
         match self.dump_type {
-            DumpType::Updates => {
+            SearchDumpType::Updates => {
                 broker = broker.data_type("updates");
             }
-            DumpType::Rib => {
+            SearchDumpType::Rib => {
                 broker = broker.data_type("rib");
             }
-            DumpType::RibUpdates => {
+            SearchDumpType::RibUpdates => {
                 // do nothing here -> getting all RIB and updates
             }
         }
 
         Ok(broker)
     }
-}
 
-impl MrtParserFilters for SearchFilters {
-    fn validate(&self) -> Result<()> {
+    /// Validate the filters
+    pub fn validate(&self) -> Result<()> {
         let _ = self.parse_filters.parse_start_end_strings()?;
         Ok(())
     }
 
-    fn to_parser(&self, file_path: &str) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
+    /// Convert filters to a BgpkitParser for a given file
+    pub fn to_parser(&self, file_path: &str) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
         self.parse_filters.to_parser(file_path)
     }
 }
 
+// =============================================================================
+// Lens
+// =============================================================================
+
+/// Search lens for BGP message search operations
+///
+/// This lens provides high-level operations for searching BGP messages
+/// across multiple MRT files using the BGPKIT broker.
+pub struct SearchLens;
+
+impl SearchLens {
+    /// Create a new search lens
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Query broker items based on filters
+    pub fn query_broker(&self, filters: &SearchFilters) -> Result<Vec<BrokerItem>> {
+        filters.to_broker_items()
+    }
+
+    /// Build a broker from filters
+    pub fn build_broker(&self, filters: &SearchFilters) -> Result<bgpkit_broker::BgpkitBroker> {
+        filters.build_broker()
+    }
+
+    /// Create a parser for a specific file
+    pub fn create_parser(
+        &self,
+        filters: &SearchFilters,
+        file_path: &str,
+    ) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
+        filters.to_parser(file_path)
+    }
+
+    /// Validate filters
+    pub fn validate_filters(&self, filters: &SearchFilters) -> Result<()> {
+        filters.validate()
+    }
+}
+
+impl Default for SearchLens {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filters::parse::ParseFilters;
 
     #[test]
     fn test_pagination_logic() {
@@ -109,7 +181,7 @@ mod tests {
             },
             collector: None,
             project: None,
-            dump_type: DumpType::Updates,
+            dump_type: SearchDumpType::Updates,
         };
 
         // Test broker creation
@@ -197,7 +269,7 @@ mod tests {
             },
             collector: Some("rrc00".to_string()),
             project: Some("riperis".to_string()),
-            dump_type: DumpType::Updates,
+            dump_type: SearchDumpType::Updates,
         };
 
         let broker = search_filters

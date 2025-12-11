@@ -133,7 +133,7 @@ fn main() {
         Commands::Parse(args) => commands::parse::run(args, json),
         Commands::Search(args) => commands::search::run(args, json),
         Commands::Broker(args) => commands::broker::run(args, json),
-        Commands::Whois(args) => commands::whois::run(&config, args),
+        Commands::Whois(args) => commands::whois::run(&config, args, json),
         Commands::Time(args) => commands::time::run(args),
         Commands::Country(args) => commands::country::run(args),
         Commands::Rpki { commands } => commands::rpki::run(commands, json),

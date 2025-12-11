@@ -15,35 +15,56 @@ keywords = ["bgp", "bgpkit", "mrt"]
 [[bin]]
 name = "monocle"
 path = "src/bin/monocle.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+
+# CLI support (clap derives, terminal output, progress bars)
+cli = [
+    "dep:clap",
+    "dep:indicatif",
+    "dep:json_to_table",
+    "dep:tracing-subscriber",
+]
+
+# Web server support (for future Phase 4)
+server = []
+
+# Full build with all features
+full = ["cli", "server"]
 
 [dependencies]
+# Core dependencies (always included)
 anyhow = "1.0"
 bgpkit-broker = "0.10.1"
 bgpkit-parser = { version = "0.13.0", features = ["serde"] }
-config = { version = "0.15", features = ["toml"] }
+bgpkit-commons = { version = "0.10", features = ["asinfo", "rpki", "countries"] }
 chrono = "0.4"
 chrono-humanize = "0.2"
-clap = { version = "4.1", features = ["derive"] }
+config = { version = "0.15", features = ["toml"] }
 dateparser = "0.2"
 dirs = "6"
 dotenvy = "0.15"
 humantime = "2.1"
-indicatif = "0.18.0" # progress bar
 ipnet = { version = "2.10", features = ["json"] }
 ipnet-trie = "0.3.0"
 itertools = "0.14"
-json_to_table = "0.12.0"
 oneio = { version = "0.20.0", default-features = false, features = ["https", "gz", "bz", "json"] }
 radar-rs = "0.1.0"
 rayon = "1.8"
-bgpkit-commons = { version = "0.10", features = ["asinfo", "rpki", "countries"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tabled = "0.20"
 tracing = "0.1"
-tracing-subscriber = "0.3"
 ureq = { version = "3.1", features = ["json"] }
+
+# CLI-only dependencies (optional)
+clap = { version = "4.1", features = ["derive"], optional = true }
+indicatif = { version = "0.18.0", optional = true }
+json_to_table = { version = "0.12.0", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"

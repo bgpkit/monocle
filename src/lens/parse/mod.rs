@@ -1,73 +1,114 @@
-use crate::filters::MrtParserFilters;
-use crate::time::string_to_time;
-use crate::ElemTypeEnum;
+//! Parse lens module
+//!
+//! This module provides filter types for parsing MRT files with bgpkit-parser.
+//! The filter types can optionally derive Clap's Args trait when the `cli` feature is enabled.
+
+use crate::lens::time::TimeLens;
 use anyhow::anyhow;
 use anyhow::Result;
 use bgpkit_parser::BgpkitParser;
-use clap::Args;
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::io::Read;
 use std::net::IpAddr;
 
-#[derive(Args, Debug, Clone)]
+#[cfg(feature = "cli")]
+use clap::{Args, ValueEnum};
+
+// =============================================================================
+// Types
+// =============================================================================
+
+/// Element type for BGP messages
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
+pub enum ParseElemType {
+    /// BGP announcement
+    A,
+    /// BGP withdrawal
+    W,
+}
+
+impl Display for ParseElemType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ParseElemType::A => "announcement",
+            ParseElemType::W => "withdrawal",
+        })
+    }
+}
+
+// =============================================================================
+// Args
+// =============================================================================
+
+/// Filters for parsing MRT files
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(Args))]
 pub struct ParseFilters {
     /// Filter by origin AS Number
-    #[clap(short = 'o', long)]
+    #[cfg_attr(feature = "cli", clap(short = 'o', long))]
     pub origin_asn: Option<u32>,
 
     /// Filter by network prefix
-    #[clap(short = 'p', long)]
+    #[cfg_attr(feature = "cli", clap(short = 'p', long))]
     pub prefix: Option<String>,
 
     /// Include super-prefix when filtering
-    #[clap(short = 's', long)]
+    #[cfg_attr(feature = "cli", clap(short = 's', long))]
+    #[serde(default)]
     pub include_super: bool,
 
     /// Include sub-prefix when filtering
-    #[clap(short = 'S', long)]
+    #[cfg_attr(feature = "cli", clap(short = 'S', long))]
+    #[serde(default)]
     pub include_sub: bool,
 
     /// Filter by peer IP address
-    #[clap(short = 'j', long)]
+    #[cfg_attr(feature = "cli", clap(short = 'j', long))]
+    #[serde(default)]
     pub peer_ip: Vec<IpAddr>,
 
     /// Filter by peer ASN
-    #[clap(short = 'J', long)]
+    #[cfg_attr(feature = "cli", clap(short = 'J', long))]
     pub peer_asn: Option<u32>,
 
     /// Filter by elem type: announce (a) or withdraw (w)
-    #[clap(short = 'm', long, value_enum)]
-    pub elem_type: Option<ElemTypeEnum>,
+    #[cfg_attr(feature = "cli", clap(short = 'm', long, value_enum))]
+    pub elem_type: Option<ParseElemType>,
 
     /// Filter by start unix timestamp inclusive
-    #[clap(short = 't', long)]
+    #[cfg_attr(feature = "cli", clap(short = 't', long))]
     pub start_ts: Option<String>,
 
     /// Filter by end unix timestamp inclusive
-    #[clap(short = 'T', long)]
+    #[cfg_attr(feature = "cli", clap(short = 'T', long))]
     pub end_ts: Option<String>,
 
     /// Duration from the start-ts or end-ts, e.g. 1h
-    #[clap(short = 'd', long)]
+    #[cfg_attr(feature = "cli", clap(short = 'd', long))]
     pub duration: Option<String>,
 
     /// Filter by AS path regex string
-    #[clap(short = 'a', long)]
+    #[cfg_attr(feature = "cli", clap(short = 'a', long))]
     pub as_path: Option<String>,
 }
 
 impl ParseFilters {
+    /// Parse start and end time strings into Unix timestamps
     pub fn parse_start_end_strings(&self) -> Result<(i64, i64)> {
+        let time_lens = TimeLens::new();
         let mut start_ts = None;
         let mut end_ts = None;
         if let Some(ts) = &self.start_ts {
-            match string_to_time(ts.as_str()) {
+            match time_lens.parse_time_string(ts.as_str()) {
                 Ok(t) => start_ts = Some(t),
                 Err(_) => return Err(anyhow!("start-ts is not a valid time string: {}", ts)),
             }
         }
         if let Some(ts) = &self.end_ts {
-            match string_to_time(ts.as_str()) {
+            match time_lens.parse_time_string(ts.as_str()) {
                 Ok(t) => end_ts = Some(t),
                 Err(_) => return Err(anyhow!("end-ts is not a valid time string: {}", ts)),
             }
@@ -124,24 +165,25 @@ impl ParseFilters {
 
         Err(anyhow!("unexpected time-string parsing result"))
     }
-}
 
-impl MrtParserFilters for ParseFilters {
-    fn validate(&self) -> Result<()> {
+    /// Validate the filters
+    pub fn validate(&self) -> Result<()> {
+        let time_lens = TimeLens::new();
         if let Some(ts) = &self.start_ts {
-            if string_to_time(ts.as_str()).is_err() {
+            if time_lens.parse_time_string(ts.as_str()).is_err() {
                 return Err(anyhow!("start-ts is not a valid time string: {}", ts));
             }
         }
         if let Some(ts) = &self.end_ts {
-            if string_to_time(ts.as_str()).is_err() {
+            if time_lens.parse_time_string(ts.as_str()).is_err() {
                 return Err(anyhow!("end-ts is not a valid time string: {}", ts));
             }
         }
         Ok(())
     }
 
-    fn to_parser(&self, file_path: &str) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
+    /// Convert filters to a BgpkitParser
+    pub fn to_parser(&self, file_path: &str) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
         let mut parser = BgpkitParser::new(file_path)?.disable_warnings();
 
         if let Some(v) = &self.as_path {
@@ -180,17 +222,55 @@ impl MrtParserFilters for ParseFilters {
             Err(_) => {
                 // we could also likely not have any time filters, in this case, add filters
                 // as we see them, and no modification is needed.
+                let time_lens = TimeLens::new();
                 if let Some(v) = &self.start_ts {
-                    let ts = string_to_time(v.as_str())?.timestamp();
+                    let ts = time_lens.parse_time_string(v.as_str())?.timestamp();
                     parser = parser.add_filter("start_ts", ts.to_string().as_str())?;
                 }
                 if let Some(v) = &self.end_ts {
-                    let ts = string_to_time(v.as_str())?.timestamp();
+                    let ts = time_lens.parse_time_string(v.as_str())?.timestamp();
                     parser = parser.add_filter("end_ts", ts.to_string().as_str())?;
                 }
             }
         }
 
         Ok(parser)
+    }
+}
+
+// =============================================================================
+// Lens
+// =============================================================================
+
+/// Parse lens for MRT file parsing operations
+///
+/// This lens provides high-level operations for parsing MRT files
+/// with various filters applied.
+pub struct ParseLens;
+
+impl ParseLens {
+    /// Create a new parse lens
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Create a parser from filters and file path
+    pub fn create_parser(
+        &self,
+        filters: &ParseFilters,
+        file_path: &str,
+    ) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
+        filters.to_parser(file_path)
+    }
+
+    /// Validate filters
+    pub fn validate_filters(&self, filters: &ParseFilters) -> Result<()> {
+        filters.validate()
+    }
+}
+
+impl Default for ParseLens {
+    fn default() -> Self {
+        Self::new()
     }
 }

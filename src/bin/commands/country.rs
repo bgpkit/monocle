@@ -1,5 +1,5 @@
 use clap::Args;
-use monocle::{CountryEntry, CountryLookup};
+use monocle::lens::country::{CountryEntry, CountryLens};
 use tabled::settings::Style;
 use tabled::Table;
 
@@ -13,7 +13,7 @@ pub struct CountryArgs {
 pub fn run(args: CountryArgs) {
     let CountryArgs { queries } = args;
 
-    let lookup = CountryLookup::new();
+    let lookup = CountryLens::new();
     let res: Vec<CountryEntry> = queries
         .into_iter()
         .flat_map(|query| lookup.lookup(query.as_str()))

@@ -1,5 +1,5 @@
 use clap::Args;
-use monocle::{parse_time_string_to_rfc3339, time_to_table};
+use monocle::lens::time::{TimeLens, TimeOutputFormat, TimeParseArgs};
 
 /// Arguments for the Time command
 #[derive(Args)]
@@ -16,11 +16,18 @@ pub struct TimeArgs {
 pub fn run(args: TimeArgs) {
     let TimeArgs { time, simple } = args;
 
-    let timestring_res = match simple {
-        true => parse_time_string_to_rfc3339(&time),
-        false => time_to_table(&time),
+    let lens = TimeLens::new();
+    let parse_args = TimeParseArgs::new(time);
+
+    let result = if simple {
+        lens.parse_to_rfc3339(&parse_args.times)
+            .map(|v| v.join("\n"))
+    } else {
+        lens.parse(&parse_args)
+            .map(|results| lens.format_results(&results, &TimeOutputFormat::Table))
     };
-    match timestring_res {
+
+    match result {
         Ok(t) => {
             println!("{t}")
         }

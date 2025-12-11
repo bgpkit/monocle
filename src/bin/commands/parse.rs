@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use clap::Args;
 
-use monocle::{MrtParserFilters, ParseFilters};
+use monocle::lens::parse::{ParseFilters, ParseLens};
 
 use crate::elem_to_string;
 
 /// Arguments for the Parse command
 #[derive(Args)]
-pub struct ParseArgs {
+pub(crate) struct ParseArgs {
     /// File path to an MRT file, local or remote.
     #[clap(name = "FILE")]
     pub file_path: PathBuf,
@@ -36,7 +36,9 @@ pub fn run(args: ParseArgs, json: bool) {
         filters,
     } = args;
 
-    if let Err(e) = filters.validate() {
+    let lens = ParseLens::new();
+
+    if let Err(e) = lens.validate_filters(&filters) {
         eprintln!("ERROR: {e}");
         return;
     }
@@ -48,7 +50,7 @@ pub fn run(args: ParseArgs, json: bool) {
             std::process::exit(1);
         }
     };
-    let parser = match filters.to_parser(file_path) {
+    let parser = match lens.create_parser(&filters, file_path) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Failed to create parser for {}: {}", file_path, e);
@@ -85,7 +87,9 @@ pub fn run(args: ParseArgs, json: bool) {
                     std::process::exit(1);
                 }
             };
-            println!("processing. filtered messages output to {}...", &path);
+            if !json {
+                eprintln!("processing. filtered messages output to {}...", &path);
+            }
             let mut encoder = MrtUpdatesEncoder::new();
             let mut writer = match oneio::get_writer(&path) {
                 Ok(w) => w,
@@ -103,7 +107,9 @@ pub fn run(args: ParseArgs, json: bool) {
                 eprintln!("Failed to write MRT data: {}", e);
             }
             drop(writer);
-            println!("done. total of {} message wrote", total_count);
+            if !json {
+                eprintln!("done. total of {} message wrote", total_count);
+            }
         }
     }
 }
