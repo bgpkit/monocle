@@ -7,7 +7,8 @@ use anyhow::{anyhow, Result};
 use bgpkit_commons::BgpkitCommons;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
-use tabled::Tabled;
+use tabled::settings::Style;
+use tabled::{Table, Tabled};
 
 /// Global country data cache
 static COUNTRY_DATA: OnceLock<CountryData> = OnceLock::new();
@@ -40,17 +41,121 @@ impl CountryData {
     }
 }
 
+// =============================================================================
+// Types
+// =============================================================================
+
 /// A country entry with code and name
 #[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
 pub struct CountryEntry {
+    /// ISO 3166-1 alpha-2 country code
     pub code: String,
+    /// Full country name
     pub name: String,
 }
+
+/// Output format for country lens results
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum CountryOutputFormat {
+    /// Table format with borders (default)
+    #[default]
+    Table,
+    /// JSON format
+    Json,
+    /// Simple text format (code: name)
+    Simple,
+    /// Markdown table
+    Markdown,
+}
+
+// =============================================================================
+// Args
+// =============================================================================
+
+/// Arguments for country lookup operations
+///
+/// This struct works in multiple contexts:
+/// - CLI: with clap derives (when `cli` feature is enabled)
+/// - REST API: as query parameters or JSON body (via serde)
+/// - WebSocket: as JSON message payload (via serde)
+/// - Library: constructed programmatically
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+pub struct CountryLookupArgs {
+    /// Search query: country code (e.g., "US") or partial name (e.g., "united")
+    #[cfg_attr(feature = "cli", clap(value_name = "QUERY"))]
+    pub query: Option<String>,
+
+    /// List all countries
+    #[cfg_attr(feature = "cli", clap(short, long))]
+    #[serde(default)]
+    pub all: bool,
+
+    /// Output format
+    #[cfg_attr(feature = "cli", clap(short, long, default_value = "table"))]
+    #[serde(default)]
+    pub format: CountryOutputFormat,
+}
+
+impl CountryLookupArgs {
+    /// Create new args with a query
+    pub fn new(query: impl Into<String>) -> Self {
+        Self {
+            query: Some(query.into()),
+            all: false,
+            format: CountryOutputFormat::default(),
+        }
+    }
+
+    /// Create args to list all countries
+    pub fn all_countries() -> Self {
+        Self {
+            query: None,
+            all: true,
+            format: CountryOutputFormat::default(),
+        }
+    }
+
+    /// Set output format
+    pub fn with_format(mut self, format: CountryOutputFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Validate the arguments
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.all && self.query.is_none() {
+            return Err("Either a query or --all flag is required".to_string());
+        }
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Lens
+// =============================================================================
 
 /// Country lookup lens
 ///
 /// Provides methods for looking up countries by code or name.
 /// Uses bgpkit-commons for country data with lazy loading.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use monocle::lens::country::{CountryLens, CountryLookupArgs, CountryOutputFormat};
+///
+/// let lens = CountryLens::new();
+///
+/// // Look up by country code
+/// let args = CountryLookupArgs::new("US");
+/// let results = lens.search(&args)?;
+///
+/// // Format for display
+/// let output = lens.format_results(&results, &CountryOutputFormat::Table);
+/// println!("{}", output);
+/// ```
 pub struct CountryLens {
     // Using a reference to the global data
     _marker: std::marker::PhantomData<()>,
@@ -84,6 +189,18 @@ impl CountryLens {
                 entries: Vec::new(),
             })
         })
+    }
+
+    /// Search for countries based on the provided arguments
+    pub fn search(&self, args: &CountryLookupArgs) -> Result<Vec<CountryEntry>> {
+        if args.all {
+            return Ok(self.all());
+        }
+
+        match &args.query {
+            Some(query) => Ok(self.lookup(query)),
+            None => Err(anyhow!("Either a query or --all flag is required")),
+        }
     }
 
     /// Lookup a country name by its 2-letter code
@@ -122,6 +239,29 @@ impl CountryLens {
         entries.sort_by(|a, b| a.code.cmp(&b.code));
         entries
     }
+
+    /// Format results based on output format
+    pub fn format_results(&self, results: &[CountryEntry], format: &CountryOutputFormat) -> String {
+        if results.is_empty() {
+            return match format {
+                CountryOutputFormat::Json => "[]".to_string(),
+                _ => "No countries found".to_string(),
+            };
+        }
+
+        match format {
+            CountryOutputFormat::Table => Table::new(results).with(Style::rounded()).to_string(),
+            CountryOutputFormat::Markdown => {
+                Table::new(results).with(Style::markdown()).to_string()
+            }
+            CountryOutputFormat::Json => serde_json::to_string_pretty(results).unwrap_or_default(),
+            CountryOutputFormat::Simple => results
+                .iter()
+                .map(|e| format!("{}: {}", e.code, e.name))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
 }
 
 impl Default for CountryLens {
@@ -130,51 +270,55 @@ impl Default for CountryLens {
     }
 }
 
+// =============================================================================
+// Tests
+// =============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_lookup_code() {
-        let lookup = CountryLens::new();
+        let lens = CountryLens::new();
 
         // Test US lookup
-        let result = lookup.lookup_code("US");
+        let result = lens.lookup_code("US");
         assert!(result.is_some());
         // Note: The exact name may vary slightly from bgpkit-commons
         let name = result.unwrap();
         assert!(name.contains("United States") || name.contains("America"));
 
         // Test lowercase
-        let result_lower = lookup.lookup_code("us");
+        let result_lower = lens.lookup_code("us");
         assert!(result_lower.is_some());
 
         // Test non-existent code
-        assert!(lookup.lookup_code("XX").is_none());
+        assert!(lens.lookup_code("XX").is_none());
     }
 
     #[test]
     fn test_lookup_by_code() {
-        let lookup = CountryLens::new();
+        let lens = CountryLens::new();
 
-        let results = lookup.lookup("US");
+        let results = lens.lookup("US");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].code, "US");
     }
 
     #[test]
     fn test_lookup_by_name() {
-        let lookup = CountryLens::new();
+        let lens = CountryLens::new();
 
-        let results = lookup.lookup("united");
+        let results = lens.lookup("united");
         // Should find multiple countries containing "united"
         assert!(!results.is_empty());
     }
 
     #[test]
     fn test_all() {
-        let lookup = CountryLens::new();
-        let all = lookup.all();
+        let lens = CountryLens::new();
+        let all = lens.all();
 
         // Should have many countries
         assert!(!all.is_empty());
@@ -183,5 +327,76 @@ mod tests {
         if all.len() > 1 {
             assert!(all[0].code < all[1].code);
         }
+    }
+
+    #[test]
+    fn test_search_with_args() {
+        let lens = CountryLens::new();
+
+        // Test with query
+        let args = CountryLookupArgs::new("US");
+        let results = lens.search(&args).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].code, "US");
+
+        // Test with all flag
+        let args = CountryLookupArgs::all_countries();
+        let results = lens.search(&args).unwrap();
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_args_validation() {
+        // Empty args should fail validation
+        let args = CountryLookupArgs::default();
+        assert!(args.validate().is_err());
+
+        // Args with query should pass
+        let args = CountryLookupArgs::new("US");
+        assert!(args.validate().is_ok());
+
+        // Args with all flag should pass
+        let args = CountryLookupArgs::all_countries();
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn test_format_results() {
+        let lens = CountryLens::new();
+        let results = vec![
+            CountryEntry {
+                code: "US".to_string(),
+                name: "United States".to_string(),
+            },
+            CountryEntry {
+                code: "CA".to_string(),
+                name: "Canada".to_string(),
+            },
+        ];
+
+        // Test JSON format
+        let output = lens.format_results(&results, &CountryOutputFormat::Json);
+        assert!(output.contains("US"));
+        assert!(output.contains("United States"));
+
+        // Test Simple format
+        let output = lens.format_results(&results, &CountryOutputFormat::Simple);
+        assert!(output.contains("US: United States"));
+        assert!(output.contains("CA: Canada"));
+
+        // Test empty results
+        let output = lens.format_results(&[], &CountryOutputFormat::Simple);
+        assert_eq!(output, "No countries found");
+
+        let output = lens.format_results(&[], &CountryOutputFormat::Json);
+        assert_eq!(output, "[]");
+    }
+
+    #[test]
+    fn test_args_builder() {
+        let args = CountryLookupArgs::new("US").with_format(CountryOutputFormat::Json);
+
+        assert_eq!(args.query, Some("US".to_string()));
+        assert!(matches!(args.format, CountryOutputFormat::Json));
     }
 }
