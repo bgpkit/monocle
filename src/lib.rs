@@ -12,9 +12,9 @@
 //! The library is organized into the following modules:
 //!
 //! - **[`database`]**: All database functionality
-//!   - `core`: Connection management and schema definitions
+//!   - `core`: SQLite connection management and schema definitions
 //!   - `session`: One-time storage (e.g., search results)
-//!   - `monocle`: Main monocle database (AS2Org, AS2Rel)
+//!   - `monocle`: Main monocle database (AS2Org, AS2Rel) and file caches
 //!
 //! - **[`lens`]**: High-level business logic (reusable across CLI, API, GUI)
 //!   - `as2org`: AS-to-Organization lookup lens
@@ -26,6 +26,12 @@
 //!   - `rpki`: RPKI validation and data lens
 //!   - `search`: BGP message search lens
 //!   - `time`: Time parsing and formatting lens
+//!
+//! # Database Strategy
+//!
+//! Monocle uses SQLite for AS2Org and AS2Rel data storage. For data requiring
+//! INET operations (prefix matching, containment queries), file-based JSON
+//! caching is used since SQLite doesn't natively support these operations.
 //!
 //! # Features
 //!
@@ -108,6 +114,25 @@
 //! let args = IpLookupArgs::new("1.1.1.1".parse().unwrap());
 //! let info = ip_lens.lookup(&args)?;
 //! ```
+//!
+//! # Example: Using File Caches
+//!
+//! For RPKI and Pfx2as data that require prefix operations:
+//!
+//! ```rust,ignore
+//! use monocle::database::{RpkiFileCache, Pfx2asFileCache, DEFAULT_RPKI_TTL};
+//!
+//! // RPKI cache
+//! let rpki_cache = RpkiFileCache::new("~/.monocle")?;
+//! if !rpki_cache.is_fresh("cloudflare", None, DEFAULT_RPKI_TTL) {
+//!     // Load and cache new data
+//!     rpki_cache.store("cloudflare", None, roas, aspas)?;
+//! }
+//!
+//! // Pfx2as cache
+//! let pfx2as_cache = Pfx2asFileCache::new("~/.monocle")?;
+//! let data = pfx2as_cache.load("source")?;
+//! ```
 
 mod config;
 pub mod database;
@@ -123,4 +148,15 @@ pub use config::MonocleConfig;
 // Database Module - Re-export commonly used types
 // =============================================================================
 
+// Primary database type (SQLite)
 pub use database::MonocleDatabase;
+
+// File-based caches for RPKI and Pfx2as
+pub use database::{Pfx2asFileCache, RpkiFileCache};
+
+// =============================================================================
+// Common Types
+// =============================================================================
+
+// Unified output format for all commands
+pub use lens::utils::OutputFormat;

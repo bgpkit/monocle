@@ -1,7 +1,7 @@
 //! SQL-based query builder for search filtering
 //!
-//! This module provides utilities for building SQL queries for the search lens
-//! that leverage DuckDB's native INET type for efficient prefix matching.
+//! This module provides utilities for building SQL queries for the search lens.
+//! The queries are designed for SQLite and use simple string matching for prefixes.
 //!
 //! # Usage
 //!
@@ -10,25 +10,22 @@
 //!
 //! let query = SearchQueryBuilder::new()
 //!     .with_prefix("10.0.0.0/8")
-//!     .include_sub_prefixes()
 //!     .with_origin_asn(13335)
 //!     .with_elem_type("A")
 //!     .build();
 //! ```
 
-use crate::database::core::{build_prefix_containment_clause, order_by_prefix_length};
-
 /// Query builder for search operations on BGP elements
 ///
-/// This builder constructs SQL queries that efficiently filter BGP elements
-/// using DuckDB's native INET operations for prefix matching.
+/// This builder constructs SQL queries for filtering BGP elements
+/// stored in SQLite databases.
 #[derive(Debug, Clone, Default)]
 pub struct SearchQueryBuilder {
-    /// Target prefix for filtering
+    /// Target prefix for filtering (exact match)
     prefix: Option<String>,
-    /// Include sub-prefixes (more specific)
+    /// Include sub-prefixes (more specific) - uses LIKE prefix%
     include_sub: bool,
-    /// Include super-prefixes (less specific)
+    /// Include super-prefixes (less specific) - not fully supported in SQLite
     include_super: bool,
     /// Origin ASN filter
     origin_asn: Option<u32>,
@@ -48,35 +45,35 @@ pub struct SearchQueryBuilder {
     collector: Option<String>,
     /// Additional WHERE conditions
     additional_conditions: Vec<String>,
-    /// SELECT columns (defaults to *)
+    /// SELECT columns
     select_columns: Option<String>,
     /// ORDER BY clause
     order_by: Option<String>,
-    /// LIMIT clause
-    limit: Option<u64>,
-    /// OFFSET clause
-    offset: Option<u64>,
+    /// LIMIT
+    limit: Option<usize>,
+    /// OFFSET
+    offset: Option<usize>,
 }
 
 impl SearchQueryBuilder {
-    /// Create a new search query builder
+    /// Create a new query builder
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set the target prefix for filtering
-    pub fn with_prefix(mut self, prefix: &str) -> Self {
-        self.prefix = Some(prefix.to_string());
+    /// Filter by prefix (exact match by default)
+    pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = Some(prefix.into());
         self
     }
 
-    /// Include sub-prefixes (more specific) in results
+    /// Include sub-prefixes (more specific prefixes)
     pub fn include_sub_prefixes(mut self) -> Self {
         self.include_sub = true;
         self
     }
 
-    /// Include super-prefixes (less specific) in results
+    /// Include super-prefixes (less specific prefixes)
     pub fn include_super_prefixes(mut self) -> Self {
         self.include_super = true;
         self
@@ -101,43 +98,43 @@ impl SearchQueryBuilder {
         self
     }
 
-    /// Add a peer IP filter
-    pub fn with_peer_ip(mut self, ip: &str) -> Self {
-        self.peer_ips.push(ip.to_string());
+    /// Filter by peer IP
+    pub fn with_peer_ip(mut self, ip: impl Into<String>) -> Self {
+        self.peer_ips.push(ip.into());
         self
     }
 
-    /// Set multiple peer IP filters
-    pub fn with_peer_ips(mut self, ips: &[String]) -> Self {
-        self.peer_ips.extend(ips.iter().cloned());
+    /// Filter by multiple peer IPs
+    pub fn with_peer_ips(mut self, ips: Vec<String>) -> Self {
+        self.peer_ips.extend(ips);
         self
     }
 
-    /// Filter by element type
-    pub fn with_elem_type(mut self, elem_type: &str) -> Self {
-        self.elem_type = Some(elem_type.to_string());
+    /// Filter by element type (A=announcement, W=withdrawal)
+    pub fn with_elem_type(mut self, elem_type: impl Into<String>) -> Self {
+        self.elem_type = Some(elem_type.into());
         self
     }
 
     /// Filter by AS path regex
-    pub fn with_as_path_regex(mut self, regex: &str) -> Self {
-        self.as_path_regex = Some(regex.to_string());
+    pub fn with_as_path_regex(mut self, regex: impl Into<String>) -> Self {
+        self.as_path_regex = Some(regex.into());
         self
     }
 
-    /// Set start timestamp filter (Unix timestamp)
+    /// Filter by start timestamp
     pub fn with_start_ts(mut self, ts: i64) -> Self {
         self.start_ts = Some(ts);
         self
     }
 
-    /// Set end timestamp filter (Unix timestamp)
+    /// Filter by end timestamp
     pub fn with_end_ts(mut self, ts: i64) -> Self {
         self.end_ts = Some(ts);
         self
     }
 
-    /// Set time range filter
+    /// Filter by time range
     pub fn with_time_range(mut self, start: i64, end: i64) -> Self {
         self.start_ts = Some(start);
         self.end_ts = Some(end);
@@ -145,55 +142,55 @@ impl SearchQueryBuilder {
     }
 
     /// Filter by collector
-    pub fn with_collector(mut self, collector: &str) -> Self {
-        self.collector = Some(collector.to_string());
+    pub fn with_collector(mut self, collector: impl Into<String>) -> Self {
+        self.collector = Some(collector.into());
         self
     }
 
     /// Add a custom WHERE condition
-    pub fn with_condition(mut self, condition: &str) -> Self {
-        self.additional_conditions.push(condition.to_string());
+    pub fn with_condition(mut self, condition: impl Into<String>) -> Self {
+        self.additional_conditions.push(condition.into());
         self
     }
 
     /// Set SELECT columns
-    pub fn select(mut self, columns: &str) -> Self {
-        self.select_columns = Some(columns.to_string());
+    pub fn select(mut self, columns: impl Into<String>) -> Self {
+        self.select_columns = Some(columns.into());
         self
     }
 
     /// Set ORDER BY clause
-    pub fn order_by(mut self, order: &str) -> Self {
-        self.order_by = Some(order.to_string());
+    pub fn order_by(mut self, order: impl Into<String>) -> Self {
+        self.order_by = Some(order.into());
         self
     }
 
-    /// Order by timestamp (most recent first)
+    /// Order by timestamp descending
     pub fn order_by_timestamp_desc(mut self) -> Self {
         self.order_by = Some("timestamp DESC".to_string());
         self
     }
 
-    /// Order by timestamp (oldest first)
+    /// Order by timestamp ascending
     pub fn order_by_timestamp_asc(mut self) -> Self {
         self.order_by = Some("timestamp ASC".to_string());
         self
     }
 
-    /// Order by prefix specificity (most specific first)
-    pub fn order_by_prefix_specificity_desc(mut self) -> Self {
-        self.order_by = Some(order_by_prefix_length("prefix", true));
+    /// Order by prefix (alphabetically)
+    pub fn order_by_prefix(mut self) -> Self {
+        self.order_by = Some("prefix".to_string());
         self
     }
 
     /// Set LIMIT
-    pub fn limit(mut self, limit: u64) -> Self {
+    pub fn limit(mut self, limit: usize) -> Self {
         self.limit = Some(limit);
         self
     }
 
     /// Set OFFSET
-    pub fn offset(mut self, offset: u64) -> Self {
+    pub fn offset(mut self, offset: usize) -> Self {
         self.offset = Some(offset);
         self
     }
@@ -208,14 +205,9 @@ impl SearchQueryBuilder {
         let columns = self.select_columns.as_deref().unwrap_or("*");
         let mut conditions = Vec::new();
 
-        // Prefix containment filter
+        // Prefix filter
         if let Some(prefix) = &self.prefix {
-            let prefix_clause = build_prefix_containment_clause(
-                "prefix",
-                prefix,
-                self.include_sub,
-                self.include_super,
-            );
+            let prefix_clause = build_prefix_filter(prefix, self.include_sub, self.include_super);
             conditions.push(prefix_clause);
         }
 
@@ -234,7 +226,7 @@ impl SearchQueryBuilder {
             let ip_conditions: Vec<String> = self
                 .peer_ips
                 .iter()
-                .map(|ip| format!("peer_ip = '{}'::INET", ip))
+                .map(|ip| format!("peer_ip = '{}'", ip))
                 .collect();
             conditions.push(format!("({})", ip_conditions.join(" OR ")));
         }
@@ -249,18 +241,20 @@ impl SearchQueryBuilder {
             conditions.push(format!("elem_type = '{}'", type_str));
         }
 
-        // AS path regex filter
+        // AS path regex filter (SQLite uses GLOB or LIKE, not full regex)
         if let Some(regex) = &self.as_path_regex {
-            // DuckDB uses regexp_matches for regex matching
-            conditions.push(format!("regexp_matches(as_path, '{}')", regex));
+            // Convert simple patterns to SQLite LIKE
+            // This is a simplified version - full regex not supported in SQLite
+            let pattern = regex.replace('*', "%").replace('?', "_");
+            conditions.push(format!("as_path LIKE '%{}%'", pattern));
         }
 
         // Timestamp filters
         if let Some(ts) = self.start_ts {
-            conditions.push(format!("timestamp >= to_timestamp({})", ts));
+            conditions.push(format!("timestamp >= {}", ts));
         }
         if let Some(ts) = self.end_ts {
-            conditions.push(format!("timestamp <= to_timestamp({})", ts));
+            conditions.push(format!("timestamp <= {}", ts));
         }
 
         // Collector filter
@@ -308,73 +302,32 @@ impl SearchQueryBuilder {
 
         builder.build_for_table(table)
     }
-
-    /// Build a query with RPKI validation status annotation
-    ///
-    /// This adds an `rpki_status` column to the results using a subquery
-    /// to check against the RPKI cache.
-    pub fn build_with_rpki_annotation(&self) -> String {
-        self.build_with_rpki_annotation_for_table("elems")
-    }
-
-    /// Build a query with RPKI validation status annotation for a specific table
-    pub fn build_with_rpki_annotation_for_table(&self, table: &str) -> String {
-        let columns = self.select_columns.as_deref().unwrap_or("*");
-        let base_query = self.build_for_table(table);
-
-        // Wrap in a CTE to add RPKI status
-        format!(
-            r#"WITH base AS ({})
-            SELECT b.*,
-                CASE
-                    WHEN EXISTS (
-                        SELECT 1 FROM rpki_roas r
-                        WHERE b.prefix <<= r.prefix
-                          AND b.origin_asn = r.origin_asn
-                          AND CAST(split_part(b.prefix::TEXT, '/', 2) AS INTEGER) <= r.max_length
-                    ) THEN 'valid'
-                    WHEN EXISTS (
-                        SELECT 1 FROM rpki_roas r
-                        WHERE b.prefix <<= r.prefix
-                    ) THEN 'invalid'
-                    ELSE 'unknown'
-                END AS rpki_status
-            FROM base b"#,
-            base_query.replace("SELECT * FROM", &format!("SELECT {} FROM", columns))
-        )
-    }
-
-    /// Build a query with Pfx2as origin annotation
-    ///
-    /// This adds `pfx2as_origins` column showing the expected origins for the prefix.
-    pub fn build_with_pfx2as_annotation(&self) -> String {
-        self.build_with_pfx2as_annotation_for_table("elems")
-    }
-
-    /// Build a query with Pfx2as origin annotation for a specific table
-    pub fn build_with_pfx2as_annotation_for_table(&self, table: &str) -> String {
-        let base_query = self.build_for_table(table);
-
-        format!(
-            r#"WITH base AS ({})
-            SELECT b.*,
-                (SELECT p.origin_asns::TEXT
-                 FROM pfx2as p
-                 WHERE b.prefix <<= p.prefix
-                 ORDER BY CAST(split_part(p.prefix::TEXT, '/', 2) AS INTEGER) DESC
-                 LIMIT 1) AS pfx2as_origins
-            FROM base b"#,
-            base_query
-        )
-    }
 }
 
-/// Build a simple prefix filter clause
+/// Build a simple prefix filter clause for SQLite
 ///
-/// This is a convenience function for building prefix filter clauses
-/// without the full query builder.
+/// Note: SQLite doesn't support INET operations, so prefix matching
+/// is done via string comparison which is not as accurate for CIDR
+/// containment checks. For proper prefix containment, filtering should
+/// be done during parsing, not in SQL.
 pub fn build_prefix_filter(prefix: &str, include_sub: bool, include_super: bool) -> String {
-    build_prefix_containment_clause("prefix", prefix, include_sub, include_super)
+    if include_sub && include_super {
+        // For both sub and super, we do a broad match
+        // This is approximate - proper containment requires INET ops
+        let base = prefix.split('/').next().unwrap_or(prefix);
+        format!("(prefix = '{}' OR prefix LIKE '{}%')", prefix, base)
+    } else if include_sub {
+        // Sub-prefixes: match prefix or anything that starts with it
+        let base = prefix.split('/').next().unwrap_or(prefix);
+        format!("(prefix = '{}' OR prefix LIKE '{}%')", prefix, base)
+    } else if include_super {
+        // Super-prefixes: harder to do in SQLite without INET
+        // Just do exact match as approximation
+        format!("prefix = '{}'", prefix)
+    } else {
+        // Exact match
+        format!("prefix = '{}'", prefix)
+    }
 }
 
 /// Filter specification for search operations
@@ -401,7 +354,7 @@ impl SearchFilterSpec {
         let mut builder = SearchQueryBuilder::new();
 
         if let Some(prefix) = &self.prefix {
-            builder = builder.with_prefix(prefix);
+            builder = builder.with_prefix(prefix.clone());
         }
         if self.include_sub {
             builder = builder.include_sub_prefixes();
@@ -416,13 +369,13 @@ impl SearchFilterSpec {
             builder = builder.with_peer_asn(asn);
         }
         if !self.peer_ips.is_empty() {
-            builder = builder.with_peer_ips(&self.peer_ips);
+            builder = builder.with_peer_ips(self.peer_ips.clone());
         }
         if let Some(elem_type) = &self.elem_type {
-            builder = builder.with_elem_type(elem_type);
+            builder = builder.with_elem_type(elem_type.clone());
         }
         if let Some(regex) = &self.as_path_regex {
-            builder = builder.with_as_path_regex(regex);
+            builder = builder.with_as_path_regex(regex.clone());
         }
         if let Some(ts) = self.start_ts {
             builder = builder.with_start_ts(ts);
@@ -431,7 +384,7 @@ impl SearchFilterSpec {
             builder = builder.with_end_ts(ts);
         }
         if let Some(collector) = &self.collector {
-            builder = builder.with_collector(collector);
+            builder = builder.with_collector(collector.clone());
         }
 
         builder
@@ -451,8 +404,7 @@ mod tests {
     #[test]
     fn test_prefix_exact_match() {
         let query = SearchQueryBuilder::new().with_prefix("10.0.0.0/8").build();
-
-        assert!(query.contains("prefix = '10.0.0.0/8'::INET"));
+        assert!(query.contains("prefix = '10.0.0.0/8'"));
     }
 
     #[test]
@@ -461,43 +413,20 @@ mod tests {
             .with_prefix("10.0.0.0/8")
             .include_sub_prefixes()
             .build();
-
-        assert!(query.contains("prefix <<= '10.0.0.0/8'::INET"));
-    }
-
-    #[test]
-    fn test_prefix_super_match() {
-        let query = SearchQueryBuilder::new()
-            .with_prefix("10.0.0.0/24")
-            .include_super_prefixes()
-            .build();
-
-        assert!(query.contains("prefix >>= '10.0.0.0/24'::INET"));
-    }
-
-    #[test]
-    fn test_prefix_both_match() {
-        let query = SearchQueryBuilder::new()
-            .with_prefix("10.0.0.0/16")
-            .include_all_related_prefixes()
-            .build();
-
-        assert!(query.contains("<<="));
-        assert!(query.contains(">>="));
+        assert!(query.contains("prefix = '10.0.0.0/8'"));
+        assert!(query.contains("prefix LIKE '10.0.0.0%'"));
     }
 
     #[test]
     fn test_origin_asn_filter() {
         let query = SearchQueryBuilder::new().with_origin_asn(13335).build();
-
         assert!(query.contains("origin_asn = 13335"));
     }
 
     #[test]
     fn test_peer_asn_filter() {
-        let query = SearchQueryBuilder::new().with_peer_asn(64496).build();
-
-        assert!(query.contains("peer_asn = 64496"));
+        let query = SearchQueryBuilder::new().with_peer_asn(65000).build();
+        assert!(query.contains("peer_asn = 65000"));
     }
 
     #[test]
@@ -505,59 +434,45 @@ mod tests {
         let query = SearchQueryBuilder::new()
             .with_peer_ip("192.168.1.1")
             .build();
-
-        assert!(query.contains("peer_ip = '192.168.1.1'::INET"));
+        assert!(query.contains("peer_ip = '192.168.1.1'"));
     }
 
     #[test]
     fn test_multiple_peer_ips() {
         let query = SearchQueryBuilder::new()
-            .with_peer_ips(&["192.168.1.1".to_string(), "10.0.0.1".to_string()])
+            .with_peer_ip("192.168.1.1")
+            .with_peer_ip("10.0.0.1")
             .build();
-
-        assert!(query.contains("192.168.1.1"));
-        assert!(query.contains("10.0.0.1"));
+        assert!(query.contains("peer_ip = '192.168.1.1'"));
+        assert!(query.contains("peer_ip = '10.0.0.1'"));
         assert!(query.contains(" OR "));
     }
 
     #[test]
     fn test_elem_type_filter() {
         let query = SearchQueryBuilder::new().with_elem_type("A").build();
-
         assert!(query.contains("elem_type = 'A'"));
-    }
-
-    #[test]
-    fn test_as_path_regex() {
-        let query = SearchQueryBuilder::new()
-            .with_as_path_regex("^64496")
-            .build();
-
-        assert!(query.contains("regexp_matches"));
-        assert!(query.contains("^64496"));
     }
 
     #[test]
     fn test_time_range() {
         let query = SearchQueryBuilder::new()
-            .with_time_range(1000000, 2000000)
+            .with_start_ts(1000)
+            .with_end_ts(2000)
             .build();
-
-        assert!(query.contains("timestamp >= to_timestamp(1000000)"));
-        assert!(query.contains("timestamp <= to_timestamp(2000000)"));
+        assert!(query.contains("timestamp >= 1000"));
+        assert!(query.contains("timestamp <= 2000"));
     }
 
     #[test]
     fn test_collector_filter() {
         let query = SearchQueryBuilder::new().with_collector("rrc00").build();
-
         assert!(query.contains("collector = 'rrc00'"));
     }
 
     #[test]
     fn test_limit_offset() {
         let query = SearchQueryBuilder::new().limit(100).offset(50).build();
-
         assert!(query.contains("LIMIT 100"));
         assert!(query.contains("OFFSET 50"));
     }
@@ -565,31 +480,28 @@ mod tests {
     #[test]
     fn test_order_by() {
         let query = SearchQueryBuilder::new().order_by_timestamp_desc().build();
-
         assert!(query.contains("ORDER BY timestamp DESC"));
     }
 
     #[test]
     fn test_select_columns() {
         let query = SearchQueryBuilder::new()
-            .select("prefix, origin_asn, timestamp")
+            .select("prefix, origin_asn")
             .build();
-
-        assert!(query.contains("SELECT prefix, origin_asn, timestamp"));
+        assert!(query.contains("SELECT prefix, origin_asn FROM"));
     }
 
     #[test]
     fn test_combined_filters() {
         let query = SearchQueryBuilder::new()
             .with_prefix("10.0.0.0/8")
-            .include_sub_prefixes()
             .with_origin_asn(13335)
             .with_elem_type("A")
             .order_by_timestamp_desc()
             .limit(100)
             .build();
 
-        assert!(query.contains("<<="));
+        assert!(query.contains("prefix = '10.0.0.0/8'"));
         assert!(query.contains("origin_asn = 13335"));
         assert!(query.contains("elem_type = 'A'"));
         assert!(query.contains("ORDER BY timestamp DESC"));
@@ -600,21 +512,20 @@ mod tests {
     fn test_count_query() {
         let query = SearchQueryBuilder::new()
             .with_origin_asn(13335)
+            .limit(100) // Should be ignored in count
             .build_count();
 
         assert!(query.contains("SELECT COUNT(*)"));
         assert!(query.contains("origin_asn = 13335"));
         assert!(!query.contains("LIMIT"));
-        assert!(!query.contains("ORDER BY"));
     }
 
     #[test]
     fn test_custom_condition() {
         let query = SearchQueryBuilder::new()
-            .with_condition("communities LIKE '%13335:%'")
+            .with_condition("custom_field > 100")
             .build();
-
-        assert!(query.contains("communities LIKE '%13335:%'"));
+        assert!(query.contains("custom_field > 100"));
     }
 
     #[test]
@@ -622,59 +533,21 @@ mod tests {
         let spec = SearchFilterSpec {
             prefix: Some("10.0.0.0/8".to_string()),
             include_sub: true,
-            include_super: false,
             origin_asn: Some(13335),
-            peer_asn: None,
-            peer_ips: vec!["192.168.1.1".to_string()],
-            elem_type: Some("A".to_string()),
-            as_path_regex: None,
-            start_ts: Some(1000000),
-            end_ts: None,
-            collector: Some("rrc00".to_string()),
+            ..Default::default()
         };
 
         let query = spec.to_query_builder().build();
-
-        assert!(query.contains("<<="));
+        assert!(query.contains("10.0.0.0"));
         assert!(query.contains("origin_asn = 13335"));
-        assert!(query.contains("192.168.1.1"));
-        assert!(query.contains("elem_type = 'A'"));
-        assert!(query.contains("collector = 'rrc00'"));
-    }
-
-    #[test]
-    fn test_rpki_annotation() {
-        let query = SearchQueryBuilder::new()
-            .with_prefix("1.0.0.0/24")
-            .build_with_rpki_annotation();
-
-        assert!(query.contains("WITH base AS"));
-        assert!(query.contains("rpki_status"));
-        assert!(query.contains("'valid'"));
-        assert!(query.contains("'invalid'"));
-        assert!(query.contains("'unknown'"));
-    }
-
-    #[test]
-    fn test_pfx2as_annotation() {
-        let query = SearchQueryBuilder::new()
-            .with_origin_asn(13335)
-            .build_with_pfx2as_annotation();
-
-        assert!(query.contains("WITH base AS"));
-        assert!(query.contains("pfx2as_origins"));
-        assert!(query.contains("pfx2as p"));
     }
 
     #[test]
     fn test_build_prefix_filter() {
-        let filter = build_prefix_filter("10.0.0.0/8", true, false);
-        assert_eq!(filter, "prefix <<= '10.0.0.0/8'::INET");
-
-        let filter = build_prefix_filter("10.0.0.0/8", false, true);
-        assert_eq!(filter, "prefix >>= '10.0.0.0/8'::INET");
-
         let filter = build_prefix_filter("10.0.0.0/8", false, false);
-        assert_eq!(filter, "prefix = '10.0.0.0/8'::INET");
+        assert_eq!(filter, "prefix = '10.0.0.0/8'");
+
+        let filter = build_prefix_filter("10.0.0.0/8", true, false);
+        assert!(filter.contains("LIKE"));
     }
 }

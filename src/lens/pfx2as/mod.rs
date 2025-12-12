@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tabled::Tabled;
 
+use crate::database::Pfx2asRecord;
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -166,6 +168,29 @@ impl Pfx2asLens {
                     }
                     Some(s) => {
                         s.insert(entry.asn);
+                    }
+                }
+            }
+        }
+
+        Ok(Self { trie })
+    }
+
+    /// Create a new Pfx2as lens from cached records
+    ///
+    /// This is used to build the trie from file-cached data.
+    pub fn from_records(records: Vec<Pfx2asRecord>) -> Result<Self> {
+        let mut trie = IpnetTrie::<HashSet<u32>>::new();
+
+        for record in records {
+            if let Ok(prefix) = record.prefix.parse::<IpNet>() {
+                match trie.exact_match_mut(prefix) {
+                    None => {
+                        let set: HashSet<u32> = record.origin_asns.into_iter().collect();
+                        trie.insert(prefix, set);
+                    }
+                    Some(s) => {
+                        s.extend(record.origin_asns);
                     }
                 }
             }

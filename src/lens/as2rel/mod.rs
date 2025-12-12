@@ -1,7 +1,7 @@
 //! AS2Rel lens
 //!
 //! This module provides the AS2Rel lens for querying AS-level relationships.
-//! It combines the database repository with business logic and output formatting.
+//! It uses SQLite as the backend database.
 
 pub mod args;
 pub mod types;
@@ -12,7 +12,10 @@ pub use types::{
     As2relSortOrder, As2relUpdateProgress, As2relUpdateStage,
 };
 
-use crate::database::monocle::{AggregatedRelationship, MonocleDatabase, BGPKIT_AS2REL_URL};
+// Re-export common utilities for convenience
+pub use crate::lens::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
+
+use crate::database::{MonocleDatabase, BGPKIT_AS2REL_URL};
 use anyhow::Result;
 use serde_json::json;
 use tabled::settings::Style;
@@ -63,31 +66,15 @@ impl<'a> As2relLens<'a> {
     pub fn search(&self, args: &As2relSearchArgs) -> Result<Vec<As2relSearchResult>> {
         let max_peers = self.get_max_peers_count();
 
+        // Always use the aggregating search methods - they properly combine
+        // multiple records for the same ASN pair into a single result
         let aggregated = if args.asns.len() == 1 {
             let asn = args.asns[0];
-            if args.show_name {
-                self.db.as2rel().search_asn_with_names(asn)?
-            } else {
-                self.db
-                    .as2rel()
-                    .search_asn(asn)?
-                    .into_iter()
-                    .map(|r| self.aggregate_records_single(args.asns[0], r))
-                    .collect::<Vec<_>>()
-            }
+            self.db.as2rel().search_asn_with_names(asn)?
         } else {
             let asn1 = args.asns[0];
             let asn2 = args.asns[1];
-            if args.show_name {
-                self.db.as2rel().search_pair_with_names(asn1, asn2)?
-            } else {
-                self.db
-                    .as2rel()
-                    .search_pair(asn1, asn2)?
-                    .into_iter()
-                    .map(|r| self.aggregate_records_single(args.asns[0], r))
-                    .collect::<Vec<_>>()
-            }
+            self.db.as2rel().search_pair_with_names(asn1, asn2)?
         };
 
         // Convert to As2relSearchResult with percentages
@@ -110,49 +97,6 @@ impl<'a> As2relLens<'a> {
         self.sort_results(&mut results, &args.sort_order());
 
         Ok(results)
-    }
-
-    /// Aggregate a single record (when not using names)
-    fn aggregate_records_single(
-        &self,
-        perspective_asn: u32,
-        record: crate::database::monocle::As2relRecord,
-    ) -> AggregatedRelationship {
-        let (peer_asn, is_asn1) = if record.asn1 == perspective_asn {
-            (record.asn2, true)
-        } else {
-            (record.asn1, false)
-        };
-
-        let mut as1_upstream_count = 0u32;
-        let mut as2_upstream_count = 0u32;
-
-        match record.rel {
-            -1 => {
-                if is_asn1 {
-                    as2_upstream_count = record.peers_count;
-                } else {
-                    as1_upstream_count = record.peers_count;
-                }
-            }
-            1 => {
-                if is_asn1 {
-                    as1_upstream_count = record.peers_count;
-                } else {
-                    as2_upstream_count = record.peers_count;
-                }
-            }
-            _ => {} // peer relationship (0)
-        }
-
-        AggregatedRelationship {
-            asn1: perspective_asn,
-            asn2: peer_asn,
-            asn2_name: None,
-            connected_count: record.peers_count,
-            as1_upstream_count,
-            as2_upstream_count,
-        }
     }
 
     /// Sort results by the specified order
@@ -187,11 +131,15 @@ impl<'a> As2relLens<'a> {
     }
 
     /// Format results for output
+    ///
+    /// When `truncate_names` is true, names are truncated to 20 characters for table output.
+    /// JSON output never truncates names.
     pub fn format_results(
         &self,
         results: &[As2relSearchResult],
         format: &As2relOutputFormat,
         show_name: bool,
+        truncate_names: bool,
     ) -> String {
         match format {
             As2relOutputFormat::Json => {
@@ -229,8 +177,11 @@ impl<'a> As2relLens<'a> {
             }
             As2relOutputFormat::Pretty => {
                 if show_name {
-                    let results_with_name: Vec<_> =
-                        results.iter().cloned().map(|r| r.with_name()).collect();
+                    let results_with_name: Vec<_> = results
+                        .iter()
+                        .cloned()
+                        .map(|r| r.with_name(truncate_names))
+                        .collect();
                     Table::new(&results_with_name)
                         .with(Style::rounded())
                         .to_string()
@@ -240,8 +191,11 @@ impl<'a> As2relLens<'a> {
             }
             As2relOutputFormat::Markdown => {
                 if show_name {
-                    let results_with_name: Vec<_> =
-                        results.iter().cloned().map(|r| r.with_name()).collect();
+                    let results_with_name: Vec<_> = results
+                        .iter()
+                        .cloned()
+                        .map(|r| r.with_name(truncate_names))
+                        .collect();
                     Table::new(&results_with_name)
                         .with(Style::markdown())
                         .to_string()

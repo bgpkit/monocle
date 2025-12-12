@@ -2,42 +2,38 @@
 //!
 //! This module provides all database functionality for monocle, organized into:
 //!
-//! - **core**: Core database infrastructure (connections, schema management)
+//! - **core**: Core database infrastructure (SQLite connections, schema management)
 //! - **session**: Session-based storage for one-time operations (e.g., search results)
-//! - **monocle**: Main monocle database for persistent data (AS2Org, AS2Rel)
+//! - **monocle**: Main monocle database for persistent data (AS2Org, AS2Rel, caches)
 //!
 //! # Architecture
 //!
 //! ```text
 //! database/
 //! ├── core/           # Foundation
-//! │   ├── connection  # SQLite DatabaseConn wrapper (for exports)
-//! │   ├── duckdb_conn # DuckDB DuckDbConn wrapper (primary backend)
-//! │   ├── schema      # SQLite schema definitions and management
-//! │   └── duckdb_schema # DuckDB schema definitions and management
+//! │   ├── connection  # SQLite DatabaseConn wrapper
+//! │   └── schema      # SQLite schema definitions and management
 //! │
 //! ├── session/        # One-time storage
-//! │   └── msg_store   # BGP message search results
+//! │   └── msg_store   # BGP message search results (SQLite)
 //! │
 //! └── monocle/        # Persistent storage
-//!     ├── as2org      # AS-to-Organization mappings
-//!     └── as2rel      # AS-level relationships
+//!     ├── as2org      # AS-to-Organization mappings (SQLite)
+//!     ├── as2rel      # AS-level relationships (SQLite)
+//!     └── file_cache  # RPKI and Pfx2as caches (JSON files)
 //! ```
 //!
 //! # Database Backend Strategy
 //!
-//! Monocle uses a dual-database approach:
-//! - **DuckDB** is used as the internal database for monocle's data storage,
-//!   leveraging native INET type support for IP/prefix operations and columnar
-//!   storage for better compression.
-//! - **SQLite** is retained for export functionality (search results) to maintain
-//!   compatibility with tools that expect SQLite files.
+//! Monocle uses SQLite as its database backend for AS2Org and AS2Rel data.
+//! For data requiring INET operations (prefix matching, containment queries),
+//! file-based JSON caching is used since SQLite doesn't natively support these.
 //!
 //! # Usage
 //!
-//! ## Monocle Database
+//! ## Monocle Database (SQLite)
 //!
-//! The monocle database is the primary interface for persistent data:
+//! The monocle database is the primary interface for AS2Org and AS2Rel data:
 //!
 //! ```rust,ignore
 //! use monocle::database::MonocleDatabase;
@@ -54,7 +50,26 @@
 //! let results = db.as2org().search_by_name("cloudflare")?;
 //! ```
 //!
-//! ## Session Database
+//! ## File-based Caching (RPKI and Pfx2as)
+//!
+//! For RPKI and Pfx2as data that require prefix operations:
+//!
+//! ```rust,ignore
+//! use monocle::database::{RpkiFileCache, Pfx2asFileCache};
+//!
+//! // RPKI cache
+//! let rpki_cache = RpkiFileCache::new("~/.monocle")?;
+//! if !rpki_cache.is_fresh("cloudflare", None, DEFAULT_RPKI_TTL) {
+//!     // Load and cache new data
+//!     rpki_cache.store("cloudflare", None, roas, aspas)?;
+//! }
+//!
+//! // Pfx2as cache
+//! let pfx2as_cache = Pfx2asFileCache::new("~/.monocle")?;
+//! let data = pfx2as_cache.load("source")?;
+//! ```
+//!
+//! ## Session Database (SQLite - for exports)
 //!
 //! For one-time operations like storing search results:
 //!
@@ -72,41 +87,52 @@ pub mod core;
 pub mod monocle;
 pub mod session;
 
-// Re-export commonly used types
+// =============================================================================
+// SQLite Types (Primary Database Backend)
+// =============================================================================
 
-// SQLite types (for backward compatibility and export functionality)
-pub use core::{DatabaseConn, SchemaManager, SchemaStatus, SCHEMA_VERSION};
+// SQLite connection and schema management
+pub use core::{DatabaseConn, SchemaDefinitions, SchemaManager, SchemaStatus, SCHEMA_VERSION};
 
-// DuckDB types (primary database backend)
-pub use core::{
-    DuckDbConn, DuckDbSchemaDefinitions, DuckDbSchemaManager, DuckDbSchemaStatus,
-    DUCKDB_SCHEMA_VERSION,
-};
+// Monocle database (main entry point for AS2Org and AS2Rel)
+pub use monocle::MonocleDatabase;
 
-// DuckDB query helpers
-pub use core::{
-    build_prefix_containment_clause, order_by_prefix_length, Pfx2asQuery, PrefixQueryBuilder,
-    RpkiValidationQuery,
-};
+// AS2Org repository
+pub use monocle::{As2orgRecord, As2orgRepository};
 
-// Monocle database types (SQLite - for backward compatibility)
+// AS2Rel repository
 pub use monocle::{
-    ensure_data_dir, AggregatedRelationship, As2orgRecord, As2orgRepository, As2relEntry,
-    As2relMeta, As2relRecord, As2relRepository, MonocleDatabase, BGPKIT_AS2REL_URL,
+    AggregatedRelationship, As2relEntry, As2relMeta, As2relRecord, As2relRepository,
+    BGPKIT_AS2REL_URL,
 };
 
-// Monocle database types (DuckDB - primary backend)
-pub use monocle::{
-    ensure_duckdb_data_dir, DuckDbAggregatedRelationship, DuckDbAs2orgRecord,
-    DuckDbAs2orgRepository, DuckDbAs2relEntry, DuckDbAs2relMeta, DuckDbAs2relRecord,
-    DuckDbAs2relRepository, DuckDbMonocleDatabase, DUCKDB_BGPKIT_AS2REL_URL,
-};
-
-// Cache types (RPKI and Pfx2as)
-pub use monocle::{
-    AspaRecord, Pfx2asCacheMeta, Pfx2asCacheRepository, Pfx2asRecord, RoaRecord, RpkiCacheMeta,
-    RpkiCacheRepository, DEFAULT_PFX2AS_TTL, DEFAULT_RPKI_CURRENT_TTL,
-};
-
-// Session types
+// Session types (SQLite-based for search result exports)
 pub use session::MsgStore;
+
+// =============================================================================
+// File-based Cache Types (for RPKI and Pfx2as)
+// =============================================================================
+
+// RPKI file cache
+pub use monocle::{
+    AspaRecord, RoaRecord, RpkiCacheData, RpkiCacheMeta, RpkiFileCache,
+    DEFAULT_RPKI_HISTORICAL_TTL, DEFAULT_RPKI_TTL,
+};
+
+// Pfx2as file cache
+pub use monocle::{
+    Pfx2asCacheData, Pfx2asCacheMeta, Pfx2asFileCache, Pfx2asRecord, DEFAULT_PFX2AS_TTL,
+};
+
+// Cache utilities
+pub use monocle::{cache_size, clear_all_caches, ensure_cache_dirs};
+
+// =============================================================================
+// Helper function
+// =============================================================================
+
+/// Ensure the data directory exists
+pub fn ensure_data_dir(data_dir: &str) -> anyhow::Result<()> {
+    std::fs::create_dir_all(data_dir)
+        .map_err(|e| anyhow::anyhow!("Failed to create data directory '{}': {}", data_dir, e))
+}

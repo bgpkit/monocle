@@ -1,7 +1,11 @@
 use clap::Args;
 use monocle::database::MonocleDatabase;
-use monocle::lens::as2org::{As2orgLens, As2orgOutputFormat, As2orgSearchArgs};
+use monocle::lens::as2org::{As2orgLens, As2orgSearchArgs};
+use monocle::lens::utils::OutputFormat;
 use monocle::MonocleConfig;
+use serde::Serialize;
+use tabled::settings::Style;
+use tabled::Table;
 
 /// Arguments for the Whois command
 #[derive(Args)]
@@ -25,40 +29,77 @@ pub struct WhoisArgs {
     #[clap(short, long)]
     pub update: bool,
 
-    /// Output to pretty table, default markdown table
-    #[clap(short, long)]
-    pub pretty: bool,
-
-    /// Display a full table (with ord_id, org_size)
+    /// Display a full table (with org_id, org_size)
     #[clap(short = 'F', long)]
     pub full_table: bool,
-
-    /// Export to pipe-separated values
-    #[clap(short = 'P', long)]
-    pub psv: bool,
 
     /// Show full country names instead of 2-letter code
     #[clap(short, long)]
     pub full_country: bool,
+
+    /// Show full names without truncation (default truncates to 20 chars)
+    #[clap(long)]
+    pub show_full_name: bool,
 }
 
-pub fn run(config: &MonocleConfig, args: WhoisArgs, json_output: bool) {
+pub fn run(config: &MonocleConfig, args: WhoisArgs, output_format: OutputFormat) {
     let WhoisArgs {
         query,
         name_only,
         asn_only,
         country_only,
         update,
-        pretty,
         full_table,
         full_country,
-        psv,
+        show_full_name,
     } = args;
 
-    // Open the monocle database
-    let data_dir = config.data_dir.as_str();
-    let db_path = format!("{}/monocle-data.sqlite3", data_dir);
-    let db = match MonocleDatabase::open(&db_path) {
+    let sqlite_path = config.sqlite_path();
+
+    // Handle update request
+    if update {
+        eprintln!("Updating AS2org data...");
+        let db = match MonocleDatabase::open(&sqlite_path) {
+            Ok(db) => db,
+            Err(e) => {
+                eprintln!("Failed to open database: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let lens = As2orgLens::new(&db);
+        match lens.bootstrap() {
+            Ok(count) => {
+                eprintln!("AS2org data updated: {} entries", count);
+            }
+            Err(e) => {
+                eprintln!("Failed to update AS2org data: {}", e);
+                std::process::exit(1);
+            }
+        }
+
+        // If no query provided after update, just exit
+        if query.is_empty() {
+            return;
+        }
+
+        // Continue with query using the same connection
+        run_query(
+            &db,
+            &query,
+            name_only,
+            asn_only,
+            country_only,
+            full_country,
+            full_table,
+            show_full_name,
+            output_format,
+        );
+        return;
+    }
+
+    // Open the database
+    let db = match MonocleDatabase::open(&sqlite_path) {
         Ok(db) => db,
         Err(e) => {
             eprintln!("Failed to open database: {}", e);
@@ -66,43 +107,15 @@ pub fn run(config: &MonocleConfig, args: WhoisArgs, json_output: bool) {
         }
     };
 
-    // Create the lens
     let lens = As2orgLens::new(&db);
-
-    // Handle update request
-    if update {
-        if !json_output {
-            println!("Updating AS2org data...");
-        }
-        match lens.bootstrap() {
-            Ok((as_count, org_count)) => {
-                if !json_output {
-                    println!(
-                        "AS2org data updated: {} ASes, {} organizations",
-                        as_count, org_count
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to update AS2org data: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
 
     // Bootstrap if needed
     if lens.needs_bootstrap() {
-        if !json_output {
-            println!("Bootstrapping AS2org data now... (this may take about a minute)");
-        }
+        eprintln!("Bootstrapping AS2org data now... (this may take a few seconds)");
+
         match lens.bootstrap() {
-            Ok((as_count, org_count)) => {
-                if !json_output {
-                    println!(
-                        "Bootstrapping complete: {} ASes, {} organizations",
-                        as_count, org_count
-                    );
-                }
+            Ok(count) => {
+                eprintln!("Bootstrapping complete: {} entries", count);
             }
             Err(e) => {
                 eprintln!("Failed to bootstrap AS2org data: {}", e);
@@ -111,6 +124,39 @@ pub fn run(config: &MonocleConfig, args: WhoisArgs, json_output: bool) {
         }
     }
 
+    // Run query
+    run_query(
+        &db,
+        &query,
+        name_only,
+        asn_only,
+        country_only,
+        full_country,
+        full_table,
+        show_full_name,
+        output_format,
+    );
+}
+
+#[derive(Debug, Clone, Serialize, tabled::Tabled)]
+struct WhoisResultConcise {
+    asn: u32,
+    as_name: String,
+    org_name: String,
+    org_country: String,
+}
+
+fn run_query(
+    db: &MonocleDatabase,
+    query: &[String],
+    name_only: bool,
+    asn_only: bool,
+    country_only: bool,
+    full_country: bool,
+    full_table: bool,
+    show_full_name: bool,
+    output_format: OutputFormat,
+) {
     // Validate conflicting search type options
     let exclusive_options = [name_only, asn_only, country_only];
     if exclusive_options.iter().filter(|&&x| x).count() > 1 {
@@ -120,7 +166,7 @@ pub fn run(config: &MonocleConfig, args: WhoisArgs, json_output: bool) {
 
     // Build search args
     let search_args = As2orgSearchArgs {
-        query,
+        query: query.to_vec(),
         name_only,
         asn_only,
         country_only,
@@ -134,6 +180,8 @@ pub fn run(config: &MonocleConfig, args: WhoisArgs, json_output: bool) {
         std::process::exit(1);
     }
 
+    let lens = As2orgLens::new(db);
+
     // Perform search
     let results = match lens.search(&search_args) {
         Ok(r) => r,
@@ -143,18 +191,142 @@ pub fn run(config: &MonocleConfig, args: WhoisArgs, json_output: bool) {
         }
     };
 
-    // Determine output format
-    let format = if json_output {
-        As2orgOutputFormat::Json
-    } else if psv {
-        As2orgOutputFormat::Psv
-    } else if pretty {
-        As2orgOutputFormat::Pretty
-    } else {
-        As2orgOutputFormat::Markdown
-    };
+    // Truncate names for table output unless show_full_name is set
+    let truncate_names = !show_full_name && output_format.is_table();
 
-    // Format and print results
-    let output = lens.format_results(&results, &format, full_table);
-    println!("{}", output);
+    // Format and print results based on output format
+    match output_format {
+        OutputFormat::Table => {
+            if full_table {
+                let display: Vec<_> = results
+                    .iter()
+                    .map(|r| r.to_truncated(truncate_names))
+                    .collect();
+                println!("{}", Table::new(display).with(Style::rounded()));
+            } else {
+                let display: Vec<WhoisResultConcise> = results
+                    .iter()
+                    .map(|r| {
+                        let concise = r.to_concise_truncated(truncate_names);
+                        WhoisResultConcise {
+                            asn: concise.asn,
+                            as_name: concise.as_name,
+                            org_name: concise.org_name,
+                            org_country: concise.org_country,
+                        }
+                    })
+                    .collect();
+                println!("{}", Table::new(display).with(Style::rounded()));
+            }
+        }
+        OutputFormat::Markdown => {
+            if full_table {
+                let display: Vec<_> = results
+                    .iter()
+                    .map(|r| r.to_truncated(truncate_names))
+                    .collect();
+                println!("{}", Table::new(display).with(Style::markdown()));
+            } else {
+                let display: Vec<WhoisResultConcise> = results
+                    .iter()
+                    .map(|r| {
+                        let concise = r.to_concise_truncated(truncate_names);
+                        WhoisResultConcise {
+                            asn: concise.asn,
+                            as_name: concise.as_name,
+                            org_name: concise.org_name,
+                            org_country: concise.org_country,
+                        }
+                    })
+                    .collect();
+                println!("{}", Table::new(display).with(Style::markdown()));
+            }
+        }
+        OutputFormat::Json => {
+            let output = if full_table {
+                serde_json::to_string(&results)
+            } else {
+                let concise: Vec<WhoisResultConcise> = results
+                    .iter()
+                    .map(|r| {
+                        let c = r.to_concise_truncated(false);
+                        WhoisResultConcise {
+                            asn: c.asn,
+                            as_name: c.as_name,
+                            org_name: c.org_name,
+                            org_country: c.org_country,
+                        }
+                    })
+                    .collect();
+                serde_json::to_string(&concise)
+            };
+            match output {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+            }
+        }
+        OutputFormat::JsonPretty => {
+            let output = if full_table {
+                serde_json::to_string_pretty(&results)
+            } else {
+                let concise: Vec<WhoisResultConcise> = results
+                    .iter()
+                    .map(|r| {
+                        let c = r.to_concise_truncated(false);
+                        WhoisResultConcise {
+                            asn: c.asn,
+                            as_name: c.as_name,
+                            org_name: c.org_name,
+                            org_country: c.org_country,
+                        }
+                    })
+                    .collect();
+                serde_json::to_string_pretty(&concise)
+            };
+            match output {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+            }
+        }
+        OutputFormat::JsonLine => {
+            if full_table {
+                for r in &results {
+                    match serde_json::to_string(r) {
+                        Ok(json) => println!("{}", json),
+                        Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                    }
+                }
+            } else {
+                for r in &results {
+                    let c = r.to_concise_truncated(false);
+                    let concise = WhoisResultConcise {
+                        asn: c.asn,
+                        as_name: c.as_name,
+                        org_name: c.org_name,
+                        org_country: c.org_country,
+                    };
+                    match serde_json::to_string(&concise) {
+                        Ok(json) => println!("{}", json),
+                        Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                    }
+                }
+            }
+        }
+        OutputFormat::Psv => {
+            if full_table {
+                println!("asn|as_name|org_name|org_id|org_country|org_size");
+                for r in &results {
+                    println!(
+                        "{}|{}|{}|{}|{}|{}",
+                        r.asn, r.as_name, r.org_name, r.org_id, r.org_country, r.org_size
+                    );
+                }
+            } else {
+                println!("asn|as_name|org_name|org_country");
+                for r in &results {
+                    println!("{}|{}|{}|{}", r.asn, r.as_name, r.org_name, r.org_country);
+                }
+            }
+        }
+    }
 }

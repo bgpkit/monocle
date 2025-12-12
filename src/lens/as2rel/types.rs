@@ -3,6 +3,7 @@
 //! This module defines the types used by the AS2Rel lens for relationship
 //! queries and result formatting.
 
+use crate::lens::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
 use serde::{Deserialize, Serialize};
 use tabled::Tabled;
 
@@ -60,12 +61,18 @@ pub struct As2relSearchResultWithName {
 }
 
 impl As2relSearchResult {
-    /// Convert to a result with name for display
-    pub fn with_name(self) -> As2relSearchResultWithName {
+    /// Convert to a result with name for display (with optional truncation)
+    pub fn with_name(self, truncate: bool) -> As2relSearchResultWithName {
+        let name = self.asn2_name.unwrap_or_default();
+        let display_name = if truncate {
+            truncate_name(&name, DEFAULT_NAME_MAX_LEN)
+        } else {
+            name
+        };
         As2relSearchResultWithName {
             asn1: self.asn1,
             asn2: self.asn2,
-            asn2_name: self.asn2_name.unwrap_or_default(),
+            asn2_name: display_name,
             connected: self.connected,
             peer: self.peer,
             as1_upstream: self.as1_upstream,
@@ -83,23 +90,28 @@ impl As2relSearchResult {
         as2_upstream_count: u32,
         max_peers: u32,
     ) -> Self {
+        // All percentages are relative to max_peers
+        // connected comes from rel=0 (total peers seeing any connection)
+        // as1_upstream/as2_upstream come from rel=1/-1 (subsets seeing provider-customer)
+        // peer = connected - as1_upstream - as2_upstream (remainder seeing pure peering)
+        let format_pct = |count: u32| -> String {
+            if max_peers > 0 {
+                format!("{:.1}%", (count as f32 / max_peers as f32) * 100.0)
+            } else {
+                "0.0%".to_string()
+            }
+        };
+
         let connected_pct = if max_peers > 0 {
             (connected_count as f32 / max_peers as f32) * 100.0
         } else {
             0.0
         };
 
+        // peer is the remainder after subtracting upstream counts from connected
         let peer_count = connected_count
             .saturating_sub(as1_upstream_count)
             .saturating_sub(as2_upstream_count);
-
-        let format_pct = |count: u32| -> String {
-            if connected_count > 0 {
-                format!("{:.1}%", (count as f32 / connected_count as f32) * 100.0)
-            } else {
-                "0.0%".to_string()
-            }
-        };
 
         Self {
             asn1,
@@ -203,20 +215,21 @@ mod tests {
             65000,
             65001,
             Some("Test Org".to_string()),
-            100, // connected
-            30,  // as1_upstream
-            20,  // as2_upstream
+            100, // connected (from rel=0)
+            30,  // as1_upstream (from rel=1/-1)
+            20,  // as2_upstream (from rel=1/-1)
             200, // max_peers
         );
 
         assert_eq!(result.asn1, 65000);
         assert_eq!(result.asn2, 65001);
         assert_eq!(result.asn2_name, Some("Test Org".to_string()));
-        assert_eq!(result.connected, "50.0%");
-        // peer = 100 - 30 - 20 = 50, so 50/100 = 50%
-        assert_eq!(result.peer, "50.0%");
-        assert_eq!(result.as1_upstream, "30.0%");
-        assert_eq!(result.as2_upstream, "20.0%");
+        // All percentages relative to max_peers (200)
+        assert_eq!(result.connected, "50.0%"); // 100/200
+                                               // peer = connected - as1_upstream - as2_upstream = 100 - 30 - 20 = 50
+        assert_eq!(result.peer, "25.0%"); // 50/200
+        assert_eq!(result.as1_upstream, "15.0%"); // 30/200
+        assert_eq!(result.as2_upstream, "10.0%"); // 20/200
     }
 
     #[test]
@@ -232,7 +245,7 @@ mod tests {
             as2_upstream: "20.0%".to_string(),
         };
 
-        let with_name = result.with_name();
+        let with_name = result.with_name(false);
         assert_eq!(with_name.asn2_name, "Test Org");
     }
 

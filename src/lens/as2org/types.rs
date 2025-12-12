@@ -3,6 +3,7 @@
 //! This module defines the types used by the AS2Org lens for search
 //! operations and result formatting.
 
+use crate::lens::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
 use serde::{Deserialize, Serialize};
 use tabled::Tabled;
 
@@ -61,6 +62,43 @@ impl From<As2orgSearchResult> for As2orgSearchResultConcise {
             as_name: result.as_name,
             org_name: result.org_name,
             org_country: result.org_country,
+        }
+    }
+}
+
+impl As2orgSearchResult {
+    /// Convert to concise result with optional name truncation for table display
+    pub fn to_concise_truncated(&self, truncate: bool) -> As2orgSearchResultConcise {
+        if truncate {
+            As2orgSearchResultConcise {
+                asn: self.asn,
+                as_name: truncate_name(&self.as_name, DEFAULT_NAME_MAX_LEN),
+                org_name: truncate_name(&self.org_name, DEFAULT_NAME_MAX_LEN),
+                org_country: self.org_country.clone(),
+            }
+        } else {
+            As2orgSearchResultConcise {
+                asn: self.asn,
+                as_name: self.as_name.clone(),
+                org_name: self.org_name.clone(),
+                org_country: self.org_country.clone(),
+            }
+        }
+    }
+
+    /// Convert to full result with optional name truncation for table display
+    pub fn to_truncated(&self, truncate: bool) -> As2orgSearchResult {
+        if truncate {
+            As2orgSearchResult {
+                asn: self.asn,
+                as_name: truncate_name(&self.as_name, DEFAULT_NAME_MAX_LEN),
+                org_name: truncate_name(&self.org_name, DEFAULT_NAME_MAX_LEN),
+                org_id: self.org_id.clone(),
+                org_country: self.org_country.clone(),
+                org_size: self.org_size,
+            }
+        } else {
+            self.clone()
         }
     }
 }

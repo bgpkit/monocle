@@ -30,7 +30,6 @@ pub struct As2relEntry {
     pub asn2: u32,
     pub paths_count: u32,
     pub peers_count: u32,
-    #[serde(rename = "relationship")]
     pub rel: i8,
 }
 
@@ -183,103 +182,97 @@ impl<'a> As2relRepository<'a> {
     }
 
     /// Search for relationships of an ASN with organization names from as2org
+    /// Uses SQL aggregation and JOIN for efficiency
     pub fn search_asn_with_names(&self, asn: u32) -> Result<Vec<AggregatedRelationship>> {
-        // First get the raw relationships
-        let records = self.search_asn(asn)?;
-        self.aggregate_with_names(records, asn)
+        // Use SQL to aggregate and join with as2org in one query
+        // The query normalizes the perspective so asn1 is always the query ASN
+        let query = r#"
+            SELECT
+                :asn as asn1,
+                CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END as asn2,
+                o.org_name as asn2_name,
+                MAX(CASE WHEN r.rel = 0 THEN r.peers_count ELSE 0 END) as connected_count,
+                SUM(CASE
+                    WHEN r.asn1 = :asn AND r.rel = 1 THEN r.peers_count
+                    WHEN r.asn2 = :asn AND r.rel = -1 THEN r.peers_count
+                    ELSE 0
+                END) as as1_upstream_count,
+                SUM(CASE
+                    WHEN r.asn1 = :asn AND r.rel = -1 THEN r.peers_count
+                    WHEN r.asn2 = :asn AND r.rel = 1 THEN r.peers_count
+                    ELSE 0
+                END) as as2_upstream_count
+            FROM as2rel r
+            LEFT JOIN as2org_all o ON o.asn = CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END
+            WHERE r.asn1 = :asn OR r.asn2 = :asn
+            GROUP BY CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END
+        "#;
+
+        let mut stmt = self.conn.prepare(query)?;
+        let rows = stmt
+            .query_map(rusqlite::named_params! { ":asn": asn }, |row| {
+                Ok(AggregatedRelationship {
+                    asn1: row.get(0)?,
+                    asn2: row.get(1)?,
+                    asn2_name: row.get(2)?,
+                    connected_count: row.get(3)?,
+                    as1_upstream_count: row.get(4)?,
+                    as2_upstream_count: row.get(5)?,
+                })
+            })
+            .map_err(|e| anyhow!("Failed to search ASN with names: {}", e))?;
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     /// Search for relationship between two ASNs with organization names
+    /// Uses SQL aggregation and JOIN for efficiency
     pub fn search_pair_with_names(
         &self,
         asn1: u32,
         asn2: u32,
     ) -> Result<Vec<AggregatedRelationship>> {
-        let records = self.search_pair(asn1, asn2)?;
-        self.aggregate_with_names(records, asn1)
-    }
+        // Use SQL to aggregate and join with as2org in one query
+        // Perspective is from asn1's point of view
+        let query = r#"
+            SELECT
+                :asn1 as asn1,
+                :asn2 as asn2,
+                o.org_name as asn2_name,
+                MAX(CASE WHEN r.rel = 0 THEN r.peers_count ELSE 0 END) as connected_count,
+                SUM(CASE
+                    WHEN r.asn1 = :asn1 AND r.rel = 1 THEN r.peers_count
+                    WHEN r.asn2 = :asn1 AND r.rel = -1 THEN r.peers_count
+                    ELSE 0
+                END) as as1_upstream_count,
+                SUM(CASE
+                    WHEN r.asn1 = :asn1 AND r.rel = -1 THEN r.peers_count
+                    WHEN r.asn2 = :asn1 AND r.rel = 1 THEN r.peers_count
+                    ELSE 0
+                END) as as2_upstream_count
+            FROM as2rel r
+            LEFT JOIN as2org_all o ON o.asn = :asn2
+            WHERE (r.asn1 = :asn1 AND r.asn2 = :asn2) OR (r.asn1 = :asn2 AND r.asn2 = :asn1)
+        "#;
 
-    /// Aggregate relationship records and add organization names
-    fn aggregate_with_names(
-        &self,
-        records: Vec<As2relRecord>,
-        perspective_asn: u32,
-    ) -> Result<Vec<AggregatedRelationship>> {
-        use std::collections::HashMap;
+        let mut stmt = self.conn.prepare(query)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::named_params! { ":asn1": asn1, ":asn2": asn2 },
+                |row| {
+                    Ok(AggregatedRelationship {
+                        asn1: row.get(0)?,
+                        asn2: row.get(1)?,
+                        asn2_name: row.get(2)?,
+                        connected_count: row.get(3)?,
+                        as1_upstream_count: row.get(4)?,
+                        as2_upstream_count: row.get(5)?,
+                    })
+                },
+            )
+            .map_err(|e| anyhow!("Failed to search pair with names: {}", e))?;
 
-        // Aggregate by peer ASN
-        let mut aggregated: HashMap<u32, AggregatedRelationship> = HashMap::new();
-
-        for record in records {
-            let (peer_asn, is_asn1) = if record.asn1 == perspective_asn {
-                (record.asn2, true)
-            } else {
-                (record.asn1, false)
-            };
-
-            let entry = aggregated
-                .entry(peer_asn)
-                .or_insert(AggregatedRelationship {
-                    asn1: perspective_asn,
-                    asn2: peer_asn,
-                    asn2_name: None,
-                    connected_count: 0,
-                    as1_upstream_count: 0,
-                    as2_upstream_count: 0,
-                });
-
-            entry.connected_count += record.peers_count;
-
-            // rel: -1 = asn1 is customer of asn2
-            //       0 = peers
-            //       1 = asn1 is provider of asn2
-            match record.rel {
-                -1 => {
-                    if is_asn1 {
-                        entry.as2_upstream_count += record.peers_count;
-                    } else {
-                        entry.as1_upstream_count += record.peers_count;
-                    }
-                }
-                1 => {
-                    if is_asn1 {
-                        entry.as1_upstream_count += record.peers_count;
-                    } else {
-                        entry.as2_upstream_count += record.peers_count;
-                    }
-                }
-                _ => {} // peer relationship (0)
-            }
-        }
-
-        // Try to add organization names using a JOIN with as2org
-        let mut results: Vec<AggregatedRelationship> = aggregated.into_values().collect();
-
-        if !results.is_empty() {
-            // Build a map of ASN -> org_name
-            let asns: Vec<u32> = results.iter().map(|r| r.asn2).collect();
-            let placeholders: Vec<String> = asns.iter().map(|_| "?".to_string()).collect();
-            let query = format!(
-                "SELECT asn, org_name FROM as2org_all WHERE asn IN ({})",
-                placeholders.join(",")
-            );
-
-            if let Ok(mut stmt) = self.conn.prepare(&query) {
-                let params: Vec<&dyn rusqlite::ToSql> =
-                    asns.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
-
-                if let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
-                    Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
-                }) {
-                    let name_map: HashMap<u32, String> = rows.flatten().collect();
-                    for result in &mut results {
-                        result.asn2_name = name_map.get(&result.asn2).cloned();
-                    }
-                }
-            }
-        }
-
-        Ok(results)
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     /// Clear all AS2Rel data

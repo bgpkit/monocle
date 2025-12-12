@@ -2,48 +2,45 @@
 //!
 //! This module provides the main persistent database used across monocle sessions.
 //! The monocle database stores:
-//! - AS2Org mappings (AS to Organization)
-//! - AS2Rel data (AS-level relationships)
-//! - Future: RPKI ROAs, prefix observations, etc.
+//! - AS2Org mappings (AS to Organization) - SQLite
+//! - AS2Rel data (AS-level relationships) - SQLite
 //!
-//! All data in the monocle database can be regenerated from external sources,
-//! so schema migrations can reset and repopulate when needed.
-//!
-//! # Database Backends
-//!
-//! This module supports two database backends:
-//! - **SQLite** (`MonocleDatabase`): Legacy backend, retained for backward compatibility
-//! - **DuckDB** (`DuckDbMonocleDatabase`): Primary backend with native INET type support
-//!
-//! New code should prefer the DuckDB backend for better IP/prefix query performance.
+//! For data requiring INET operations (prefix matching), file-based caching is used:
+//! - RPKI ROAs and ASPAs - JSON file cache
+//! - Pfx2as mappings - JSON file cache
 
 mod as2org;
 mod as2rel;
-mod duckdb_as2org;
-mod duckdb_as2rel;
-mod duckdb_monocle;
-mod pfx2as_cache;
-mod rpki_cache;
+mod file_cache;
 
-// SQLite exports (for backward compatibility)
+// SQLite-based repositories
 pub use as2org::{As2orgRecord, As2orgRepository};
 pub use as2rel::{
     AggregatedRelationship, As2relEntry, As2relMeta, As2relRecord, As2relRepository,
     BGPKIT_AS2REL_URL,
 };
 
-// DuckDB exports (primary backend)
-pub use duckdb_as2org::{DuckDbAs2orgRecord, DuckDbAs2orgRepository};
-pub use duckdb_as2rel::{
-    DuckDbAggregatedRelationship, DuckDbAs2relEntry, DuckDbAs2relMeta, DuckDbAs2relRecord,
-    DuckDbAs2relRepository, DUCKDB_BGPKIT_AS2REL_URL,
-};
-pub use duckdb_monocle::{ensure_duckdb_data_dir, DuckDbMonocleDatabase};
-
-// Cache exports (RPKI and Pfx2as)
-pub use pfx2as_cache::{Pfx2asCacheMeta, Pfx2asCacheRepository, Pfx2asRecord, DEFAULT_PFX2AS_TTL};
-pub use rpki_cache::{
-    AspaRecord, RoaRecord, RpkiCacheMeta, RpkiCacheRepository, DEFAULT_RPKI_CURRENT_TTL,
+// File-based cache for RPKI and Pfx2as
+pub use file_cache::{
+    // Pfx2as cache
+    // Cache utilities
+    cache_size,
+    clear_all_caches,
+    ensure_cache_dirs,
+    // RPKI cache
+    AspaRecord,
+    Pfx2asCacheData,
+    Pfx2asCacheMeta,
+    Pfx2asFileCache,
+    Pfx2asRecord,
+    RoaRecord,
+    RpkiCacheData,
+    RpkiCacheMeta,
+    RpkiFileCache,
+    // TTL defaults
+    DEFAULT_PFX2AS_TTL,
+    DEFAULT_RPKI_HISTORICAL_TTL,
+    DEFAULT_RPKI_TTL,
 };
 
 use crate::database::core::{DatabaseConn, SchemaManager, SchemaStatus};
@@ -58,8 +55,8 @@ use tracing::info;
 /// - Automatic schema drift detection and reset
 /// - Access to data repositories
 ///
-/// **Note**: For new code, prefer `DuckDbMonocleDatabase` which provides
-/// native INET type support for better IP/prefix query performance.
+/// For RPKI and Pfx2as data that require INET operations, use the
+/// `RpkiFileCache` and `Pfx2asFileCache` types instead.
 pub struct MonocleDatabase {
     db: DatabaseConn,
 }

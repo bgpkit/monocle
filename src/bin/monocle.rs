@@ -2,10 +2,9 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
-use bgpkit_parser::BgpElem;
 use clap::{Parser, Subcommand};
+use monocle::lens::utils::OutputFormat;
 use monocle::*;
-use serde_json::json;
 use tracing::Level;
 
 mod commands;
@@ -34,7 +33,11 @@ struct Cli {
     #[clap(long, global = true)]
     debug: bool,
 
-    /// Output as JSON objects
+    /// Output format: table (default), markdown, json, json-pretty, json-line, psv
+    #[clap(short = 'o', long, global = true, value_name = "FORMAT")]
+    output: Option<OutputFormat>,
+
+    /// Output as JSON objects (shortcut for --output json-pretty)
     #[clap(long, global = true)]
     json: bool,
 
@@ -78,27 +81,6 @@ enum Commands {
     Config(ConfigArgs),
 }
 
-pub(crate) fn elem_to_string(
-    elem: &BgpElem,
-    json: bool,
-    pretty: bool,
-    collector: &str,
-) -> Result<String, anyhow::Error> {
-    if json {
-        let mut val = json!(elem);
-        val.as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("Expected JSON object"))?
-            .insert("collector".to_string(), collector.into());
-        if pretty {
-            Ok(serde_json::to_string_pretty(&val)?)
-        } else {
-            Ok(val.to_string())
-        }
-    } else {
-        Ok(format!("{}|{}", elem, collector))
-    }
-}
-
 fn main() {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
@@ -118,20 +100,27 @@ fn main() {
             .init();
     }
 
-    let json = cli.json;
+    // Determine output format: explicit --output takes precedence, then --json flag
+    let output_format = if let Some(format) = cli.output {
+        format
+    } else if cli.json {
+        OutputFormat::JsonPretty
+    } else {
+        OutputFormat::Table
+    };
 
     // You can check for the existence of subcommands, and if found, use their
     // matches just as you would the top level cmd
     match cli.command {
-        Commands::Parse(args) => commands::parse::run(args, json),
-        Commands::Search(args) => commands::search::run(args, json),
-        Commands::Whois(args) => commands::whois::run(&config, args, json),
-        Commands::Time(args) => commands::time::run(args),
-        Commands::Country(args) => commands::country::run(args),
-        Commands::Rpki { commands } => commands::rpki::run(commands, json),
-        Commands::Ip(args) => commands::ip::run(args, json),
-        Commands::Pfx2as(args) => commands::pfx2as::run(args, json),
-        Commands::As2rel(args) => commands::as2rel::run(&config, args, json),
-        Commands::Config(args) => commands::config::run(&config, args, json),
+        Commands::Parse(args) => commands::parse::run(args, output_format),
+        Commands::Search(args) => commands::search::run(args, output_format),
+        Commands::Whois(args) => commands::whois::run(&config, args, output_format),
+        Commands::Time(args) => commands::time::run(args, output_format),
+        Commands::Country(args) => commands::country::run(args, output_format),
+        Commands::Rpki { commands } => commands::rpki::run(commands, output_format),
+        Commands::Ip(args) => commands::ip::run(args, output_format),
+        Commands::Pfx2as(args) => commands::pfx2as::run(&config, args, output_format),
+        Commands::As2rel(args) => commands::as2rel::run(&config, args, output_format),
+        Commands::Config(args) => commands::config::run(&config, args, output_format),
     }
 }

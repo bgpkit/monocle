@@ -4,136 +4,103 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-### New Features (DuckDB Migration)
+### Unified Output Format
 
-* **DuckDB Internal Database**: Added DuckDB as the primary internal database backend
-  * Native INET type support for efficient IP/prefix operations
-  * Columnar storage for better compression
-  * Prefix containment operators (`<<=` and `>>=`) for SQL-based filtering
-  * SQLite retained for backward-compatible search result exports
+* **Global `--output` / `-o` option**: All commands now support a unified output format option
+  * `table` (default): Pretty table with rounded borders
+  * `markdown` / `md`: Markdown table format
+  * `json`: Compact JSON (single line)
+  * `json-pretty`: Pretty-printed JSON with indentation (same as `--json` flag)
+  * `json-line` / `jsonl` / `ndjson`: JSON Lines format (one JSON object per line, for streaming)
+  * `psv`: Pipe-separated values with header row
 
-* **RPKI Cache Repository**: Added caching for RPKI ROA and ASPA data
-  * `RpkiCacheRepository` for storing and querying ROAs/ASPAs
-  * TTL-based cache freshness (default 1 hour for current data)
-  * Support for historical data caching (no expiry)
-  * SQL-based RPKI validation via JOINs
+* **All informational messages now go to stderr**: Debug messages, progress updates, and explanatory text are now printed to stderr instead of stdout, enabling clean piping of data
+  * Examples: "Updating AS2org data...", "Found 4407 ROAs (current data)", explanation text for as2rel
+  * This allows: `monocle rpki roas --origin 13335 -o json | jq '.[0]'`
 
-* **Pfx2as Cache Repository**: Added caching for prefix-to-AS mappings
-  * `Pfx2asCacheRepository` for storing and querying pfx2as data
-  * TTL-based cache freshness (default 24 hours)
-  * Efficient longest-match, covering, and covered prefix queries
+* **Removed per-command format flags**: The following flags have been removed in favor of the global `--output` option:
+  * `--pretty` flag from `whois`, `as2rel`, `search`, `parse` commands
+  * `--psv` / `-P` flag from `whois` command
+  * Local `--json` flags (global `--json` still works as shortcut for `--output json-pretty`)
 
-* **SQL-based RPKI Validation**: New `SqlRpkiValidator` and `SqlAspaValidator`
-  * Offline validation using cached RPKI data
-  * Bulk validation support
-  * Validation status annotation for query results
+### New Features
 
-* **Query Helpers**: New utilities for building DuckDB queries
-  * `PrefixQueryBuilder` for prefix containment queries
-  * `SearchQueryBuilder` for search filter queries
-  * `RpkiValidationQuery` for RPKI validation JOINs
-  * `Pfx2asQuery` for pfx2as lookups
+* **New `as2rel` command**: AS-level relationship lookup between ASNs
+  * Query relationships for one or two ASNs from BGPKIT's AS relationship data
+  * Data source: `https://data.bgpkit.com/as2rel/as2rel-latest.json.bz2`
+  * Output columns:
+    - `connected`: Percentage of peers that see any connection between asn1 and asn2
+    - `peer`: Percentage seeing pure peering (connected - as1_upstream - as2_upstream)
+    - `as1_upstream`: Percentage of peers that see asn1 as upstream of asn2
+    - `as2_upstream`: Percentage of peers that see asn2 as upstream of asn1
+  * Local SQLite caching with automatic updates when data is older than 7 days
+  * `--update`: Force update the local database
+  * `--update-with <PATH>`: Update with a custom data file (local path or URL)
+  * `--no-explain`: Hide the explanation text in table output
+  * `--sort-by-asn`: Sort results by ASN2 ascending (default: sort by connected % descending)
+  * `--show-name`: Show organization name for ASN2 (truncated to 20 chars)
+  * `--show-full-name`: Show full organization name without truncation
 
 * **New `config` command**: Show monocle configuration and data paths
   * Displays config file location and data directory
   * Shows SQLite database status, size, and record counts
-  * Shows DuckDB database status, size, and schema version
   * `--verbose` flag lists all files in the data directory with sizes and modification times
-  * `--json` flag outputs machine-readable JSON format
-
-### Breaking Changes
-
-* **Removed `broker` command**: The standalone `broker` command has been removed
-  * Use `search --broker-files` instead to list matching MRT files without performing a search
-  * The new `--broker-files` flag outputs URLs (one per line) or full item details with `--json`
-
-* **Removed `radar` command**: The Cloudflare Radar API command has been removed
-  * This command depended on the `radar-rs` crate which required a Cloudflare API token
-  * Users can access Cloudflare Radar data directly via their API
-
-* **Library API refactoring**: All public functions are now accessed through lens structs
-  * Internal helper functions (`ip_lookup`, `time_string_to_time`, `time_parse_to_rfc3339`, `time_to_table`) have been removed from public API
-  * Users should use lens methods directly (e.g., `IpLens::lookup()`, `TimeLens::parse_time_string()`)
-  * RPKI `commons` and `validator` submodules are now private; all functionality accessed through `RpkiLens`
-
-* **RPKI commands refactored**: Removed `rpki read-roa` and `rpki read-aspa` commands
-  * These commands relied on the outdated `rpki` crate for parsing individual ROA/ASPA files
-  * Replaced with new `rpki roas` and `rpki aspas` commands that use `bgpkit-commons` for data access
-
-### New Features
+  * Supports all output formats via `--output` option
 
 * **New `rpki roas` command**: List ROAs from RPKI data (current or historical)
   * `--origin <ASN>`: Filter by origin ASN
   * `--prefix <PREFIX>`: Filter by prefix
   * `--date <YYYY-MM-DD>`: Load historical data for a specific date
   * `--source <ripe|rpkiviews>`: Select historical data source (default: ripe)
-  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector (default: soborost)
-  * Supports JSON output with `--json` flag
+  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector
 
 * **New `rpki aspas` command**: List ASPAs from RPKI data (current or historical)
   * `--customer <ASN>`: Filter by customer ASN
   * `--provider <ASN>`: Filter by provider ASN
   * `--date <YYYY-MM-DD>`: Load historical data for a specific date
   * `--source <ripe|rpkiviews>`: Select historical data source (default: ripe)
-  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector (default: soborost)
-  * Results grouped by customer ASN with providers as comma-separated list (table) or array (JSON)
-  * Supports JSON output with `--json` flag
+  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector
 
-* **New `as2rel` command**: AS-level relationship lookup between ASNs
-  * Query relationships for one or two ASNs from BGPKIT's AS relationship data
-  * Data source: `https://data.bgpkit.com/as2rel/as2rel-latest.json.bz2`
-  * Output columns:
-    - `connected`: Percentage of route collectors that see any connection between asn1 and asn2
-    - `peer`: Percentage seeing pure peering only (connected - as1_upstream - as2_upstream)
-    - `as1_upstream`: Percentage of route collectors that see asn1 as an upstream of asn2
-    - `as2_upstream`: Percentage of route collectors that see asn2 as an upstream of asn1
-  * Percentages calculated as `count / max_peers_count * 100%`
-  * Displays last update time with human-readable relative time (e.g., "2 days ago")
-  * Local SQLite caching with automatic updates when data is older than 7 days
-  * `--update`: Force update the local database
-  * `--update-with <PATH>`: Update with a custom data file (local path or URL)
-  * `--pretty`: Output to pretty table (default: markdown table)
-  * `--no-explain`: Hide the explanation text in table output
-  * `--sort-by-asn`: Sort results by ASN2 ascending (default: sort by connected % descending)
-  * `--show-name`: Show organization name for ASN2 from local as2org database (truncated to 20 chars)
-  * Supports JSON output with `--json` flag
+### Bug Fixes
 
-* **JSON output support**: All RPKI commands now support `--json` flag for JSON output
-  * `rpki check`: Returns validation result and covering ROAs as JSON
-  * `rpki list`: Returns ROAs as JSON array
-  * `rpki summary`: Returns summary as JSON array
-  * `rpki roas`: Returns ROAs as JSON array
-  * `rpki aspas`: Returns ASPAs as JSON array with providers as numeric array
+* **Fixed AS2Rel data loading**: Removed incorrect serde attribute that caused JSON deserialization to fail with "missing field `relationship`" error
+* **Fixed AS2Rel duplicate rows**: Fixed aggregation logic that showed multiple rows for the same ASN pair
+* **Fixed AS2Rel percentage calculation**: 
+  * `connected` now correctly uses `rel=0` peer count (total peers seeing any connection)
+  * `as1_upstream` / `as2_upstream` are subsets from `rel=1` / `rel=-1` records
+  * `peer` is calculated as `connected - as1_upstream - as2_upstream`
+  * All percentages divided by `max_peers_count`
+* **Optimized AS2Rel queries**: Replaced inefficient two-step aggregation with SQL JOINs and GROUP BY
 
 ### Improvements
 
-* **Clean JSON output**: When `--json` flag is set, commands now output only valid JSON to stdout
-  * Progress messages, status updates, and informational text are suppressed or redirected to stderr
-  * Empty results return `[]` instead of text messages
-  * Affected commands: `rpki`, `as2rel`, `broker`, `whois`, `search`, `parse`, `radar`
-
-* **`whois` command JSON support**: Added `--json` flag support for JSON output format
+* **Name truncation in tables**: Long names (AS names, org names) are now truncated to 20 characters in table output
+  * New `--show-full-name` flag available on `whois` and `as2rel` commands to disable truncation
+  * JSON output never truncates names
 
 * **as2org data source**: Replaced custom CAIDA as2org file parsing with `bgpkit-commons` asinfo module
   * SQLite caching is preserved for fast repeated queries
   * `whois --update` now reloads data from `bgpkit-commons`
-  * Maintains backward compatibility with existing search behavior
 
 * **Table formatting**: ASPA table output now wraps long provider lists at 60 characters for better readability
 
+### Breaking Changes
+
+* **Removed `broker` command**: Use `search --broker-files` instead to list matching MRT files
+* **Removed `radar` command**: Users can access Cloudflare Radar data directly via their API
+* **Removed `rpki read-roa` and `rpki read-aspa` commands**: Replaced with `rpki roas` and `rpki aspas`
+* **Library API refactoring**: All public functions are now accessed through lens structs
+* **Default output format**: Changed from markdown to table (pretty borders)
+
 ### Code Improvements
 
-* Refactored CLI command modules: moved CLI argument definitions from main file to individual command submodules for better code organization and maintainability
-
-* **Lens-based architecture**: All functionality is now accessed through lens structs
-  * Each lens module exports: a Lens struct, Args structs, and output types
-  * Internal implementation details (helper functions, API calls) are private
-  * CLI commands use lens methods directly for cleaner separation of concerns
+* Refactored CLI command modules for better code organization
+* **Lens-based architecture**: All functionality accessed through lens structs
+* Added `lens/utils.rs` with `OutputFormat` enum and `truncate_name` helper
 
 ### Dependencies
 
-* Added `bgpkit-commons` v0.10 with features: `asinfo`, `rpki`, `countries`
-* Added `duckdb` v1.4.3 with features: `bundled` (primary internal database)
+* Added `bgpkit-commons` with features: `asinfo`, `rpki`, `countries`
 * Removed `rpki` crate dependency
 
 ## v0.9.1 - 2025-11-05

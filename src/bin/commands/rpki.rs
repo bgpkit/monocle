@@ -1,9 +1,10 @@
 use chrono::NaiveDate;
 use clap::Subcommand;
 use monocle::lens::rpki::{
-    RpkiAspaLookupArgs, RpkiDataSource, RpkiLens, RpkiListArgs, RpkiOutputFormat,
+    RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource, RpkiLens, RpkiListArgs,
     RpkiRoaLookupArgs, RpkiSummaryArgs, RpkiValidationArgs, RpkiViewsCollectorOption,
 };
+use monocle::lens::utils::OutputFormat;
 use tabled::settings::object::Columns;
 use tabled::settings::width::Width;
 use tabled::settings::Style;
@@ -80,29 +81,29 @@ pub enum RpkiCommands {
     },
 }
 
-pub fn run(commands: RpkiCommands, json: bool) {
+pub fn run(commands: RpkiCommands, output_format: OutputFormat) {
     match commands {
-        RpkiCommands::Check { asn, prefix } => run_check(asn, prefix, json),
-        RpkiCommands::List { resource } => run_list(resource, json),
-        RpkiCommands::Summary { asns } => run_summary(asns, json),
+        RpkiCommands::Check { asn, prefix } => run_check(asn, prefix, output_format),
+        RpkiCommands::List { resource } => run_list(resource, output_format),
+        RpkiCommands::Summary { asns } => run_summary(asns, output_format),
         RpkiCommands::Roas {
             origin,
             prefix,
             date,
             source,
             collector,
-        } => run_roas(origin, prefix, date, source, collector, json),
+        } => run_roas(origin, prefix, date, source, collector, output_format),
         RpkiCommands::Aspas {
             customer,
             provider,
             date,
             source,
             collector,
-        } => run_aspas(customer, provider, date, source, collector, json),
+        } => run_aspas(customer, provider, date, source, collector, output_format),
     }
 }
 
-fn run_check(asn: u32, prefix: String, json: bool) {
+fn run_check(asn: u32, prefix: String, output_format: OutputFormat) {
     let lens = RpkiLens::new();
     let args = RpkiValidationArgs::new(asn, &prefix);
 
@@ -114,25 +115,121 @@ fn run_check(asn: u32, prefix: String, json: bool) {
         }
     };
 
-    let format = if json {
-        RpkiOutputFormat::Json
-    } else {
-        RpkiOutputFormat::Table
-    };
+    match output_format {
+        OutputFormat::Table => {
+            let mut output = Table::new(vec![&validity])
+                .with(Style::rounded())
+                .to_string();
 
-    let output = lens.format_validation(&validity, &roas, &format);
-    println!("{}", output);
+            if !roas.is_empty() {
+                let covering_items: Vec<monocle::lens::rpki::RpkiRoaTableItem> =
+                    roas.iter().cloned().map(|r| r.into()).collect();
+                output.push_str("\n\nCovering ROAs:\n");
+                output.push_str(
+                    &Table::new(covering_items)
+                        .with(Style::rounded())
+                        .to_string(),
+                );
+            }
+            println!("{}", output);
+        }
+        OutputFormat::Markdown => {
+            let mut output = Table::new(vec![&validity])
+                .with(Style::markdown())
+                .to_string();
+
+            if !roas.is_empty() {
+                let covering_items: Vec<monocle::lens::rpki::RpkiRoaTableItem> =
+                    roas.iter().cloned().map(|r| r.into()).collect();
+                output.push_str("\n\nCovering ROAs:\n");
+                output.push_str(
+                    &Table::new(covering_items)
+                        .with(Style::markdown())
+                        .to_string(),
+                );
+            }
+            println!("{}", output);
+        }
+        OutputFormat::Json => {
+            let result = serde_json::json!({
+                "validity": validity,
+                "covering_roas": roas,
+            });
+            match serde_json::to_string(&result) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+            }
+        }
+        OutputFormat::JsonPretty => {
+            let result = serde_json::json!({
+                "validity": validity,
+                "covering_roas": roas,
+            });
+            match serde_json::to_string_pretty(&result) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+            }
+        }
+        OutputFormat::JsonLine => {
+            let result = serde_json::json!({
+                "validity": validity,
+                "covering_roas": roas,
+            });
+            match serde_json::to_string(&result) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+            }
+        }
+        OutputFormat::Psv => {
+            // RpkiValidity fields are private, serialize to JSON and extract
+            let json_val = serde_json::to_value(&validity).unwrap_or_default();
+            let asn = json_val.get("asn").and_then(|v| v.as_u64()).unwrap_or(0);
+            let prefix = json_val
+                .get("prefix")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let validity_str = json_val
+                .get("validity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let description = json_val
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            println!("asn|prefix|validity|description");
+            println!("{}|{}|{}|{}", asn, prefix, validity_str, description);
+            if !roas.is_empty() {
+                eprintln!("\nCovering ROAs:");
+                println!("asn|prefix|max_length|trust_anchor");
+                for roa in &roas {
+                    let roa_json = serde_json::to_value(roa).unwrap_or_default();
+                    println!(
+                        "{}|{}|{}|{}",
+                        roa_json.get("asn").and_then(|v| v.as_u64()).unwrap_or(0),
+                        roa_json
+                            .get("prefix")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        roa_json
+                            .get("max_length")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        roa_json
+                            .get("trust_anchor")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                    );
+                }
+            }
+        }
+    }
 }
 
-fn run_list(resource: String, json: bool) {
+fn run_list(resource: String, output_format: OutputFormat) {
     let lens = RpkiLens::new();
     let args = RpkiListArgs {
         resource: resource.clone(),
-        format: if json {
-            RpkiOutputFormat::Json
-        } else {
-            RpkiOutputFormat::Table
-        },
+        format: monocle::lens::rpki::RpkiOutputFormat::Table, // Not used, we handle format ourselves
     };
 
     let roas = match lens.list_roas(&args) {
@@ -144,7 +241,7 @@ fn run_list(resource: String, json: bool) {
     };
 
     if roas.is_empty() {
-        if json {
+        if output_format.is_json() {
             println!("[]");
         } else {
             println!("no matching ROAs found for {}", resource);
@@ -152,17 +249,53 @@ fn run_list(resource: String, json: bool) {
         return;
     }
 
-    let output = lens.format_roa_items(&roas, &args.format);
-    println!("{}", output);
+    match output_format {
+        OutputFormat::Table => {
+            println!("{}", Table::new(&roas).with(Style::rounded()));
+        }
+        OutputFormat::Markdown => {
+            println!("{}", Table::new(&roas).with(Style::markdown()));
+        }
+        OutputFormat::Json => match serde_json::to_string(&roas) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonPretty => match serde_json::to_string_pretty(&roas) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonLine => {
+            for roa in &roas {
+                match serde_json::to_string(roa) {
+                    Ok(json) => println!("{}", json),
+                    Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                }
+            }
+        }
+        OutputFormat::Psv => {
+            println!("asn|prefix|max_length|name");
+            for roa in &roas {
+                let roa_json = serde_json::to_value(roa).unwrap_or_default();
+                println!(
+                    "{}|{}|{}|{}",
+                    roa_json.get("asn").and_then(|v| v.as_u64()).unwrap_or(0),
+                    roa_json
+                        .get("prefix")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    roa_json
+                        .get("max_length")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    roa_json.get("name").and_then(|v| v.as_str()).unwrap_or("")
+                );
+            }
+        }
+    }
 }
 
-fn run_summary(asns: Vec<u32>, json: bool) {
+fn run_summary(asns: Vec<u32>, output_format: OutputFormat) {
     let lens = RpkiLens::new();
-    let format = if json {
-        RpkiOutputFormat::Json
-    } else {
-        RpkiOutputFormat::Table
-    };
 
     let mut results = Vec::new();
     for asn in asns {
@@ -170,27 +303,62 @@ fn run_summary(asns: Vec<u32>, json: bool) {
         match lens.summarize(&args) {
             Ok(summary) => results.push(summary),
             Err(e) => {
-                if !json {
-                    eprintln!("Failed to summarize ASN {}: {}", asn, e);
-                }
+                eprintln!("Failed to summarize ASN {}: {}", asn, e);
             }
         }
     }
 
     if results.is_empty() {
-        if json {
+        if output_format.is_json() {
             println!("[]");
         }
         return;
     }
 
-    match format {
-        RpkiOutputFormat::Json => match serde_json::to_string_pretty(&results) {
-            Ok(json_str) => println!("{}", json_str),
+    match output_format {
+        OutputFormat::Table => {
+            println!("{}", Table::new(&results).with(Style::rounded()));
+        }
+        OutputFormat::Markdown => {
+            println!("{}", Table::new(&results).with(Style::markdown()));
+        }
+        OutputFormat::Json => match serde_json::to_string(&results) {
+            Ok(json) => println!("{}", json),
             Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
         },
-        _ => {
-            println!("{}", Table::new(&results).with(Style::markdown()));
+        OutputFormat::JsonPretty => match serde_json::to_string_pretty(&results) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonLine => {
+            for result in &results {
+                match serde_json::to_string(result) {
+                    Ok(json) => println!("{}", json),
+                    Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                }
+            }
+        }
+        OutputFormat::Psv => {
+            println!("asn|roas_count|ipv4_prefixes|ipv6_prefixes");
+            for r in &results {
+                let r_json = serde_json::to_value(r).unwrap_or_default();
+                println!(
+                    "{}|{}|{}|{}",
+                    r_json.get("asn").and_then(|v| v.as_u64()).unwrap_or(0),
+                    r_json
+                        .get("roas_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    r_json
+                        .get("ipv4_prefixes")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    r_json
+                        .get("ipv6_prefixes")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                );
+            }
         }
     }
 }
@@ -219,7 +387,7 @@ fn run_roas(
     date: Option<String>,
     source: String,
     collector: String,
-    json: bool,
+    output_format: OutputFormat,
 ) {
     // Parse date if provided
     let parsed_date = match &date {
@@ -240,11 +408,7 @@ fn run_roas(
         date: parsed_date,
         source: parse_data_source(&source),
         collector: parse_collector(&collector),
-        format: if json {
-            RpkiOutputFormat::Json
-        } else {
-            RpkiOutputFormat::Table
-        },
+        format: monocle::lens::rpki::RpkiOutputFormat::Table, // Not used
     };
 
     let roas = match lens.get_roas(&args) {
@@ -256,7 +420,7 @@ fn run_roas(
     };
 
     if roas.is_empty() {
-        if json {
+        if output_format.is_json() {
             println!("[]");
         } else {
             println!("No ROAs found matching the criteria");
@@ -264,19 +428,65 @@ fn run_roas(
         return;
     }
 
-    if !json {
-        println!(
-            "Found {} ROAs{}",
-            roas.len(),
-            match &date {
-                Some(d) => format!(" (historical data from {})", d),
-                None => " (current data)".to_string(),
-            }
-        );
-    }
+    eprintln!(
+        "Found {} ROAs{}",
+        roas.len(),
+        match &date {
+            Some(d) => format!(" (historical data from {})", d),
+            None => " (current data)".to_string(),
+        }
+    );
 
-    let output = lens.format_roas(&roas, &args.format);
-    println!("{}", output);
+    match output_format {
+        OutputFormat::Table => {
+            println!("{}", Table::new(&roas).with(Style::rounded()));
+        }
+        OutputFormat::Markdown => {
+            println!("{}", Table::new(&roas).with(Style::markdown()));
+        }
+        OutputFormat::Json => match serde_json::to_string(&roas) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonPretty => match serde_json::to_string_pretty(&roas) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonLine => {
+            for roa in &roas {
+                match serde_json::to_string(roa) {
+                    Ok(json) => println!("{}", json),
+                    Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                }
+            }
+        }
+        OutputFormat::Psv => {
+            println!("prefix|asn|max_length|not_before|not_after");
+            for roa in &roas {
+                let roa_json = serde_json::to_value(roa).unwrap_or_default();
+                println!(
+                    "{}|{}|{}|{}|{}",
+                    roa_json
+                        .get("prefix")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    roa_json.get("asn").and_then(|v| v.as_u64()).unwrap_or(0),
+                    roa_json
+                        .get("max_length")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    roa_json
+                        .get("not_before")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    roa_json
+                        .get("not_after")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                );
+            }
+        }
+    }
 }
 
 fn run_aspas(
@@ -285,7 +495,7 @@ fn run_aspas(
     date: Option<String>,
     source: String,
     collector: String,
-    json: bool,
+    output_format: OutputFormat,
 ) {
     // Parse date if provided
     let parsed_date = match &date {
@@ -306,11 +516,7 @@ fn run_aspas(
         date: parsed_date,
         source: parse_data_source(&source),
         collector: parse_collector(&collector),
-        format: if json {
-            RpkiOutputFormat::Json
-        } else {
-            RpkiOutputFormat::Table
-        },
+        format: monocle::lens::rpki::RpkiOutputFormat::Table, // Not used
     };
 
     let aspas = match lens.get_aspas(&args) {
@@ -322,7 +528,7 @@ fn run_aspas(
     };
 
     if aspas.is_empty() {
-        if json {
+        if output_format.is_json() {
             println!("[]");
         } else {
             println!("No ASPAs found matching the criteria");
@@ -330,33 +536,71 @@ fn run_aspas(
         return;
     }
 
-    if !json {
-        println!(
-            "Found {} ASPAs{}",
-            aspas.len(),
-            match &date {
-                Some(d) => format!(" (historical data from {})", d),
-                None => " (current data)".to_string(),
-            }
-        );
-    }
+    eprintln!(
+        "Found {} ASPAs{}",
+        aspas.len(),
+        match &date {
+            Some(d) => format!(" (historical data from {})", d),
+            None => " (current data)".to_string(),
+        }
+    );
 
-    match args.format {
-        RpkiOutputFormat::Json => match serde_json::to_string_pretty(&aspas) {
-            Ok(json_str) => println!("{}", json_str),
-            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-        },
-        _ => {
+    match output_format {
+        OutputFormat::Table => {
+            let table_entries: Vec<RpkiAspaTableEntry> = aspas.iter().map(|a| a.into()).collect();
             println!(
                 "{}",
-                Table::new(
-                    aspas
-                        .iter()
-                        .map(monocle::lens::rpki::RpkiAspaTableEntry::from)
-                )
-                .with(Style::markdown())
-                .modify(Columns::last(), Width::wrap(60).keep_words(true))
+                Table::new(table_entries)
+                    .with(Style::rounded())
+                    .modify(Columns::last(), Width::wrap(60).keep_words(true))
             );
+        }
+        OutputFormat::Markdown => {
+            let table_entries: Vec<RpkiAspaTableEntry> = aspas.iter().map(|a| a.into()).collect();
+            println!(
+                "{}",
+                Table::new(table_entries)
+                    .with(Style::markdown())
+                    .modify(Columns::last(), Width::wrap(60).keep_words(true))
+            );
+        }
+        OutputFormat::Json => match serde_json::to_string(&aspas) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonPretty => match serde_json::to_string_pretty(&aspas) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonLine => {
+            for aspa in &aspas {
+                match serde_json::to_string(aspa) {
+                    Ok(json) => println!("{}", json),
+                    Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                }
+            }
+        }
+        OutputFormat::Psv => {
+            println!("customer_asn|providers");
+            for aspa in &aspas {
+                let aspa_json = serde_json::to_value(aspa).unwrap_or_default();
+                let customer = aspa_json
+                    .get("customer_asn")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let providers = aspa_json
+                    .get("providers")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|p| p.as_u64())
+                            .map(|p| p.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default();
+                println!("{}|{}", customer, providers);
+            }
         }
     }
 }

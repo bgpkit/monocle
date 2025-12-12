@@ -1,7 +1,7 @@
 //! AS2Org lens
 //!
 //! This module provides the AS2Org lens for querying AS-to-Organization mappings.
-//! It combines the database repository with business logic and output formatting.
+//! It uses SQLite as the backend database.
 
 pub mod args;
 pub mod types;
@@ -12,7 +12,7 @@ pub use types::{
     As2orgUpdateProgress, As2orgUpdateStage,
 };
 
-use crate::database::monocle::{As2orgRecord, MonocleDatabase};
+use crate::database::MonocleDatabase;
 use crate::lens::country::CountryLens;
 use anyhow::{anyhow, Result};
 use tabled::settings::Style;
@@ -50,9 +50,10 @@ impl<'a> As2orgLens<'a> {
 
     /// Bootstrap AS2Org data from bgpkit-commons
     ///
-    /// Returns (as_count, org_count) on success.
-    pub fn bootstrap(&self) -> Result<(usize, usize)> {
-        self.db.bootstrap_as2org()
+    /// Returns the count of entries loaded.
+    pub fn bootstrap(&self) -> Result<usize> {
+        let (as_count, _org_count) = self.db.bootstrap_as2org()?;
+        Ok(as_count)
     }
 
     /// Lookup organization name for a single ASN
@@ -147,14 +148,18 @@ impl<'a> As2orgLens<'a> {
     }
 
     /// Convert a database record to a search result
-    fn record_to_result(&self, record: As2orgRecord, full_country: bool) -> As2orgSearchResult {
+    fn record_to_result(
+        &self,
+        record: crate::database::As2orgRecord,
+        full_country: bool,
+    ) -> As2orgSearchResult {
         let country = if full_country {
             self.country_lookup
                 .lookup_code(&record.country)
                 .map(|s| s.to_string())
-                .unwrap_or(record.country)
+                .unwrap_or(record.country.clone())
         } else {
-            record.country
+            record.country.clone()
         };
 
         As2orgSearchResult {
@@ -168,11 +173,15 @@ impl<'a> As2orgLens<'a> {
     }
 
     /// Format results for output
+    ///
+    /// When `truncate_names` is true, names are truncated to 20 characters for table output.
+    /// JSON output never truncates names regardless of this parameter.
     pub fn format_results(
         &self,
         results: &[As2orgSearchResult],
         format: &As2orgOutputFormat,
         full_table: bool,
+        truncate_names: bool,
     ) -> String {
         match format {
             As2orgOutputFormat::Json => {
@@ -207,19 +216,31 @@ impl<'a> As2orgLens<'a> {
             }
             As2orgOutputFormat::Pretty => {
                 if full_table {
-                    Table::new(results).with(Style::rounded()).to_string()
+                    let display: Vec<As2orgSearchResult> = results
+                        .iter()
+                        .map(|r| r.to_truncated(truncate_names))
+                        .collect();
+                    Table::new(display).with(Style::rounded()).to_string()
                 } else {
-                    let concise: Vec<As2orgSearchResultConcise> =
-                        results.iter().cloned().map(Into::into).collect();
+                    let concise: Vec<As2orgSearchResultConcise> = results
+                        .iter()
+                        .map(|r| r.to_concise_truncated(truncate_names))
+                        .collect();
                     Table::new(concise).with(Style::rounded()).to_string()
                 }
             }
             As2orgOutputFormat::Markdown => {
                 if full_table {
-                    Table::new(results).with(Style::markdown()).to_string()
+                    let display: Vec<As2orgSearchResult> = results
+                        .iter()
+                        .map(|r| r.to_truncated(truncate_names))
+                        .collect();
+                    Table::new(display).with(Style::markdown()).to_string()
                 } else {
-                    let concise: Vec<As2orgSearchResultConcise> =
-                        results.iter().cloned().map(Into::into).collect();
+                    let concise: Vec<As2orgSearchResultConcise> = results
+                        .iter()
+                        .map(|r| r.to_concise_truncated(truncate_names))
+                        .collect();
                     Table::new(concise).with(Style::markdown()).to_string()
                 }
             }
@@ -253,7 +274,7 @@ mod tests {
             org_size: 1,
         }];
 
-        let output = lens.format_results(&results, &As2orgOutputFormat::Json, true);
+        let output = lens.format_results(&results, &As2orgOutputFormat::Json, true, false);
         assert!(output.contains("65000"));
         assert!(output.contains("Test AS"));
     }
@@ -272,7 +293,7 @@ mod tests {
             org_size: 1,
         }];
 
-        let output = lens.format_results(&results, &As2orgOutputFormat::Psv, false);
+        let output = lens.format_results(&results, &As2orgOutputFormat::Psv, false, false);
         assert!(output.contains("asn|asn_name|org_name|org_country"));
         assert!(output.contains("65000|Test AS|Test Org|US"));
     }
