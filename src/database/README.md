@@ -1,212 +1,350 @@
 # Database Module
 
-The database module provides all database functionality for monocle, organized into three sub-modules:
+The database module provides all database functionality for monocle, organized into three sub-modules with dual-backend support.
 
 ## Architecture
 
 ```
 database/
-├── core/           # Foundation layer
-│   ├── connection  # DatabaseConn connection wrapper
-│   └── schema      # Schema definitions, versioning, and migrations
+├── core/               # Foundation layer
+│   ├── connection      # SQLite DatabaseConn wrapper (for exports)
+│   ├── duckdb_conn     # DuckDB DuckDbConn wrapper (primary backend)
+│   ├── duckdb_query    # DuckDB query helpers for prefix operations
+│   ├── duckdb_schema   # DuckDB schema definitions and management
+│   └── schema          # SQLite schema definitions and management
 │
-├── session/        # Temporary/session storage
-│   └── msg_store   # BGP message storage for search results
+├── session/            # Temporary/session storage
+│   └── msg_store       # BGP message storage for search results (SQLite export)
 │
-└── monocle/        # Main monocle database
-    ├── mod         # MonocleDatabase unified interface
-    ├── as2org      # AS-to-Organization repository
-    └── as2rel      # AS-level relationships repository
+└── monocle/            # Main monocle database
+    ├── as2org          # AS-to-Organization (SQLite - legacy)
+    ├── duckdb_as2org   # AS-to-Organization (DuckDB - primary)
+    ├── as2rel          # AS-level relationships (SQLite - legacy)
+    ├── duckdb_as2rel   # AS-level relationships (DuckDB - primary)
+    ├── rpki_cache      # RPKI ROA/ASPA cache (DuckDB)
+    └── pfx2as_cache    # Prefix-to-AS cache (DuckDB)
 ```
+
+## Database Backend Strategy
+
+Monocle uses a **dual-database approach**:
+
+- **DuckDB** is used as the primary internal database, providing:
+  - Native INET type support for IP/prefix operations
+  - Columnar storage for better compression
+  - Efficient prefix containment queries (`<<=` and `>>=` operators)
+  - In-memory and persistent operation modes
+
+- **SQLite** is retained for export functionality:
+  - Search results export (backward compatibility)
+  - Tools that expect SQLite files can use exported data
 
 ## Module Overview
 
 ### Core (`core/`)
 
-The foundation layer providing database connections and schema management.
+The foundation layer providing database connections, schema management, and query helpers.
 
-**Key Types:**
-- `DatabaseConn` - SQLite connection wrapper with common operations
-- `SchemaManager` - Handles schema initialization, versioning, and migrations
-- `SchemaStatus` - Enum representing current schema state (Current, NeedsMigration, etc.)
-- `SCHEMA_VERSION` - Current schema version constant
+#### SQLite Types (for exports)
+- `DatabaseConn` - SQLite connection wrapper
+- `SchemaManager` - SQLite schema management
+- `SchemaStatus` - Schema state enumeration
 
-**Usage:**
-```rust
-use monocle::database::{DatabaseConn, SchemaManager, SchemaStatus};
+#### DuckDB Types (primary backend)
+- `DuckDbConn` - DuckDB connection wrapper with INET extension
+- `DuckDbSchemaManager` - DuckDB schema management
+- `DuckDbSchemaStatus` - DuckDB schema state enumeration
 
-// Direct connection (for custom use cases)
-let db = DatabaseConn::open_path("/path/to/db.sqlite3")?;
-
-// Check schema status
-let schema = SchemaManager::new(&db.conn);
-match schema.check_status()? {
-    SchemaStatus::Current => println!("Schema up to date"),
-    SchemaStatus::NeedsMigration { from, to } => {
-        println!("Migration needed: v{} -> v{}", from, to);
-    }
-    _ => {}
-}
-```
+#### Query Helpers
+- `PrefixQueryBuilder` - Build prefix containment queries
+- `RpkiValidationQuery` - Build RPKI validation JOIN queries
+- `Pfx2asQuery` - Build pfx2as lookup queries
+- `build_prefix_containment_clause()` - Generate `<<=`/`>>=` clauses
+- `order_by_prefix_length()` - Sort by prefix specificity
 
 ### Session (`session/`)
 
 Temporary storage for one-time operations like BGP message search results.
 
-**Key Types:**
-- `MsgStore` - SQLite-backed storage for BGP elements during search operations
-
-**Usage:**
-```rust
-use monocle::database::MsgStore;
-
-// Create in-memory store for a search session
-let store = MsgStore::new(None, false)?;
-
-// Or create persistent store
-let store = MsgStore::new(Some("/tmp/search.db"), false)?;
-
-// Insert BGP elements
-store.insert_elems(&bgp_elements)?;
-
-// Query stored messages
-let count = store.count()?;
-```
+- `MsgStore` - SQLite-backed storage for BGP elements (for export compatibility)
 
 ### Monocle Database (`monocle/`)
 
-The main persistent database for monocle data that can be shared across sessions.
+The main persistent database for monocle data.
 
-**Key Types:**
-- `MonocleDatabase` - Unified interface to all monocle data tables
-- `As2orgRepository` - AS-to-Organization data access
-- `As2relRepository` - AS-level relationships data access
-- `As2orgRecord`, `As2relRecord` - Data record types
+#### SQLite (legacy/backward compatibility)
+- `MonocleDatabase` - Legacy SQLite interface
+- `As2orgRepository` - AS-to-Organization (SQLite)
+- `As2relRepository` - AS-level relationships (SQLite)
 
-**Usage:**
+#### DuckDB (primary)
+- `DuckDbMonocleDatabase` - DuckDB interface
+- `DuckDbAs2orgRepository` - AS-to-Organization (denormalized)
+- `DuckDbAs2relRepository` - AS-level relationships
+
+#### Cache Repositories
+- `RpkiCacheRepository` - RPKI ROA/ASPA cache with TTL
+- `Pfx2asCacheRepository` - Prefix-to-AS mappings cache
+
+## Usage Examples
+
+### DuckDB Connection
+
 ```rust
-use monocle::MonocleDatabase;
+use monocle::database::{DuckDbConn, DuckDbSchemaManager};
 
-// Open monocle database (creates if needed, handles migrations)
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+// Create in-memory database
+let conn = DuckDbConn::open_in_memory()?;
 
-// Or open at specific path
-let db = MonocleDatabase::open("/path/to/monocle-data.sqlite3")?;
+// Or open persistent database
+let conn = DuckDbConn::open_path("/path/to/monocle.duckdb")?;
 
-// Access repositories
-let as2org = db.as2org();
-let as2rel = db.as2rel();
+// Initialize schema
+let manager = DuckDbSchemaManager::new(&conn);
+manager.initialize()?;
 
-// Bootstrap data if needed
-if db.needs_as2org_bootstrap() {
-    db.bootstrap_as2org()?;
+// Set memory limit (default 2GB)
+conn.set_memory_limit("4GB")?;
+```
+
+### Prefix Containment Queries
+
+```rust
+use monocle::database::{PrefixQueryBuilder, build_prefix_containment_clause};
+
+// Build a query to find sub-prefixes of 10.0.0.0/8
+let query = PrefixQueryBuilder::new("elems", "prefix")
+    .include_sub("10.0.0.0/8")
+    .with_condition("origin_asn = 13335")
+    .order_by("timestamp DESC")
+    .limit(100)
+    .build();
+
+// Or use the simple clause builder
+let clause = build_prefix_containment_clause(
+    "prefix",
+    "10.0.0.0/8",
+    true,   // include_sub
+    false   // include_super
+);
+// Result: "prefix <<= '10.0.0.0/8'::INET"
+```
+
+### RPKI Cache
+
+```rust
+use monocle::database::{DuckDbConn, DuckDbSchemaManager, RpkiCacheRepository, RoaRecord};
+use std::time::Duration;
+
+let conn = DuckDbConn::open_in_memory()?;
+DuckDbSchemaManager::new(&conn).initialize()?;
+
+let cache = RpkiCacheRepository::new(&conn);
+
+// Check if cache is fresh (within 1 hour TTL)
+if !cache.is_cache_fresh("roa", "cloudflare", None, Duration::from_secs(3600)) {
+    // Store new ROA data
+    let roas = vec![
+        RoaRecord {
+            prefix: "1.0.0.0/24".to_string(),
+            max_length: 24,
+            origin_asn: 13335,
+            ta: Some("ARIN".to_string()),
+        },
+    ];
+    cache.store_roas("cloudflare", None, &roas)?;
 }
 
-// Query data
-let results = as2org.search_by_name("cloudflare")?;
-let org_name = as2org.lookup_org_name(13335);
+// Query ROAs
+let results = cache.query_roas_covering_prefix("1.0.0.100/32")?;
 ```
 
-## Data Flow
-
-```
-External Sources                    Database                    Services
-─────────────────                   ────────                    ────────
-bgpkit-commons      ──────────►   MonocleDatabase   ◄──────►   As2orgService
-  (AS2Org data)                     └── as2org                As2relService
-                                    └── as2rel
-BGPKIT AS2Rel URL   ──────────►        │
-                                       │
-MRT Files           ──────────►   MsgStore (session)  ◄──►   Search operations
-```
-
-## Schema Management
-
-The database module uses a simple versioning strategy:
-
-1. **Version Tracking**: Schema version stored in `monocle_meta` table
-2. **Status Detection**: On open, schema status is checked
-3. **Auto-Recovery**: For monocle data (regeneratable), schema issues trigger reset + reinitialization
+### Pfx2as Cache
 
 ```rust
-pub enum SchemaStatus {
-    NotInitialized,     // Fresh database
-    Current,            // Version matches
-    NeedsMigration { from, to },  // Version behind
-    Incompatible { database_version, required_version },  // Major version mismatch
-    Corrupted,          // Schema verification failed
-}
+use monocle::database::{DuckDbConn, DuckDbSchemaManager, Pfx2asCacheRepository, Pfx2asRecord};
+
+let conn = DuckDbConn::open_in_memory()?;
+DuckDbSchemaManager::new(&conn).initialize()?;
+
+let cache = Pfx2asCacheRepository::new(&conn);
+
+// Store prefix-to-AS mappings
+let records = vec![
+    Pfx2asRecord {
+        prefix: "1.0.0.0/24".to_string(),
+        origin_asns: vec![13335],
+    },
+];
+cache.store("bgpkit", &records)?;
+
+// Lookup by prefix (longest match)
+let result = cache.lookup_longest_match("1.0.0.100/32")?;
+
+// Lookup by origin ASN
+let prefixes = cache.lookup_by_origin(13335)?;
 ```
 
-## Interaction with Services
+## Schema Definitions
 
-The database module is a **low-level data access layer**. For business logic and output formatting, use the services module:
+### DuckDB Tables
 
-```rust
-use monocle::MonocleDatabase;
-use monocle::services::{As2orgService, As2orgSearchArgs};
-
-// Database handles storage
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
-
-// Service handles business logic
-let service = As2orgService::new(&db);
-let args = As2orgSearchArgs::new("cloudflare");
-let results = service.search(&args)?;
-
-// Service formats output
-let output = service.format_results(&results, &format, false);
+#### Meta Table
+```sql
+CREATE TABLE monocle_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT current_timestamp
+)
 ```
 
-## Adding New Data Types
+#### AS2Org (Denormalized)
+```sql
+CREATE TABLE as2org (
+    asn INTEGER PRIMARY KEY,
+    as_name TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    org_name TEXT NOT NULL,
+    country TEXT NOT NULL,
+    source TEXT NOT NULL
+)
+```
 
-To add a new data type (e.g., RPKI ROAs):
+#### RPKI ROAs
+```sql
+CREATE TABLE rpki_roas (
+    prefix INET NOT NULL,
+    max_length INTEGER NOT NULL,
+    origin_asn INTEGER NOT NULL,
+    ta TEXT,
+    cache_id INTEGER NOT NULL REFERENCES rpki_cache_meta(id)
+)
+```
 
-1. **Create repository** in `monocle/`:
-   ```rust
-   // monocle/rpki_roas.rs
-   pub struct RpkiRoasRepository<'a> { conn: &'a Connection }
-   impl RpkiRoasRepository<'_> {
-       pub fn insert_roas(&self, roas: &[Roa]) -> Result<()> { ... }
-       pub fn lookup_prefix(&self, prefix: IpNet) -> Result<Vec<Roa>> { ... }
-   }
-   ```
+#### Pfx2as
+```sql
+CREATE TABLE pfx2as (
+    prefix INET NOT NULL,
+    origin_asns INTEGER[] NOT NULL,
+    cache_id INTEGER NOT NULL REFERENCES pfx2as_cache_meta(id)
+)
+```
 
-2. **Update schema** in `core/schema.rs`:
-   - Add table creation SQL
-   - Increment `SCHEMA_VERSION`
+#### BGP Elements (Internal)
+```sql
+CREATE TABLE elems (
+    timestamp TIMESTAMP,
+    elem_type TEXT,
+    collector TEXT,
+    peer_ip INET,
+    peer_asn INTEGER,
+    prefix INET,
+    next_hop INET,
+    as_path TEXT,
+    origin_asn INTEGER,
+    origin TEXT,
+    local_pref INTEGER,
+    med INTEGER,
+    communities TEXT,
+    atomic BOOLEAN,
+    aggr_asn INTEGER,
+    aggr_ip INET
+)
+```
 
-3. **Expose via MonocleDatabase** in `monocle/mod.rs`:
-   ```rust
-   impl MonocleDatabase {
-       pub fn rpki_roas(&self) -> RpkiRoasRepository<'_> {
-           RpkiRoasRepository::new(&self.db.conn)
-       }
-   }
-   ```
+## Prefix Containment Operators
 
-4. **Create service** in `services/` for business logic (see services README)
+DuckDB's inet extension supports these containment operators:
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `<<=` | Is contained by or equal | `'10.1.0.0/16'::INET <<= '10.0.0.0/8'::INET` → true |
+| `>>=` | Contains or is equal to | `'10.0.0.0/8'::INET >>= '10.1.0.0/16'::INET` → true |
+
+### Query Patterns
+
+**Find sub-prefixes (more specific):**
+```sql
+SELECT * FROM elems WHERE prefix <<= '10.0.0.0/8'::INET
+```
+
+**Find super-prefixes (less specific):**
+```sql
+SELECT * FROM elems WHERE prefix >>= '10.1.1.0/24'::INET
+```
+
+**Find all related prefixes:**
+```sql
+SELECT * FROM elems WHERE prefix <<= '10.0.0.0/16'::INET OR prefix >>= '10.0.0.0/16'::INET
+```
+
+**RPKI validation via JOIN:**
+```sql
+SELECT e.*, 
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM rpki_roas r
+            WHERE e.prefix <<= r.prefix
+              AND e.origin_asn = r.origin_asn
+              AND CAST(split_part(e.prefix::TEXT, '/', 2) AS INTEGER) <= r.max_length
+        ) THEN 'valid'
+        WHEN EXISTS (
+            SELECT 1 FROM rpki_roas r WHERE e.prefix <<= r.prefix
+        ) THEN 'invalid'
+        ELSE 'unknown'
+    END AS rpki_status
+FROM elems e
+```
+
+## Cache TTL Configuration
+
+Default TTL values:
+
+| Cache Type | Default TTL | Constant |
+|------------|-------------|----------|
+| RPKI (current) | 1 hour | `DEFAULT_RPKI_CURRENT_TTL` |
+| RPKI (historical) | Never expires | N/A |
+| Pfx2as | 24 hours | `DEFAULT_PFX2AS_TTL` |
+
+## DuckDB-Specific Notes
+
+1. **INET Extension**: Automatically loaded on connection. Required for IP/prefix operations.
+
+2. **No INET Indexes**: DuckDB doesn't support indexes on INET columns. Indexes are created on non-INET columns used for filtering (cache_id, origin_asn, etc.).
+
+3. **Array Types**: DuckDB supports native arrays (`INTEGER[]`). When reading, arrays may need parsing from text format `[1, 2, 3]`.
+
+4. **DateTime Handling**: DateTime values are stored as TIMESTAMP and may need text conversion for reading.
+
+5. **Memory Limit**: Default 2GB, configurable via `conn.set_memory_limit("4GB")`.
 
 ## Testing
 
-All modules have unit tests. Run with:
-
 ```bash
+# Run all database tests
 cargo test database::
+
+# Run DuckDB-specific tests
+cargo test duckdb
+
+# Run cache tests
+cargo test cache
 ```
 
-The `MonocleDatabase::open_in_memory()` method is useful for testing:
+In-memory databases are useful for testing:
 
 ```rust
 #[test]
 fn test_my_feature() {
-    let db = MonocleDatabase::open_in_memory().unwrap();
+    let conn = DuckDbConn::open_in_memory().unwrap();
+    let manager = DuckDbSchemaManager::new(&conn);
+    manager.initialize().unwrap();
     // Test with in-memory database
 }
 ```
 
 ## Related Documentation
 
+- [DuckDB Migration Plan](../../DUCKDB_MIGRATION_PLAN.md) - Full migration roadmap
 - [Services Module](../services/README.md) - Business logic layer
-- [ARCHITECTURE.md](../../ARCHITECTURE.md) - Overall system design
-- [REVISION_PLAN.md](../../REVISION_PLAN.md) - Migration roadmap
+- [Lens Module](../lens/README.md) - Data access patterns

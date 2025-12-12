@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### New Features (DuckDB Migration)
+
+* **DuckDB Internal Database**: Added DuckDB as the primary internal database backend
+  * Native INET type support for efficient IP/prefix operations
+  * Columnar storage for better compression
+  * Prefix containment operators (`<<=` and `>>=`) for SQL-based filtering
+  * SQLite retained for backward-compatible search result exports
+
+* **RPKI Cache Repository**: Added caching for RPKI ROA and ASPA data
+  * `RpkiCacheRepository` for storing and querying ROAs/ASPAs
+  * TTL-based cache freshness (default 1 hour for current data)
+  * Support for historical data caching (no expiry)
+  * SQL-based RPKI validation via JOINs
+
+* **Pfx2as Cache Repository**: Added caching for prefix-to-AS mappings
+  * `Pfx2asCacheRepository` for storing and querying pfx2as data
+  * TTL-based cache freshness (default 24 hours)
+  * Efficient longest-match, covering, and covered prefix queries
+
+* **SQL-based RPKI Validation**: New `SqlRpkiValidator` and `SqlAspaValidator`
+  * Offline validation using cached RPKI data
+  * Bulk validation support
+  * Validation status annotation for query results
+
+* **Query Helpers**: New utilities for building DuckDB queries
+  * `PrefixQueryBuilder` for prefix containment queries
+  * `SearchQueryBuilder` for search filter queries
+  * `RpkiValidationQuery` for RPKI validation JOINs
+  * `Pfx2asQuery` for pfx2as lookups
+
 ### Breaking Changes
 
 * **Removed `broker` command**: The standalone `broker` command has been removed
@@ -96,6 +126,7 @@ All notable changes to this project will be documented in this file.
 ### Dependencies
 
 * Added `bgpkit-commons` v0.10 with features: `asinfo`, `rpki`, `countries`
+* Added `duckdb` v1.4.3 with features: `bundled` (primary internal database)
 * Removed `rpki` crate dependency
 
 ## v0.9.1 - 2025-11-05

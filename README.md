@@ -80,10 +80,12 @@ monocle = { version = "0.9", default-features = false }
 
 The library is organized into the following core modules:
 
-- **`database`**: All database functionality
-  - `core`: Connection management and schema definitions
-  - `session`: One-time storage (e.g., search results)
-  - `monocle`: Main monocle database (AS2Org, AS2Rel)
+- **`database`**: All database functionality (dual-backend: DuckDB + SQLite)
+  - `core`: Connection management, schema definitions, and query helpers
+  - `session`: One-time storage for search results (SQLite export)
+  - `monocle`: Main monocle database with caching (DuckDB primary, SQLite legacy)
+  - DuckDB provides native INET type support for efficient prefix containment queries
+  - SQLite retained for backward-compatible search result exports
 
 - **`services`**: High-level business logic (reusable across CLI, API, GUI)
   - `as2org`: AS-to-Organization lookup service
