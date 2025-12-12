@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Progress Tracking for GUI Support
+
+* **Added progress tracking for parse operations**: `ParseLens` now supports callback-based progress reporting
+  * `ParseProgress` enum with `Started`, `Update`, and `Completed` variants
+  * Progress updates emitted every 10,000 messages processed
+  * Includes processing rate (messages/second) and elapsed time
+  * New methods: `parse_with_progress()` and `parse_with_handler()`
+
+* **Added progress tracking for search operations**: `SearchLens` now supports callback-based progress reporting
+  * `SearchProgress` enum with variants: `QueryingBroker`, `FilesFound`, `FileStarted`, `FileCompleted`, `ProgressUpdate`, `Completed`
+  * Reports percentage completion based on files processed
+  * Includes ETA estimation and per-file success/failure status
+  * New methods: `search_with_progress()` and `search_and_collect()`
+
+* **Thread-safe callbacks**: Progress callbacks are `Arc<dyn Fn(...) + Send + Sync>` for safe use in parallel processing
+
+* **JSON-serializable progress types**: All progress types derive `Serialize`/`Deserialize` for easy GUI communication
+
+### Removed Features
+
+* **Removed server module**: The web API and WebSocket server implementation has been removed to keep focus on library-level functionality
+  * Removed `src/server/` module and all submodules
+  * Removed `server` feature from Cargo.toml
+  * Removed server-related dependencies: axum, tokio, tokio-util, tower, tower-http, tokio-tungstenite, futures, uuid
+  * Removed `WEB_API_DESIGN.md`
+  * Removed `examples/run_server.rs`
+
 ### Unified Output Format
 
 * **Global `--format` option**: All commands now support a unified output format option (long form only, no `-f` short form to avoid conflicts with subcommand flags like `whois -f`)

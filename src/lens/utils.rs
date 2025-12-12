@@ -1,11 +1,362 @@
 //! Common utility functions for lens modules
 //!
 //! This module provides shared utility functions used across multiple lenses,
-//! particularly for formatting output in tables.
+//! particularly for formatting output in tables and deserializing query parameters.
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use std::str::FromStr;
+
+// =============================================================================
+// Serde Deserializers for Query Parameters
+// =============================================================================
+
+/// Deserialize a string or vec of strings into a Vec<String>
+///
+/// This allows query parameters to accept either `param=value` or `param=v1&param=v2`
+pub fn string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StringOrVec;
+
+    impl<'de> Visitor<'de> for StringOrVec {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or array of strings")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![value.to_string()])
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![value])
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(value) = seq.next_element()? {
+                vec.push(value);
+            }
+            Ok(vec)
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+    }
+
+    deserializer.deserialize_any(StringOrVec)
+}
+
+/// Deserialize a u32 or vec of u32s into a Vec<u32>
+///
+/// This allows query parameters to accept either `asn=12345` or `asn=12345&asn=67890`
+/// Also handles string representations of numbers from query parameters.
+pub fn u32_or_vec<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct U32OrVec;
+
+    impl<'de> Visitor<'de> for U32OrVec {
+        type Value = Vec<u32>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a u32, string representing u32, or array of u32s")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![value as u32])
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value < 0 {
+                return Err(de::Error::custom("ASN cannot be negative"));
+            }
+            Ok(vec![value as u32])
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value
+                .parse::<u32>()
+                .map(|v| vec![v])
+                .map_err(|_| de::Error::custom(format!("Invalid ASN: {}", value)))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(value) = seq.next_element::<serde_json::Value>()? {
+                let num = match value {
+                    serde_json::Value::Number(n) => n
+                        .as_u64()
+                        .map(|v| v as u32)
+                        .ok_or_else(|| de::Error::custom("Invalid number"))?,
+                    serde_json::Value::String(s) => s
+                        .parse::<u32>()
+                        .map_err(|_| de::Error::custom(format!("Invalid ASN: {}", s)))?,
+                    _ => return Err(de::Error::custom("Expected number or string")),
+                };
+                vec.push(num);
+            }
+            Ok(vec)
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+    }
+
+    deserializer.deserialize_any(U32OrVec)
+}
+
+/// Deserialize a u32 from string or number
+///
+/// This allows query parameters to accept `asn=12345` as a string
+pub fn u32_from_str<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct U32FromStr;
+
+    impl<'de> Visitor<'de> for U32FromStr {
+        type Value = u32;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a u32 or string representing u32")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value as u32)
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value < 0 {
+                return Err(de::Error::custom("ASN cannot be negative"));
+            }
+            Ok(value as u32)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value
+                .parse::<u32>()
+                .map_err(|_| de::Error::custom(format!("Invalid ASN: {}", value)))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+    }
+
+    deserializer.deserialize_any(U32FromStr)
+}
+
+/// Deserialize an optional u32 from string or number
+///
+/// This allows query parameters to accept `asn=12345` as a string
+pub fn option_u32_from_str<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptionU32FromStr;
+
+    impl<'de> Visitor<'de> for OptionU32FromStr {
+        type Value = Option<u32>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a u32, string representing u32, or null")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value as u32))
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value < 0 {
+                return Err(de::Error::custom("ASN cannot be negative"));
+            }
+            Ok(Some(value as u32))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value.is_empty() {
+                return Ok(None);
+            }
+            value
+                .parse::<u32>()
+                .map(Some)
+                .map_err(|_| de::Error::custom(format!("Invalid ASN: {}", value)))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_some<D2>(self, deserializer: D2) -> Result<Self::Value, D2::Error>
+        where
+            D2: Deserializer<'de>,
+        {
+            deserializer.deserialize_any(OptionU32FromStr)
+        }
+    }
+
+    deserializer.deserialize_any(OptionU32FromStr)
+}
+
+/// Deserialize a boolean from string or bool
+///
+/// This allows query parameters to accept `param=true` or `param=false` as strings
+pub fn bool_from_str<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BoolFromStr;
+
+    impl<'de> Visitor<'de> for BoolFromStr {
+        type Value = bool;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a boolean or string representing a boolean")
+        }
+
+        fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            match value.to_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Ok(true),
+                "false" | "0" | "no" | "off" | "" => Ok(false),
+                _ => Err(de::Error::custom(format!(
+                    "Invalid boolean value: {}",
+                    value
+                ))),
+            }
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value != 0)
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value != 0)
+        }
+    }
+
+    deserializer.deserialize_any(BoolFromStr)
+}
+
+// =============================================================================
+// Output Format and Display Utilities
+// =============================================================================
 
 /// Default maximum length for name display in tables
 pub const DEFAULT_NAME_MAX_LEN: usize = 20;
@@ -230,5 +581,177 @@ mod tests {
         assert!(!OutputFormat::JsonPretty.is_table());
         assert!(!OutputFormat::JsonLine.is_table());
         assert!(!OutputFormat::Psv.is_table());
+    }
+
+    #[test]
+    fn test_string_or_vec_single() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(deserialize_with = "string_or_vec")]
+            values: Vec<String>,
+        }
+
+        let json = r#"{"values": "hello"}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.values, vec!["hello"]);
+    }
+
+    #[test]
+    fn test_string_or_vec_array() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(deserialize_with = "string_or_vec")]
+            values: Vec<String>,
+        }
+
+        let json = r#"{"values": ["hello", "world"]}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.values, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_u32_or_vec_single_number() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(deserialize_with = "u32_or_vec")]
+            asns: Vec<u32>,
+        }
+
+        let json = r#"{"asns": 13335}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.asns, vec![13335]);
+    }
+
+    #[test]
+    fn test_u32_or_vec_single_string() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(deserialize_with = "u32_or_vec")]
+            asns: Vec<u32>,
+        }
+
+        let json = r#"{"asns": "13335"}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.asns, vec![13335]);
+    }
+
+    #[test]
+    fn test_u32_or_vec_array() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(deserialize_with = "u32_or_vec")]
+            asns: Vec<u32>,
+        }
+
+        let json = r#"{"asns": [13335, 15169]}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.asns, vec![13335, 15169]);
+    }
+
+    #[test]
+    fn test_option_u32_from_str_number() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(default, deserialize_with = "option_u32_from_str")]
+            asn: Option<u32>,
+        }
+
+        let json = r#"{"asn": 13335}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.asn, Some(13335));
+    }
+
+    #[test]
+    fn test_option_u32_from_str_string() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(default, deserialize_with = "option_u32_from_str")]
+            asn: Option<u32>,
+        }
+
+        let json = r#"{"asn": "13335"}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.asn, Some(13335));
+    }
+
+    #[test]
+    fn test_option_u32_from_str_null() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(default, deserialize_with = "option_u32_from_str")]
+            asn: Option<u32>,
+        }
+
+        let json = r#"{"asn": null}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.asn, None);
+    }
+
+    #[test]
+    fn test_u32_from_str_number() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(deserialize_with = "u32_from_str")]
+            asn: u32,
+        }
+
+        let json = r#"{"asn": 13335}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.asn, 13335);
+    }
+
+    #[test]
+    fn test_u32_from_str_string() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(deserialize_with = "u32_from_str")]
+            asn: u32,
+        }
+
+        let json = r#"{"asn": "13335"}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(result.asn, 13335);
+    }
+
+    #[test]
+    fn test_bool_from_str_true() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(default, deserialize_with = "bool_from_str")]
+            flag: bool,
+        }
+
+        let json = r#"{"flag": "true"}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert!(result.flag);
+
+        let json = r#"{"flag": true}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert!(result.flag);
+
+        let json = r#"{"flag": "1"}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert!(result.flag);
+    }
+
+    #[test]
+    fn test_bool_from_str_false() {
+        #[derive(Deserialize)]
+        struct Test {
+            #[serde(default, deserialize_with = "bool_from_str")]
+            flag: bool,
+        }
+
+        let json = r#"{"flag": "false"}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert!(!result.flag);
+
+        let json = r#"{"flag": false}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert!(!result.flag);
+
+        let json = r#"{"flag": "0"}"#;
+        let result: Test = serde_json::from_str(json).unwrap();
+        assert!(!result.flag);
     }
 }

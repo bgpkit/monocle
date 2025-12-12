@@ -12,7 +12,7 @@ use tabled::Table;
 
 #[derive(Subcommand)]
 pub enum RpkiCommands {
-    /// validate a prefix-asn pair with a RPKI validator (Cloudflare)
+    /// validate a prefix-asn pair with a RPKI validator (Cloudflare GraphQL)
     Check {
         #[clap(short, long)]
         asn: u32,

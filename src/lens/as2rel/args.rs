@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::types::{As2relOutputFormat, As2relSortOrder};
+use crate::lens::utils::{bool_from_str, u32_or_vec};
 
 /// Arguments for AS2Rel search operations
 ///
@@ -20,21 +21,22 @@ use super::types::{As2relOutputFormat, As2relSortOrder};
 pub struct As2relSearchArgs {
     /// One or two ASNs to query relationships for
     #[cfg_attr(feature = "cli", clap(required = true))]
+    #[serde(default, deserialize_with = "u32_or_vec")]
     pub asns: Vec<u32>,
 
     /// Sort by ASN2 ascending instead of connected percentage descending
     #[cfg_attr(feature = "cli", clap(long))]
-    #[serde(default)]
+    #[serde(default, deserialize_with = "bool_from_str")]
     pub sort_by_asn: bool,
 
     /// Show organization name for ASN2 (from as2org database)
     #[cfg_attr(feature = "cli", clap(long))]
-    #[serde(default)]
+    #[serde(default, deserialize_with = "bool_from_str")]
     pub show_name: bool,
 
     /// Hide the explanation text
     #[cfg_attr(feature = "cli", clap(long))]
-    #[serde(default)]
+    #[serde(default, deserialize_with = "bool_from_str")]
     pub no_explain: bool,
 }
 

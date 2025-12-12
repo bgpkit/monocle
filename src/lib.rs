@@ -40,9 +40,7 @@
 //! - **`cli`** (default): Enables CLI support including clap derives for argument
 //!   structs, progress bars, and table formatting. Required for building the binary.
 //!
-//! - **`server`**: Placeholder for future web server support.
-//!
-//! - **`full`**: Enables all features (`cli` + `server`).
+//! - **`full`**: Enables all features (currently same as `cli`).
 //!
 //! ## Feature Usage
 //!
@@ -132,6 +130,41 @@
 //! // Pfx2as cache
 //! let pfx2as_cache = Pfx2asFileCache::new("~/.monocle")?;
 //! let data = pfx2as_cache.load("source")?;
+//! ```
+//!
+//! # Progress Tracking
+//!
+//! For long-running operations like parsing and searching, monocle provides
+//! progress tracking through callbacks. This is useful for building responsive
+//! GUI applications or showing progress bars in CLI tools.
+//!
+//! ```rust,ignore
+//! use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
+//! use std::sync::Arc;
+//!
+//! let lens = ParseLens::new();
+//! let filters = ParseFilters::default();
+//!
+//! // Define a progress callback
+//! let callback = Arc::new(|progress: ParseProgress| {
+//!     match progress {
+//!         ParseProgress::Started { file_path } => {
+//!             println!("Started parsing: {}", file_path);
+//!         }
+//!         ParseProgress::Update { messages_processed, .. } => {
+//!             println!("Processed {} messages", messages_processed);
+//!         }
+//!         ParseProgress::Completed { total_messages, duration_secs } => {
+//!             println!("Completed: {} messages in {:.2}s", total_messages, duration_secs);
+//!         }
+//!     }
+//! });
+//!
+//! // Parse with progress tracking
+//! let elems = lens.parse_with_progress(&filters, "path/to/file.mrt", Some(callback))?;
+//! for elem in elems {
+//!     // Process each BGP element
+//! }
 //! ```
 
 mod config;

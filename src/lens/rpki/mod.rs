@@ -20,6 +20,7 @@ pub use validator::{
     RpkiValidationState, RpkiValidity,
 };
 
+use crate::lens::utils::{option_u32_from_str, u32_from_str};
 use anyhow::Result;
 use bgpkit_commons::rpki::RpkiTrie;
 use chrono::NaiveDate;
@@ -85,6 +86,7 @@ pub struct RpkiRoaLookupArgs {
 
     /// Filter by origin ASN
     #[cfg_attr(feature = "cli", clap(short, long))]
+    #[serde(default, deserialize_with = "option_u32_from_str")]
     pub asn: Option<u32>,
 
     /// Historical date (format: YYYY-MM-DD)
@@ -149,10 +151,12 @@ impl RpkiRoaLookupArgs {
 pub struct RpkiAspaLookupArgs {
     /// Filter by customer ASN
     #[cfg_attr(feature = "cli", clap(short = 'c', long))]
+    #[serde(default, deserialize_with = "option_u32_from_str")]
     pub customer_asn: Option<u32>,
 
     /// Filter by provider ASN
     #[cfg_attr(feature = "cli", clap(short = 'p', long))]
+    #[serde(default, deserialize_with = "option_u32_from_str")]
     pub provider_asn: Option<u32>,
 
     /// Historical date (format: YYYY-MM-DD)
@@ -205,6 +209,7 @@ impl RpkiAspaLookupArgs {
 pub struct RpkiValidationArgs {
     /// Origin ASN to validate
     #[cfg_attr(feature = "cli", clap(short, long))]
+    #[serde(deserialize_with = "u32_from_str")]
     pub asn: u32,
 
     /// Prefix to validate
@@ -240,6 +245,7 @@ impl RpkiValidationArgs {
 pub struct RpkiSummaryArgs {
     /// ASN to summarize
     #[cfg_attr(feature = "cli", clap(value_name = "ASN"))]
+    #[serde(deserialize_with = "u32_from_str")]
     pub asn: u32,
 
     /// Output format

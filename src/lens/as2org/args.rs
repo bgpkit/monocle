@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::types::{As2orgOutputFormat, As2orgSearchType};
+use crate::lens::utils::{bool_from_str, string_or_vec};
 
 /// Arguments for AS2Org search operations
 ///
@@ -20,31 +21,32 @@ use super::types::{As2orgOutputFormat, As2orgSearchType};
 pub struct As2orgSearchArgs {
     /// Search queries: ASN (e.g., "400644") or name (e.g., "bgpkit")
     #[cfg_attr(feature = "cli", clap(required = true))]
+    #[serde(default, deserialize_with = "string_or_vec")]
     pub query: Vec<String>,
 
     /// Search AS and Org name only
     #[cfg_attr(feature = "cli", clap(short, long))]
-    #[serde(default)]
+    #[serde(default, deserialize_with = "bool_from_str")]
     pub name_only: bool,
 
     /// Search by ASN only
     #[cfg_attr(feature = "cli", clap(short, long))]
-    #[serde(default)]
+    #[serde(default, deserialize_with = "bool_from_str")]
     pub asn_only: bool,
 
     /// Search by country only
     #[cfg_attr(feature = "cli", clap(short = 'C', long))]
-    #[serde(default)]
+    #[serde(default, deserialize_with = "bool_from_str")]
     pub country_only: bool,
 
     /// Show full country names instead of 2-letter code
     #[cfg_attr(feature = "cli", clap(short, long))]
-    #[serde(default)]
+    #[serde(default, deserialize_with = "bool_from_str")]
     pub full_country: bool,
 
     /// Display full table (with org_id, org_size)
     #[cfg_attr(feature = "cli", clap(short = 'F', long))]
-    #[serde(default)]
+    #[serde(default, deserialize_with = "bool_from_str")]
     pub full_table: bool,
 }
 

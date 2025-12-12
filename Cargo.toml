@@ -28,11 +28,8 @@ cli = [
     "dep:tracing-subscriber",
 ]
 
-# Web server support (for future Phase 4)
-server = []
-
 # Full build with all features
-full = ["cli", "server"]
+full = ["cli"]
 
 [dependencies]
 # Core dependencies (always included)

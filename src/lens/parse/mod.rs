@@ -2,19 +2,86 @@
 //!
 //! This module provides filter types for parsing MRT files with bgpkit-parser.
 //! The filter types can optionally derive Clap's Args trait when the `cli` feature is enabled.
+//!
+//! # Progress Tracking
+//!
+//! The `ParseLens` supports progress tracking through callbacks. This is useful for
+//! building GUI applications or showing progress in CLI tools.
+//!
+//! ```rust,ignore
+//! use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
+//! use std::sync::Arc;
+//!
+//! let lens = ParseLens::new();
+//! let filters = ParseFilters::default();
+//!
+//! let callback = Arc::new(|progress: ParseProgress| {
+//!     if let ParseProgress::Update { messages_processed, .. } = progress {
+//!         println!("Processed {} messages", messages_processed);
+//!     }
+//! });
+//!
+//! let elems = lens.parse_with_progress(&filters, "file.mrt", Some(callback))?;
+//! ```
 
 use crate::lens::time::TimeLens;
 use anyhow::anyhow;
 use anyhow::Result;
+use bgpkit_parser::BgpElem;
 use bgpkit_parser::BgpkitParser;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::io::Read;
 use std::net::IpAddr;
+use std::sync::Arc;
+use std::time::Instant;
 
 #[cfg(feature = "cli")]
 use clap::{Args, ValueEnum};
+
+// =============================================================================
+// Progress Tracking Types
+// =============================================================================
+
+/// Progress update interval for parse operations (every 10,000 messages)
+pub const PARSE_PROGRESS_INTERVAL: u64 = 10_000;
+
+/// Progress information for parse operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ParseProgress {
+    /// Parsing has started
+    Started {
+        /// Path to the file being parsed
+        file_path: String,
+    },
+    /// Progress update (emitted every PARSE_PROGRESS_INTERVAL messages)
+    Update {
+        /// Total number of messages processed so far
+        messages_processed: u64,
+        /// Processing rate in messages per second (if available)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rate: Option<f64>,
+        /// Elapsed time in seconds
+        elapsed_secs: f64,
+    },
+    /// Parsing has completed
+    Completed {
+        /// Total number of messages parsed
+        total_messages: u64,
+        /// Total duration in seconds
+        duration_secs: f64,
+        /// Average processing rate in messages per second
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rate: Option<f64>,
+    },
+}
+
+/// Type alias for progress callback function
+///
+/// The callback receives `ParseProgress` updates and can be used to
+/// update UI elements, log progress, or perform other actions.
+pub type ParseProgressCallback = Arc<dyn Fn(ParseProgress) + Send + Sync>;
 
 // =============================================================================
 // Types
@@ -245,7 +312,29 @@ impl ParseFilters {
 /// Parse lens for MRT file parsing operations
 ///
 /// This lens provides high-level operations for parsing MRT files
-/// with various filters applied.
+/// with various filters applied, and optional progress tracking.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
+/// use std::sync::Arc;
+///
+/// let lens = ParseLens::new();
+/// let filters = ParseFilters::default();
+///
+/// // Simple parsing without progress tracking
+/// let parser = lens.create_parser(&filters, "path/to/file.mrt")?;
+/// for elem in parser {
+///     println!("{}", elem);
+/// }
+///
+/// // Parsing with progress tracking
+/// let callback = Arc::new(|progress: ParseProgress| {
+///     println!("{:?}", progress);
+/// });
+/// let elems = lens.parse_with_progress(&filters, "file.mrt", Some(callback))?;
+/// ```
 pub struct ParseLens;
 
 impl ParseLens {
@@ -255,6 +344,9 @@ impl ParseLens {
     }
 
     /// Create a parser from filters and file path
+    ///
+    /// This returns a streaming parser that yields BGP elements one at a time.
+    /// For progress tracking, use `parse_with_progress` instead.
     pub fn create_parser(
         &self,
         filters: &ParseFilters,
@@ -267,10 +359,257 @@ impl ParseLens {
     pub fn validate_filters(&self, filters: &ParseFilters) -> Result<()> {
         filters.validate()
     }
+
+    /// Parse a file with progress tracking
+    ///
+    /// This method parses an MRT file and collects all elements into a Vec,
+    /// reporting progress through the callback at regular intervals
+    /// (every PARSE_PROGRESS_INTERVAL messages, currently 10,000).
+    ///
+    /// # Arguments
+    ///
+    /// * `filters` - Filters to apply during parsing
+    /// * `file_path` - Path to the MRT file (local or remote)
+    /// * `callback` - Optional callback to receive progress updates
+    ///
+    /// # Returns
+    ///
+    /// A vector of all parsed BGP elements
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
+    /// use std::sync::Arc;
+    ///
+    /// let lens = ParseLens::new();
+    /// let filters = ParseFilters::default();
+    ///
+    /// let callback = Arc::new(|progress: ParseProgress| {
+    ///     match progress {
+    ///         ParseProgress::Update { messages_processed, rate, .. } => {
+    ///             println!("Processed {} messages ({:.0} msg/s)",
+    ///                 messages_processed, rate.unwrap_or(0.0));
+    ///         }
+    ///         ParseProgress::Completed { total_messages, duration_secs, .. } => {
+    ///             println!("Done: {} messages in {:.2}s", total_messages, duration_secs);
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// });
+    ///
+    /// let elems = lens.parse_with_progress(&filters, "file.mrt", Some(callback))?;
+    /// ```
+    pub fn parse_with_progress(
+        &self,
+        filters: &ParseFilters,
+        file_path: &str,
+        callback: Option<ParseProgressCallback>,
+    ) -> Result<Vec<BgpElem>> {
+        let parser = self.create_parser(filters, file_path)?;
+
+        // Notify start
+        if let Some(ref cb) = callback {
+            cb(ParseProgress::Started {
+                file_path: file_path.to_string(),
+            });
+        }
+
+        let start_time = Instant::now();
+        let mut messages_processed: u64 = 0;
+        let mut elements = Vec::new();
+
+        for elem in parser {
+            elements.push(elem);
+            messages_processed += 1;
+
+            // Report progress every PARSE_PROGRESS_INTERVAL messages
+            if messages_processed % PARSE_PROGRESS_INTERVAL == 0 {
+                if let Some(ref cb) = callback {
+                    let elapsed = start_time.elapsed().as_secs_f64();
+                    let rate = if elapsed > 0.0 {
+                        Some(messages_processed as f64 / elapsed)
+                    } else {
+                        None
+                    };
+
+                    cb(ParseProgress::Update {
+                        messages_processed,
+                        rate,
+                        elapsed_secs: elapsed,
+                    });
+                }
+            }
+        }
+
+        // Notify completion
+        if let Some(ref cb) = callback {
+            let duration_secs = start_time.elapsed().as_secs_f64();
+            let rate = if duration_secs > 0.0 {
+                Some(messages_processed as f64 / duration_secs)
+            } else {
+                None
+            };
+
+            cb(ParseProgress::Completed {
+                total_messages: messages_processed,
+                duration_secs,
+                rate,
+            });
+        }
+
+        Ok(elements)
+    }
+
+    /// Parse a file with progress tracking, processing elements through a handler
+    ///
+    /// Unlike `parse_with_progress`, this method processes elements one at a time
+    /// through the provided handler function, avoiding the need to collect all
+    /// elements into memory. This is more memory-efficient for large files.
+    ///
+    /// # Arguments
+    ///
+    /// * `filters` - Filters to apply during parsing
+    /// * `file_path` - Path to the MRT file (local or remote)
+    /// * `progress_callback` - Optional callback to receive progress updates
+    /// * `element_handler` - Function called for each parsed element
+    ///
+    /// # Returns
+    ///
+    /// The total number of elements processed
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
+    /// use std::sync::Arc;
+    ///
+    /// let lens = ParseLens::new();
+    /// let filters = ParseFilters::default();
+    ///
+    /// let progress_cb = Arc::new(|progress: ParseProgress| {
+    ///     if let ParseProgress::Update { messages_processed, .. } = progress {
+    ///         println!("Processed {} messages", messages_processed);
+    ///     }
+    /// });
+    ///
+    /// let count = lens.parse_with_handler(
+    ///     &filters,
+    ///     "file.mrt",
+    ///     Some(progress_cb),
+    ///     |elem| {
+    ///         // Process each element
+    ///         println!("{}", elem);
+    ///     },
+    /// )?;
+    /// println!("Total elements: {}", count);
+    /// ```
+    pub fn parse_with_handler<F>(
+        &self,
+        filters: &ParseFilters,
+        file_path: &str,
+        progress_callback: Option<ParseProgressCallback>,
+        mut element_handler: F,
+    ) -> Result<u64>
+    where
+        F: FnMut(BgpElem),
+    {
+        let parser = self.create_parser(filters, file_path)?;
+
+        // Notify start
+        if let Some(ref cb) = progress_callback {
+            cb(ParseProgress::Started {
+                file_path: file_path.to_string(),
+            });
+        }
+
+        let start_time = Instant::now();
+        let mut messages_processed: u64 = 0;
+
+        for elem in parser {
+            element_handler(elem);
+            messages_processed += 1;
+
+            // Report progress every PARSE_PROGRESS_INTERVAL messages
+            if messages_processed % PARSE_PROGRESS_INTERVAL == 0 {
+                if let Some(ref cb) = progress_callback {
+                    let elapsed = start_time.elapsed().as_secs_f64();
+                    let rate = if elapsed > 0.0 {
+                        Some(messages_processed as f64 / elapsed)
+                    } else {
+                        None
+                    };
+
+                    cb(ParseProgress::Update {
+                        messages_processed,
+                        rate,
+                        elapsed_secs: elapsed,
+                    });
+                }
+            }
+        }
+
+        // Notify completion
+        if let Some(ref cb) = progress_callback {
+            let duration_secs = start_time.elapsed().as_secs_f64();
+            let rate = if duration_secs > 0.0 {
+                Some(messages_processed as f64 / duration_secs)
+            } else {
+                None
+            };
+
+            cb(ParseProgress::Completed {
+                total_messages: messages_processed,
+                duration_secs,
+                rate,
+            });
+        }
+
+        Ok(messages_processed)
+    }
 }
 
 impl Default for ParseLens {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_progress_serialization() {
+        // Test that progress types can be serialized for GUI communication
+        let progress = ParseProgress::Started {
+            file_path: "test.mrt".to_string(),
+        };
+        let json = serde_json::to_string(&progress).expect("Failed to serialize");
+        assert!(json.contains("test.mrt"));
+
+        let progress = ParseProgress::Update {
+            messages_processed: 10000,
+            rate: Some(5000.0),
+            elapsed_secs: 2.0,
+        };
+        let json = serde_json::to_string(&progress).expect("Failed to serialize");
+        assert!(json.contains("10000"));
+        assert!(json.contains("messages_processed"));
+
+        let progress = ParseProgress::Completed {
+            total_messages: 50000,
+            duration_secs: 10.0,
+            rate: Some(5000.0),
+        };
+        let json = serde_json::to_string(&progress).expect("Failed to serialize");
+        assert!(json.contains("50000"));
+        assert!(json.contains("duration_secs"));
+    }
+
+    #[test]
+    fn test_parse_progress_interval() {
+        // Verify the progress interval constant is set correctly
+        assert_eq!(PARSE_PROGRESS_INTERVAL, 10_000);
     }
 }

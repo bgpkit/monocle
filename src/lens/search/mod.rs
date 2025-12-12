@@ -2,6 +2,37 @@
 //!
 //! This module provides filter types for searching BGP messages across multiple MRT files.
 //! The filter types can optionally derive Clap's Args trait when the `cli` feature is enabled.
+//!
+//! # Progress Tracking
+//!
+//! The `SearchLens` supports progress tracking through callbacks. This is useful for
+//! building GUI applications or showing progress in CLI tools.
+//!
+//! ```rust,ignore
+//! use monocle::lens::search::{SearchLens, SearchFilters, SearchProgress};
+//! use std::sync::Arc;
+//!
+//! let lens = SearchLens::new();
+//! let filters = SearchFilters { /* ... */ };
+//!
+//! let callback = Arc::new(|progress: SearchProgress| {
+//!     match progress {
+//!         SearchProgress::FilesFound { count } => {
+//!             println!("Found {} files to process", count);
+//!         }
+//!         SearchProgress::FileCompleted { file_index, total_files, .. } => {
+//!             let pct = (file_index + 1) as f64 / total_files as f64 * 100.0;
+//!             println!("Progress: {:.1}%", pct);
+//!         }
+//!         _ => {}
+//!     }
+//! });
+//!
+//! // Search with progress tracking
+//! lens.search_with_progress(&filters, Some(callback), |elem, collector| {
+//!     // Handle each element
+//! })?;
+//! ```
 
 mod query_builder;
 
@@ -10,12 +41,109 @@ pub use query_builder::{build_prefix_filter, SearchFilterSpec, SearchQueryBuilde
 use crate::lens::parse::ParseFilters;
 use anyhow::Result;
 use bgpkit_broker::BrokerItem;
+use bgpkit_parser::BgpElem;
 use bgpkit_parser::BgpkitParser;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
 
 #[cfg(feature = "cli")]
 use clap::{Args, ValueEnum};
+
+// =============================================================================
+// Progress Tracking Types
+// =============================================================================
+
+/// Progress information for search operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SearchProgress {
+    /// Querying the broker for available files
+    QueryingBroker,
+
+    /// Broker query complete, files found
+    FilesFound {
+        /// Number of files to process
+        count: usize,
+    },
+
+    /// Started processing a file
+    FileStarted {
+        /// Index of the file (0-based)
+        file_index: usize,
+        /// Total number of files
+        total_files: usize,
+        /// URL of the file being processed
+        file_url: String,
+        /// Collector ID
+        collector: String,
+    },
+
+    /// Completed processing a file
+    FileCompleted {
+        /// Index of the file (0-based)
+        file_index: usize,
+        /// Total number of files
+        total_files: usize,
+        /// Number of messages found in this file
+        messages_found: u64,
+        /// Whether the file was processed successfully
+        success: bool,
+        /// Error message if failed
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
+    /// Overall progress update (can be used for percentage display)
+    ProgressUpdate {
+        /// Number of files completed
+        files_completed: usize,
+        /// Total number of files
+        total_files: usize,
+        /// Total messages found so far
+        total_messages: u64,
+        /// Percentage complete (0.0 - 100.0)
+        percent_complete: f64,
+        /// Elapsed time in seconds
+        elapsed_secs: f64,
+        /// Estimated time remaining in seconds (if available)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        eta_secs: Option<f64>,
+    },
+
+    /// All processing completed
+    Completed {
+        /// Total number of files processed
+        total_files: usize,
+        /// Number of successful files
+        successful_files: usize,
+        /// Number of failed files
+        failed_files: usize,
+        /// Total messages found
+        total_messages: u64,
+        /// Total duration in seconds
+        duration_secs: f64,
+        /// Average processing rate in files per second
+        #[serde(skip_serializing_if = "Option::is_none")]
+        files_per_sec: Option<f64>,
+    },
+}
+
+/// Type alias for search progress callback function
+///
+/// The callback receives `SearchProgress` updates and can be used to
+/// update UI elements, log progress, or perform other actions.
+///
+/// Note: This callback may be called from multiple threads concurrently
+/// when processing files in parallel.
+pub type SearchProgressCallback = Arc<dyn Fn(SearchProgress) + Send + Sync>;
+
+/// Type alias for element handler function
+///
+/// Called for each BGP element found during search, along with the collector ID.
+pub type ElementHandler = Arc<dyn Fn(BgpElem, String) + Send + Sync>;
 
 // =============================================================================
 // Types
@@ -112,13 +240,66 @@ impl SearchFilters {
 }
 
 // =============================================================================
+// Search Result Types
+// =============================================================================
+
+/// Summary of search results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchSummary {
+    /// Total number of files processed
+    pub total_files: usize,
+    /// Number of successful files
+    pub successful_files: usize,
+    /// Number of failed files
+    pub failed_files: usize,
+    /// Total messages found
+    pub total_messages: u64,
+    /// Total duration in seconds
+    pub duration_secs: f64,
+}
+
+// =============================================================================
 // Lens
 // =============================================================================
 
 /// Search lens for BGP message search operations
 ///
 /// This lens provides high-level operations for searching BGP messages
-/// across multiple MRT files using the BGPKIT broker.
+/// across multiple MRT files using the BGPKIT broker, with optional
+/// progress tracking support.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use monocle::lens::search::{SearchLens, SearchFilters, SearchProgress};
+/// use std::sync::Arc;
+///
+/// let lens = SearchLens::new();
+/// let filters = SearchFilters { /* ... */ };
+///
+/// // Simple search without progress tracking
+/// let items = lens.query_broker(&filters)?;
+/// for item in items {
+///     let parser = lens.create_parser(&filters, &item.url)?;
+///     for elem in parser {
+///         println!("{}", elem);
+///     }
+/// }
+///
+/// // Search with progress tracking
+/// let callback = Arc::new(|progress: SearchProgress| {
+///     if let SearchProgress::ProgressUpdate { percent_complete, .. } = progress {
+///         println!("Progress: {:.1}%", percent_complete);
+///     }
+/// });
+///
+/// let handler = Arc::new(|elem: BgpElem, collector: String| {
+///     println!("{} from {}", elem, collector);
+/// });
+///
+/// let summary = lens.search_with_progress(&filters, Some(callback), handler)?;
+/// println!("Found {} messages", summary.total_messages);
+/// ```
 pub struct SearchLens;
 
 impl SearchLens {
@@ -149,6 +330,265 @@ impl SearchLens {
     /// Validate filters
     pub fn validate_filters(&self, filters: &SearchFilters) -> Result<()> {
         filters.validate()
+    }
+
+    /// Search BGP messages with progress tracking
+    ///
+    /// This method queries the broker, processes all matching files in parallel,
+    /// and reports progress through the callback.
+    ///
+    /// # Arguments
+    ///
+    /// * `filters` - Filters to apply during search
+    /// * `progress_callback` - Optional callback to receive progress updates
+    /// * `element_handler` - Handler called for each found BGP element
+    ///
+    /// # Returns
+    ///
+    /// A summary of the search results
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use monocle::lens::search::{SearchLens, SearchFilters, SearchProgress};
+    /// use std::sync::Arc;
+    ///
+    /// let lens = SearchLens::new();
+    /// let filters = SearchFilters { /* ... */ };
+    ///
+    /// let callback = Arc::new(|progress: SearchProgress| {
+    ///     match progress {
+    ///         SearchProgress::FilesFound { count } => {
+    ///             println!("Found {} files to process", count);
+    ///         }
+    ///         SearchProgress::ProgressUpdate { percent_complete, total_messages, .. } => {
+    ///             println!("Progress: {:.1}%, found {} messages", percent_complete, total_messages);
+    ///         }
+    ///         SearchProgress::Completed { total_messages, duration_secs, .. } => {
+    ///             println!("Done: {} messages in {:.2}s", total_messages, duration_secs);
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// });
+    ///
+    /// let handler = Arc::new(|elem: BgpElem, collector: String| {
+    ///     // Process element
+    /// });
+    ///
+    /// let summary = lens.search_with_progress(&filters, Some(callback), handler)?;
+    /// ```
+    pub fn search_with_progress(
+        &self,
+        filters: &SearchFilters,
+        progress_callback: Option<SearchProgressCallback>,
+        element_handler: ElementHandler,
+    ) -> Result<SearchSummary> {
+        // Notify broker query starting
+        if let Some(ref cb) = progress_callback {
+            cb(SearchProgress::QueryingBroker);
+        }
+
+        // Query broker
+        let items = self.query_broker(filters)?;
+        let total_files = items.len();
+
+        // Notify files found
+        if let Some(ref cb) = progress_callback {
+            cb(SearchProgress::FilesFound { count: total_files });
+        }
+
+        if total_files == 0 {
+            if let Some(ref cb) = progress_callback {
+                cb(SearchProgress::Completed {
+                    total_files: 0,
+                    successful_files: 0,
+                    failed_files: 0,
+                    total_messages: 0,
+                    duration_secs: 0.0,
+                    files_per_sec: None,
+                });
+            }
+
+            return Ok(SearchSummary {
+                total_files: 0,
+                successful_files: 0,
+                failed_files: 0,
+                total_messages: 0,
+                duration_secs: 0.0,
+            });
+        }
+
+        let start_time = Instant::now();
+        let files_completed = AtomicU64::new(0);
+        let successful_files = AtomicU64::new(0);
+        let failed_files = AtomicU64::new(0);
+        let total_messages = AtomicU64::new(0);
+
+        // Process files in parallel
+        items.into_par_iter().enumerate().for_each(|(index, item)| {
+            let url = item.url.clone();
+            let collector = item.collector_id.clone();
+
+            // Notify file started
+            if let Some(ref cb) = progress_callback {
+                cb(SearchProgress::FileStarted {
+                    file_index: index,
+                    total_files,
+                    file_url: url.clone(),
+                    collector: collector.clone(),
+                });
+            }
+
+            // Try to parse the file
+            match filters.to_parser(url.as_str()) {
+                Ok(parser) => {
+                    let mut file_messages: u64 = 0;
+
+                    for elem in parser {
+                        element_handler(elem, collector.clone());
+                        file_messages += 1;
+                    }
+
+                    total_messages.fetch_add(file_messages, Ordering::Relaxed);
+                    successful_files.fetch_add(1, Ordering::Relaxed);
+                    let completed = files_completed.fetch_add(1, Ordering::Relaxed) + 1;
+
+                    // Notify file completed
+                    if let Some(ref cb) = progress_callback {
+                        cb(SearchProgress::FileCompleted {
+                            file_index: index,
+                            total_files,
+                            messages_found: file_messages,
+                            success: true,
+                            error: None,
+                        });
+
+                        // Send progress update
+                        let elapsed = start_time.elapsed().as_secs_f64();
+                        let percent = completed as f64 / total_files as f64 * 100.0;
+                        let eta = if completed > 0 && percent < 100.0 {
+                            let rate = elapsed / completed as f64;
+                            Some(rate * (total_files as u64 - completed) as f64)
+                        } else {
+                            None
+                        };
+
+                        cb(SearchProgress::ProgressUpdate {
+                            files_completed: completed as usize,
+                            total_files,
+                            total_messages: total_messages.load(Ordering::Relaxed),
+                            percent_complete: percent,
+                            elapsed_secs: elapsed,
+                            eta_secs: eta,
+                        });
+                    }
+                }
+                Err(e) => {
+                    failed_files.fetch_add(1, Ordering::Relaxed);
+                    let completed = files_completed.fetch_add(1, Ordering::Relaxed) + 1;
+
+                    // Notify file failed
+                    if let Some(ref cb) = progress_callback {
+                        cb(SearchProgress::FileCompleted {
+                            file_index: index,
+                            total_files,
+                            messages_found: 0,
+                            success: false,
+                            error: Some(e.to_string()),
+                        });
+
+                        // Send progress update
+                        let elapsed = start_time.elapsed().as_secs_f64();
+                        let percent = completed as f64 / total_files as f64 * 100.0;
+                        let eta = if completed > 0 && percent < 100.0 {
+                            let rate = elapsed / completed as f64;
+                            Some(rate * (total_files as u64 - completed) as f64)
+                        } else {
+                            None
+                        };
+
+                        cb(SearchProgress::ProgressUpdate {
+                            files_completed: completed as usize,
+                            total_files,
+                            total_messages: total_messages.load(Ordering::Relaxed),
+                            percent_complete: percent,
+                            elapsed_secs: elapsed,
+                            eta_secs: eta,
+                        });
+                    }
+                }
+            }
+        });
+
+        let duration_secs = start_time.elapsed().as_secs_f64();
+        let final_successful = successful_files.load(Ordering::Relaxed) as usize;
+        let final_failed = failed_files.load(Ordering::Relaxed) as usize;
+        let final_messages = total_messages.load(Ordering::Relaxed);
+        let files_per_sec = if duration_secs > 0.0 {
+            Some(total_files as f64 / duration_secs)
+        } else {
+            None
+        };
+
+        // Notify completion
+        if let Some(ref cb) = progress_callback {
+            cb(SearchProgress::Completed {
+                total_files,
+                successful_files: final_successful,
+                failed_files: final_failed,
+                total_messages: final_messages,
+                duration_secs,
+                files_per_sec,
+            });
+        }
+
+        Ok(SearchSummary {
+            total_files,
+            successful_files: final_successful,
+            failed_files: final_failed,
+            total_messages: final_messages,
+            duration_secs,
+        })
+    }
+
+    /// Search and collect all BGP elements with progress tracking
+    ///
+    /// This is a convenience method that collects all elements into a Vec.
+    /// For large searches, consider using `search_with_progress` with a custom
+    /// handler to avoid high memory usage.
+    ///
+    /// # Arguments
+    ///
+    /// * `filters` - Filters to apply during search
+    /// * `progress_callback` - Optional callback to receive progress updates
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (elements, summary) where elements is a Vec of (BgpElem, collector_id) tuples
+    pub fn search_and_collect(
+        &self,
+        filters: &SearchFilters,
+        progress_callback: Option<SearchProgressCallback>,
+    ) -> Result<(Vec<(BgpElem, String)>, SearchSummary)> {
+        use std::sync::Mutex;
+
+        let elements: Arc<Mutex<Vec<(BgpElem, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let elements_clone = Arc::clone(&elements);
+
+        let handler: ElementHandler = Arc::new(move |elem, collector| {
+            if let Ok(mut vec) = elements_clone.lock() {
+                vec.push((elem, collector));
+            }
+        });
+
+        let summary = self.search_with_progress(filters, progress_callback, handler)?;
+
+        let result = Arc::try_unwrap(elements)
+            .map_err(|_| anyhow::anyhow!("Failed to unwrap elements Arc"))?
+            .into_inner()
+            .map_err(|e| anyhow::anyhow!("Failed to get elements from Mutex: {}", e))?;
+
+        Ok((result, summary))
     }
 }
 
@@ -298,5 +738,24 @@ mod tests {
             }
             println!("All items correctly filtered by collector");
         }
+    }
+
+    #[test]
+    fn test_search_progress_serialization() {
+        // Test that progress types can be serialized for GUI communication
+        let progress = SearchProgress::FilesFound { count: 42 };
+        let json = serde_json::to_string(&progress).expect("Failed to serialize");
+        assert!(json.contains("42"));
+
+        let progress = SearchProgress::ProgressUpdate {
+            files_completed: 10,
+            total_files: 100,
+            total_messages: 5000,
+            percent_complete: 10.0,
+            elapsed_secs: 5.5,
+            eta_secs: Some(49.5),
+        };
+        let json = serde_json::to_string(&progress).expect("Failed to serialize");
+        assert!(json.contains("percent_complete"));
     }
 }

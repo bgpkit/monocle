@@ -79,22 +79,24 @@ src/
 | `database/core` | ✅ Complete | Connection, schema management |
 | `database/session` | ✅ Complete | MsgStore for search results |
 | `database/monocle` | ✅ Complete | MonocleDatabase, As2org/As2rel repos |
-| `services/as2org` | ✅ Complete | Service, args, types |
-| `services/as2rel` | ✅ Complete | Service, args, types |
-| `services/country` | ✅ Complete | In-memory lookup using bgpkit-commons |
-| `filters` | ✅ Complete | Feature-gated clap derives |
-| `utils` | ✅ Complete | IP lookup, Pfx2AS, RPKI utilities |
-| Feature flags | ✅ Complete | Phase 3 - cli, server, full features |
-| Web server | 🔲 Pending | Phase 4 |
+| `lens/as2org` | ✅ Complete | Lens, args, types |
+| `lens/as2rel` | ✅ Complete | Lens, args, types |
+| `lens/country` | ✅ Complete | In-memory lookup using bgpkit-commons |
+| `lens/parse` | ✅ Complete | MRT parsing with progress tracking |
+| `lens/search` | ✅ Complete | BGP search with progress tracking |
+| `lens/rpki` | ✅ Complete | RPKI validation |
+| `lens/ip` | ✅ Complete | IP information lookup |
+| Feature flags | ✅ Complete | cli feature for CLI dependencies |
+| Progress tracking | ✅ Complete | Callback-based progress for parse/search |
 
 ### Phase Completion Status
 
 | Phase | Status | Description |
 |-------|--------|-------------|
 | Phase 1 | ✅ Complete | Database module (`database/`) |
-| Phase 2 | ✅ Complete | Services module (`services/`) |
-| Phase 3 | ✅ Complete | Feature flags (cli, server, full) |
-| Phase 4 | 🔲 Pending | Web server implementation |
+| Phase 2 | ✅ Complete | Lens module (`lens/`) |
+| Phase 3 | ✅ Complete | Feature flags (cli, full) |
+| Phase 4 | ✅ Complete | Progress tracking for GUI support |
 | Phase 5 | 🔄 In Progress | CLI migration & cleanup |
 
 ## Module Architecture
@@ -340,11 +342,8 @@ cli = [
     "dep:tracing-subscriber",
 ]
 
-# Web server support (placeholder for Phase 4)
-server = []
-
-# Full build with all features
-full = ["cli", "server"]
+# Full build with all features (currently same as cli)
+full = ["cli"]
 ```
 
 ### Feature-Gated Code
@@ -380,27 +379,89 @@ monocle = { version = "0.9", features = ["cli"] }
 monocle = { version = "0.9" }
 ```
 
+## Progress Tracking
+
+Monocle provides callback-based progress tracking for long-running operations,
+enabling responsive GUI applications and CLI progress bars.
+
+### Parse Progress
+
+The `ParseLens` reports progress every 10,000 messages:
+
+```rust
+use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
+use std::sync::Arc;
+
+let lens = ParseLens::new();
+let filters = ParseFilters::default();
+
+let callback = Arc::new(|progress: ParseProgress| {
+    match progress {
+        ParseProgress::Started { file_path } => {
+            println!("Started parsing: {}", file_path);
+        }
+        ParseProgress::Update { messages_processed, rate, .. } => {
+            println!("Processed {} messages ({:.0} msg/s)", 
+                messages_processed, rate.unwrap_or(0.0));
+        }
+        ParseProgress::Completed { total_messages, duration_secs, .. } => {
+            println!("Done: {} messages in {:.2}s", total_messages, duration_secs);
+        }
+    }
+});
+
+let elems = lens.parse_with_progress(&filters, "file.mrt", Some(callback))?;
+```
+
+### Search Progress
+
+The `SearchLens` reports progress as a percentage of files processed:
+
+```rust
+use monocle::lens::search::{SearchLens, SearchFilters, SearchProgress};
+use std::sync::Arc;
+
+let lens = SearchLens::new();
+let filters = SearchFilters { /* ... */ };
+
+let callback = Arc::new(|progress: SearchProgress| {
+    match progress {
+        SearchProgress::FilesFound { count } => {
+            println!("Found {} files to process", count);
+        }
+        SearchProgress::ProgressUpdate { percent_complete, total_messages, .. } => {
+            println!("Progress: {:.1}%, found {} messages", percent_complete, total_messages);
+        }
+        SearchProgress::Completed { total_files, total_messages, duration_secs, .. } => {
+            println!("Done: {} files, {} messages in {:.2}s", 
+                total_files, total_messages, duration_secs);
+        }
+        _ => {}
+    }
+});
+
+let handler = Arc::new(|elem, collector| {
+    // Process each element
+});
+
+let summary = lens.search_with_progress(&filters, Some(callback), handler)?;
+```
+
+### Progress Types
+
+Progress callbacks are thread-safe (`Send + Sync`) and may be called from multiple
+threads during parallel processing. The progress types are serializable to JSON
+for easy communication with GUI frontends.
+
 ## Future Architecture (Planned)
-
-### Web Server Module
-
-```
-server/
-├── mod.rs           # Server entry point
-├── websocket.rs     # WebSocket handler
-├── protocol.rs      # Message types
-└── handlers/
-    ├── as2org.rs
-    ├── as2rel.rs
-    └── search.rs
-```
 
 ### GUI Integration (GPUI)
 
 Separate crate `monocle-gui` using:
 - `gpui` framework
 - `gpui-component` for UI components
-- Shared services from monocle library
+- Shared lens library from monocle
+- Progress callbacks for responsive UI
 
 ## Key Types Reference
 
