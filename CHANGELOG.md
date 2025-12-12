@@ -34,6 +34,13 @@ All notable changes to this project will be documented in this file.
   * `RpkiValidationQuery` for RPKI validation JOINs
   * `Pfx2asQuery` for pfx2as lookups
 
+* **New `config` command**: Show monocle configuration and data paths
+  * Displays config file location and data directory
+  * Shows SQLite database status, size, and record counts
+  * Shows DuckDB database status, size, and schema version
+  * `--verbose` flag lists all files in the data directory with sizes and modification times
+  * `--json` flag outputs machine-readable JSON format
+
 ### Breaking Changes
 
 * **Removed `broker` command**: The standalone `broker` command has been removed

@@ -1,4 +1,5 @@
 pub mod as2rel;
+pub mod config;
 pub mod country;
 pub mod ip;
 pub mod parse;

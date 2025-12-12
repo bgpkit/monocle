@@ -12,6 +12,7 @@ mod commands;
 
 // Re-export argument types from command modules for use in the Commands enum
 use commands::as2rel::As2relArgs;
+use commands::config::ConfigArgs;
 use commands::country::CountryArgs;
 use commands::ip::IpArgs;
 use commands::parse::ParseArgs;
@@ -72,6 +73,9 @@ enum Commands {
 
     /// AS-level relationship lookup between ASNs.
     As2rel(As2relArgs),
+
+    /// Show monocle configuration and data paths.
+    Config(ConfigArgs),
 }
 
 pub(crate) fn elem_to_string(
@@ -128,5 +132,6 @@ fn main() {
         Commands::Ip(args) => commands::ip::run(args, json),
         Commands::Pfx2as(args) => commands::pfx2as::run(args, json),
         Commands::As2rel(args) => commands::as2rel::run(&config, args, json),
+        Commands::Config(args) => commands::config::run(&config, args, json),
     }
 }
