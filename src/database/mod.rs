@@ -83,10 +83,17 @@ pub use core::{
     DUCKDB_SCHEMA_VERSION,
 };
 
-// Monocle database types
+// Monocle database types (SQLite - for backward compatibility)
 pub use monocle::{
     ensure_data_dir, AggregatedRelationship, As2orgRecord, As2orgRepository, As2relEntry,
     As2relMeta, As2relRecord, As2relRepository, MonocleDatabase, BGPKIT_AS2REL_URL,
+};
+
+// Monocle database types (DuckDB - primary backend)
+pub use monocle::{
+    ensure_duckdb_data_dir, DuckDbAggregatedRelationship, DuckDbAs2orgRecord,
+    DuckDbAs2orgRepository, DuckDbAs2relEntry, DuckDbAs2relMeta, DuckDbAs2relRecord,
+    DuckDbAs2relRepository, DuckDbMonocleDatabase, DUCKDB_BGPKIT_AS2REL_URL,
 };
 
 // Session types

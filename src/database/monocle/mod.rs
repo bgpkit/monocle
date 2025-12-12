@@ -8,27 +8,50 @@
 //!
 //! All data in the monocle database can be regenerated from external sources,
 //! so schema migrations can reset and repopulate when needed.
+//!
+//! # Database Backends
+//!
+//! This module supports two database backends:
+//! - **SQLite** (`MonocleDatabase`): Legacy backend, retained for backward compatibility
+//! - **DuckDB** (`DuckDbMonocleDatabase`): Primary backend with native INET type support
+//!
+//! New code should prefer the DuckDB backend for better IP/prefix query performance.
 
 mod as2org;
 mod as2rel;
+mod duckdb_as2org;
+mod duckdb_as2rel;
+mod duckdb_monocle;
 
+// SQLite exports (for backward compatibility)
 pub use as2org::{As2orgRecord, As2orgRepository};
 pub use as2rel::{
     AggregatedRelationship, As2relEntry, As2relMeta, As2relRecord, As2relRepository,
     BGPKIT_AS2REL_URL,
 };
 
+// DuckDB exports (primary backend)
+pub use duckdb_as2org::{DuckDbAs2orgRecord, DuckDbAs2orgRepository};
+pub use duckdb_as2rel::{
+    DuckDbAggregatedRelationship, DuckDbAs2relEntry, DuckDbAs2relMeta, DuckDbAs2relRecord,
+    DuckDbAs2relRepository, DUCKDB_BGPKIT_AS2REL_URL,
+};
+pub use duckdb_monocle::{ensure_duckdb_data_dir, DuckDbMonocleDatabase};
+
 use crate::database::core::{DatabaseConn, SchemaManager, SchemaStatus};
 use anyhow::{anyhow, Result};
 use tracing::info;
 
-/// Main monocle database for persistent data
+/// Main monocle database for persistent data (SQLite backend)
 ///
 /// `MonocleDatabase` provides a unified interface to all monocle data tables.
 /// It handles:
 /// - Schema initialization and migrations
 /// - Automatic schema drift detection and reset
 /// - Access to data repositories
+///
+/// **Note**: For new code, prefer `DuckDbMonocleDatabase` which provides
+/// native INET type support for better IP/prefix query performance.
 pub struct MonocleDatabase {
     db: DatabaseConn,
 }
