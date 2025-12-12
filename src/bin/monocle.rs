@@ -34,10 +34,10 @@ struct Cli {
     debug: bool,
 
     /// Output format: table (default), markdown, json, json-pretty, json-line, psv
-    #[clap(short = 'o', long, global = true, value_name = "FORMAT")]
-    output: Option<OutputFormat>,
+    #[clap(long, global = true, value_name = "FORMAT")]
+    format: Option<OutputFormat>,
 
-    /// Output as JSON objects (shortcut for --output json-pretty)
+    /// Output as JSON objects (shortcut for --format json-pretty)
     #[clap(long, global = true)]
     json: bool,
 
@@ -100,9 +100,9 @@ fn main() {
             .init();
     }
 
-    // Determine output format: explicit --output takes precedence, then --json flag
-    let output_format = if let Some(format) = cli.output {
-        format
+    // Determine output format: explicit --format takes precedence, then --json flag
+    let output_format = if let Some(fmt) = cli.format {
+        fmt
     } else if cli.json {
         OutputFormat::JsonPretty
     } else {

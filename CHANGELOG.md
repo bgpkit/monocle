@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Unified Output Format
 
-* **Global `--output` / `-o` option**: All commands now support a unified output format option
+* **Global `--format` option**: All commands now support a unified output format option (long form only, no `-f` short form to avoid conflicts with subcommand flags like `whois -f`)
   * `table` (default): Pretty table with rounded borders
   * `markdown` / `md`: Markdown table format
   * `json`: Compact JSON (single line)
@@ -16,12 +16,12 @@ All notable changes to this project will be documented in this file.
 
 * **All informational messages now go to stderr**: Debug messages, progress updates, and explanatory text are now printed to stderr instead of stdout, enabling clean piping of data
   * Examples: "Updating AS2org data...", "Found 4407 ROAs (current data)", explanation text for as2rel
-  * This allows: `monocle rpki roas --origin 13335 -o json | jq '.[0]'`
+  * This allows: `monocle rpki roas --origin 13335 -f json | jq '.[0]'`
 
-* **Removed per-command format flags**: The following flags have been removed in favor of the global `--output` option:
+* **Removed per-command format flags**: The following flags have been removed in favor of the global `--format` option:
   * `--pretty` flag from `whois`, `as2rel`, `search`, `parse` commands
   * `--psv` / `-P` flag from `whois` command
-  * Local `--json` flags (global `--json` still works as shortcut for `--output json-pretty`)
+  * Local `--json` flags (global `--json` still works as shortcut for `--format json-pretty`)
 
 ### New Features
 
@@ -45,7 +45,7 @@ All notable changes to this project will be documented in this file.
   * Displays config file location and data directory
   * Shows SQLite database status, size, and record counts
   * `--verbose` flag lists all files in the data directory with sizes and modification times
-  * Supports all output formats via `--output` option
+  * Supports all output formats via `--format` option
 
 * **New `rpki roas` command**: List ROAs from RPKI data (current or historical)
   * `--origin <ASN>`: Filter by origin ASN

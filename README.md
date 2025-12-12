@@ -181,11 +181,14 @@ Subcommands:
 
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
-- `broker`: query BGPKIT Broker for available MRT metadata
 - `whois`: search AS and organization information by ASN or name
 - `country`: utility to look up country name and code
 - `time`: utility to convert time between unix timestamp and RFC3339 string
 - `rpki`: check RPKI validation for given ASNs or prefixes
+- `ip`: IP information lookup
+- `pfx2as`: bulk prefix-to-AS mapping lookup
+- `as2rel`: AS-level relationship lookup between ASNs
+- `config`: show monocle configuration and data paths
 
 Top-level help menu:
 
@@ -200,14 +203,20 @@ Commands:
   parse    Parse individual MRT files given a file path, local or remote
   search   Search BGP messages from all available public MRT files
   whois    ASN and organization lookup utility
-  country  ASN and organization lookup utility
+  country  Country name and code lookup utilities
   time     Time conversion utilities
   rpki     RPKI utilities
+  ip       IP information lookup
+  pfx2as   Bulk prefix-to-AS mapping lookup with the pre-generated data file
+  as2rel   AS-level relationship lookup between ASNs
+  config   Show monocle configuration and data paths
   help     Print this message or the help of the given subcommand(s)
 
 Options:
   -c, --config <CONFIG>  configuration file path, by default $HOME/.monocle.toml is used
       --debug            Print debug information
+      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json             Output as JSON objects (shortcut for --format json-pretty)
   -h, --help             Print help
   -V, --version          Print version
 ```
