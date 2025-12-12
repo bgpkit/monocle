@@ -96,5 +96,11 @@ pub use monocle::{
     DuckDbAs2relRepository, DuckDbMonocleDatabase, DUCKDB_BGPKIT_AS2REL_URL,
 };
 
+// Cache types (RPKI and Pfx2as)
+pub use monocle::{
+    AspaRecord, Pfx2asCacheMeta, Pfx2asCacheRepository, Pfx2asRecord, RoaRecord, RpkiCacheMeta,
+    RpkiCacheRepository, DEFAULT_PFX2AS_TTL, DEFAULT_RPKI_CURRENT_TTL,
+};
+
 // Session types
 pub use session::MsgStore;

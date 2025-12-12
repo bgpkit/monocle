@@ -22,6 +22,8 @@ mod as2rel;
 mod duckdb_as2org;
 mod duckdb_as2rel;
 mod duckdb_monocle;
+mod pfx2as_cache;
+mod rpki_cache;
 
 // SQLite exports (for backward compatibility)
 pub use as2org::{As2orgRecord, As2orgRepository};
@@ -37,6 +39,12 @@ pub use duckdb_as2rel::{
     DuckDbAs2relRepository, DUCKDB_BGPKIT_AS2REL_URL,
 };
 pub use duckdb_monocle::{ensure_duckdb_data_dir, DuckDbMonocleDatabase};
+
+// Cache exports (RPKI and Pfx2as)
+pub use pfx2as_cache::{Pfx2asCacheMeta, Pfx2asCacheRepository, Pfx2asRecord, DEFAULT_PFX2AS_TTL};
+pub use rpki_cache::{
+    AspaRecord, RoaRecord, RpkiCacheMeta, RpkiCacheRepository, DEFAULT_RPKI_CURRENT_TTL,
+};
 
 use crate::database::core::{DatabaseConn, SchemaManager, SchemaStatus};
 use anyhow::{anyhow, Result};

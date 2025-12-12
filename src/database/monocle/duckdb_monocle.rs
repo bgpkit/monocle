@@ -4,8 +4,8 @@
 //! The monocle database stores:
 //! - AS2Org mappings (AS to Organization) - denormalized for columnar efficiency
 //! - AS2Rel data (AS-level relationships)
-//! - RPKI cache (ROAs, ASPAs) - Phase 3
-//! - Pfx2as cache - Phase 3
+//! - RPKI cache (ROAs, ASPAs) - with freshness tracking
+//! - Pfx2as cache - with INET-based prefix queries
 //!
 //! All data in the monocle database can be regenerated from external sources,
 //! so schema migrations can reset and repopulate when needed.
@@ -17,6 +17,8 @@ use crate::database::core::{DuckDbConn, DuckDbSchemaManager, DuckDbSchemaStatus}
 
 use super::duckdb_as2org::DuckDbAs2orgRepository;
 use super::duckdb_as2rel::DuckDbAs2relRepository;
+use super::pfx2as_cache::Pfx2asCacheRepository;
+use super::rpki_cache::RpkiCacheRepository;
 
 /// Main monocle DuckDB database for persistent data
 ///
@@ -45,7 +47,8 @@ impl DuckDbMonocleDatabase {
             }
             DuckDbSchemaStatus::NotInitialized => {
                 info!("Initializing DuckDB monocle database schema");
-                schema.initialize_core()?;
+                // Initialize full schema including cache tables
+                schema.initialize()?;
             }
             DuckDbSchemaStatus::NeedsMigration { from, to } => {
                 info!(
@@ -55,7 +58,7 @@ impl DuckDbMonocleDatabase {
                 // For now, we reset and reinitialize
                 // In the future, we could implement incremental migrations
                 schema.reset()?;
-                schema.initialize_core()?;
+                schema.initialize()?;
             }
             DuckDbSchemaStatus::Incompatible {
                 database_version,
@@ -66,12 +69,12 @@ impl DuckDbMonocleDatabase {
                     database_version, required_version
                 );
                 schema.reset()?;
-                schema.initialize_core()?;
+                schema.initialize()?;
             }
             DuckDbSchemaStatus::Corrupted => {
                 info!("DuckDB monocle database schema corrupted, resetting");
                 schema.reset()?;
-                schema.initialize_core()?;
+                schema.initialize()?;
             }
         }
 
@@ -90,7 +93,8 @@ impl DuckDbMonocleDatabase {
     pub fn open_in_memory() -> Result<Self> {
         let conn = DuckDbConn::open_in_memory()?;
         let schema = DuckDbSchemaManager::new(&conn);
-        schema.initialize_core()?;
+        // Initialize full schema including cache tables
+        schema.initialize()?;
         Ok(Self { conn })
     }
 
@@ -102,6 +106,16 @@ impl DuckDbMonocleDatabase {
     /// Get a reference to the AS2Rel repository
     pub fn as2rel(&self) -> DuckDbAs2relRepository<'_> {
         DuckDbAs2relRepository::new(&self.conn)
+    }
+
+    /// Get a reference to the RPKI cache repository
+    pub fn rpki_cache(&self) -> RpkiCacheRepository<'_> {
+        RpkiCacheRepository::new(&self.conn)
+    }
+
+    /// Get a reference to the Pfx2as cache repository
+    pub fn pfx2as_cache(&self) -> Pfx2asCacheRepository<'_> {
+        Pfx2asCacheRepository::new(&self.conn)
     }
 
     /// Get the underlying DuckDB connection (for advanced queries)
