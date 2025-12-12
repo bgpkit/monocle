@@ -11,8 +11,10 @@
 //! ```text
 //! database/
 //! ├── core/           # Foundation
-//! │   ├── connection  # DatabaseConn wrapper
-//! │   └── schema      # Schema definitions and management
+//! │   ├── connection  # SQLite DatabaseConn wrapper (for exports)
+//! │   ├── duckdb_conn # DuckDB DuckDbConn wrapper (primary backend)
+//! │   ├── schema      # SQLite schema definitions and management
+//! │   └── duckdb_schema # DuckDB schema definitions and management
 //! │
 //! ├── session/        # One-time storage
 //! │   └── msg_store   # BGP message search results
@@ -21,6 +23,15 @@
 //!     ├── as2org      # AS-to-Organization mappings
 //!     └── as2rel      # AS-level relationships
 //! ```
+//!
+//! # Database Backend Strategy
+//!
+//! Monocle uses a dual-database approach:
+//! - **DuckDB** is used as the internal database for monocle's data storage,
+//!   leveraging native INET type support for IP/prefix operations and columnar
+//!   storage for better compression.
+//! - **SQLite** is retained for export functionality (search results) to maintain
+//!   compatibility with tools that expect SQLite files.
 //!
 //! # Usage
 //!
@@ -62,9 +73,21 @@ pub mod monocle;
 pub mod session;
 
 // Re-export commonly used types
+
+// SQLite types (for backward compatibility and export functionality)
 pub use core::{DatabaseConn, SchemaManager, SchemaStatus, SCHEMA_VERSION};
+
+// DuckDB types (primary database backend)
+pub use core::{
+    DuckDbConn, DuckDbSchemaDefinitions, DuckDbSchemaManager, DuckDbSchemaStatus,
+    DUCKDB_SCHEMA_VERSION,
+};
+
+// Monocle database types
 pub use monocle::{
     ensure_data_dir, AggregatedRelationship, As2orgRecord, As2orgRepository, As2relEntry,
     As2relMeta, As2relRecord, As2relRepository, MonocleDatabase, BGPKIT_AS2REL_URL,
 };
+
+// Session types
 pub use session::MsgStore;

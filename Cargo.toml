@@ -54,6 +54,7 @@ oneio = { version = "0.20.0", default-features = false, features = ["https", "gz
 radar-rs = "0.1.0"
 rayon = "1.8"
 rusqlite = { version = "0.37", features = ["bundled"] }
+duckdb = { version = "1.4.3", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tabled = "0.20"
