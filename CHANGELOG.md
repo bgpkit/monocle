@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### RPKI Command Revisions
 
 * **Removed `list` subcommand**: The `rpki list` command was a duplicate of `rpki roas` and has been removed
+* **Removed `summary` subcommand**: The `rpki summary` command has been removed as the underlying Cloudflare GraphQL data is no longer available
 * **Renamed `check` to `validate`**: The `rpki check` command is now `rpki validate`
   * Now takes two positional arguments (prefix and ASN) in any order
   * Automatically detects which argument is the prefix and which is the ASN

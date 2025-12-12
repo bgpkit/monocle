@@ -2,7 +2,7 @@ use chrono::NaiveDate;
 use clap::Subcommand;
 use monocle::lens::rpki::{
     RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource, RpkiLens, RpkiRoaEntry,
-    RpkiRoaLookupArgs, RpkiSummaryArgs, RpkiValidationArgs, RpkiViewsCollectorOption,
+    RpkiRoaLookupArgs, RpkiValidationArgs, RpkiViewsCollectorOption,
 };
 use monocle::lens::utils::OutputFormat;
 use std::collections::HashSet;
@@ -20,12 +20,6 @@ pub enum RpkiCommands {
         /// Two resources: one prefix and one ASN (order does not matter)
         #[clap(num_args = 2)]
         resources: Vec<String>,
-    },
-
-    /// summarize RPKI status for a list of given ASNs (Cloudflare)
-    Summary {
-        #[clap()]
-        asns: Vec<u32>,
     },
 
     /// list ROAs from RPKI data (current or historical via bgpkit-commons)
@@ -74,7 +68,6 @@ pub enum RpkiCommands {
 pub fn run(commands: RpkiCommands, output_format: OutputFormat) {
     match commands {
         RpkiCommands::Validate { resources } => run_validate(resources, output_format),
-        RpkiCommands::Summary { asns } => run_summary(asns, output_format),
         RpkiCommands::Roas {
             resources,
             date,
@@ -294,77 +287,6 @@ fn run_validate(resources: Vec<String>, output_format: OutputFormat) {
                             .unwrap_or("")
                     );
                 }
-            }
-        }
-    }
-}
-
-fn run_summary(asns: Vec<u32>, output_format: OutputFormat) {
-    eprintln!("Data source: Cloudflare RPKI GraphQL API");
-
-    let lens = RpkiLens::new();
-
-    let mut results = Vec::new();
-    for asn in asns {
-        let args = RpkiSummaryArgs::new(asn);
-        match lens.summarize(&args) {
-            Ok(summary) => results.push(summary),
-            Err(e) => {
-                eprintln!("Failed to summarize ASN {}: {}", asn, e);
-            }
-        }
-    }
-
-    if results.is_empty() {
-        if output_format.is_json() {
-            println!("[]");
-        }
-        return;
-    }
-
-    match output_format {
-        OutputFormat::Table => {
-            println!("{}", Table::new(&results).with(Style::rounded()));
-        }
-        OutputFormat::Markdown => {
-            println!("{}", Table::new(&results).with(Style::markdown()));
-        }
-        OutputFormat::Json => match serde_json::to_string(&results) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-        },
-        OutputFormat::JsonPretty => match serde_json::to_string_pretty(&results) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-        },
-        OutputFormat::JsonLine => {
-            for result in &results {
-                match serde_json::to_string(result) {
-                    Ok(json) => println!("{}", json),
-                    Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-                }
-            }
-        }
-        OutputFormat::Psv => {
-            println!("asn|roas_count|ipv4_prefixes|ipv6_prefixes");
-            for r in &results {
-                let r_json = serde_json::to_value(r).unwrap_or_default();
-                println!(
-                    "{}|{}|{}|{}",
-                    r_json.get("asn").and_then(|v| v.as_u64()).unwrap_or(0),
-                    r_json
-                        .get("roas_count")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    r_json
-                        .get("ipv4_prefixes")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    r_json
-                        .get("ipv6_prefixes")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0)
-                );
             }
         }
     }
