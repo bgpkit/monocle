@@ -3,6 +3,10 @@
 //! This module provides filter types for searching BGP messages across multiple MRT files.
 //! The filter types can optionally derive Clap's Args trait when the `cli` feature is enabled.
 
+mod query_builder;
+
+pub use query_builder::{build_prefix_filter, SearchFilterSpec, SearchQueryBuilder};
+
 use crate::lens::parse::ParseFilters;
 use anyhow::Result;
 use bgpkit_broker::BrokerItem;

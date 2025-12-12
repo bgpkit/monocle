@@ -83,6 +83,12 @@ pub use core::{
     DUCKDB_SCHEMA_VERSION,
 };
 
+// DuckDB query helpers
+pub use core::{
+    build_prefix_containment_clause, order_by_prefix_length, Pfx2asQuery, PrefixQueryBuilder,
+    RpkiValidationQuery,
+};
+
 // Monocle database types (SQLite - for backward compatibility)
 pub use monocle::{
     ensure_data_dir, AggregatedRelationship, As2orgRecord, As2orgRepository, As2relEntry,

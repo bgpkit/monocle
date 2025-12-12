@@ -14,6 +14,7 @@
 
 mod connection;
 mod duckdb_conn;
+mod duckdb_query;
 mod duckdb_schema;
 mod schema;
 
@@ -23,6 +24,10 @@ pub use schema::{SchemaDefinitions, SchemaManager, SchemaStatus, SCHEMA_VERSION}
 
 // DuckDB exports (primary database backend)
 pub use duckdb_conn::DuckDbConn;
+pub use duckdb_query::{
+    build_prefix_containment_clause, order_by_prefix_length, Pfx2asQuery, PrefixQueryBuilder,
+    RpkiValidationQuery,
+};
 pub use duckdb_schema::{
     DuckDbSchemaDefinitions, DuckDbSchemaManager, DuckDbSchemaStatus, DUCKDB_SCHEMA_VERSION,
 };

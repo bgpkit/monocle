@@ -10,11 +10,16 @@
 
 // Internal modules - all access should go through RpkiLens
 mod commons;
+mod sql_validator;
 mod validator;
 
 // Re-export only types needed for external use (input/output structs)
 // These are used as return types from RpkiLens methods
 pub use commons::{RpkiAspaEntry, RpkiAspaTableEntry, RpkiRoaEntry};
+pub use sql_validator::{
+    AspaCacheStats, AspaStatus, BulkValidationResult, CoveringRoa, RpkiCacheStats, RpkiStatus,
+    RpkiValidationResult, SqlAspaValidator, SqlRpkiValidator,
+};
 pub use validator::{
     RpkiRoa, RpkiRoaPrefix, RpkiRoaResource, RpkiRoaTableItem, RpkiSummaryTableItem,
     RpkiValidationState, RpkiValidity,
