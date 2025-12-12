@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### RPKI Command Revisions
+
+* **Removed `list` subcommand**: The `rpki list` command was a duplicate of `rpki roas` and has been removed
+* **Renamed `check` to `validate`**: The `rpki check` command is now `rpki validate`
+  * Now takes two positional arguments (prefix and ASN) in any order
+  * Automatically detects which argument is the prefix and which is the ASN
+  * Returns an error if both resources are the same type or if parsing fails
+* **Updated `roas` subcommand**: Now accepts multiple positional resource arguments
+  * Resources (prefixes or ASNs) are auto-detected from the input
+  * Results are the union of all matching ROAs (deduplicated)
+  * If no resources specified, returns all ROAs
+* **Added data source display**: All RPKI commands now display the data source via `eprintln` at the top of output
+  * Current data always uses Cloudflare's rpki.json endpoint
+  * Historical data uses the specified source (RIPE or RPKIviews)
+* **Fixed markdown table formatting**: Removed line wrapping in markdown output for ASPAs to comply with markdown table grammar
+
 ### Progress Tracking for GUI Support
 
 * **Added progress tracking for parse operations**: `ParseLens` now supports callback-based progress reporting

@@ -1,11 +1,14 @@
 use chrono::NaiveDate;
 use clap::Subcommand;
 use monocle::lens::rpki::{
-    RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource, RpkiLens, RpkiListArgs,
+    RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource, RpkiLens, RpkiRoaEntry,
     RpkiRoaLookupArgs, RpkiSummaryArgs, RpkiValidationArgs, RpkiViewsCollectorOption,
 };
 use monocle::lens::utils::OutputFormat;
+use std::collections::HashSet;
+#[allow(unused_imports)]
 use tabled::settings::object::Columns;
+#[allow(unused_imports)]
 use tabled::settings::width::Width;
 use tabled::settings::Style;
 use tabled::Table;
@@ -13,19 +16,10 @@ use tabled::Table;
 #[derive(Subcommand)]
 pub enum RpkiCommands {
     /// validate a prefix-asn pair with a RPKI validator (Cloudflare GraphQL)
-    Check {
-        #[clap(short, long)]
-        asn: u32,
-
-        #[clap(short, long)]
-        prefix: String,
-    },
-
-    /// list ROAs by ASN or prefix (Cloudflare real-time)
-    List {
-        /// prefix or ASN
-        #[clap()]
-        resource: String,
+    Validate {
+        /// Two resources: one prefix and one ASN (order does not matter)
+        #[clap(num_args = 2)]
+        resources: Vec<String>,
     },
 
     /// summarize RPKI status for a list of given ASNs (Cloudflare)
@@ -36,13 +30,9 @@ pub enum RpkiCommands {
 
     /// list ROAs from RPKI data (current or historical via bgpkit-commons)
     Roas {
-        /// Filter by origin ASN
-        #[clap(long)]
-        origin: Option<u32>,
-
-        /// Filter by prefix
-        #[clap(long)]
-        prefix: Option<String>,
+        /// Filter by resources (prefixes or ASNs, auto-detected)
+        #[clap()]
+        resources: Vec<String>,
 
         /// Load historical data for this date (YYYY-MM-DD)
         #[clap(long)]
@@ -83,16 +73,14 @@ pub enum RpkiCommands {
 
 pub fn run(commands: RpkiCommands, output_format: OutputFormat) {
     match commands {
-        RpkiCommands::Check { asn, prefix } => run_check(asn, prefix, output_format),
-        RpkiCommands::List { resource } => run_list(resource, output_format),
+        RpkiCommands::Validate { resources } => run_validate(resources, output_format),
         RpkiCommands::Summary { asns } => run_summary(asns, output_format),
         RpkiCommands::Roas {
-            origin,
-            prefix,
+            resources,
             date,
             source,
             collector,
-        } => run_roas(origin, prefix, date, source, collector, output_format),
+        } => run_roas(resources, date, source, collector, output_format),
         RpkiCommands::Aspas {
             customer,
             provider,
@@ -103,7 +91,93 @@ pub fn run(commands: RpkiCommands, output_format: OutputFormat) {
     }
 }
 
-fn run_check(asn: u32, prefix: String, output_format: OutputFormat) {
+/// Parse a resource string into either an ASN (u32) or a prefix (String)
+fn parse_resource(resource: &str) -> Result<ResourceType, String> {
+    let trimmed = resource.trim();
+
+    // Try to parse as ASN (with or without "AS" prefix)
+    let asn_str = if trimmed.to_uppercase().starts_with("AS") {
+        &trimmed[2..]
+    } else {
+        trimmed
+    };
+
+    if let Ok(asn) = asn_str.parse::<u32>() {
+        return Ok(ResourceType::Asn(asn));
+    }
+
+    // Try to parse as prefix (contains '/' or ':' for IPv6 or '.' for IPv4)
+    if trimmed.contains('/') || trimmed.contains(':') || trimmed.contains('.') {
+        // Basic validation - should contain a slash for CIDR notation or be an IP
+        return Ok(ResourceType::Prefix(trimmed.to_string()));
+    }
+
+    Err(format!(
+        "Could not parse '{}' as either an ASN or a prefix",
+        resource
+    ))
+}
+
+#[derive(Debug, Clone)]
+enum ResourceType {
+    Asn(u32),
+    Prefix(String),
+}
+
+fn run_validate(resources: Vec<String>, output_format: OutputFormat) {
+    eprintln!("Data source: Cloudflare RPKI GraphQL API");
+
+    if resources.len() != 2 {
+        eprintln!(
+            "ERROR: validate command requires exactly two resources (one prefix and one ASN)"
+        );
+        return;
+    }
+
+    let mut asn: Option<u32> = None;
+    let mut prefix: Option<String> = None;
+
+    for resource in &resources {
+        match parse_resource(resource) {
+            Ok(ResourceType::Asn(a)) => {
+                if asn.is_some() {
+                    eprintln!("ERROR: Two ASNs provided. Please provide one prefix and one ASN.");
+                    return;
+                }
+                asn = Some(a);
+            }
+            Ok(ResourceType::Prefix(p)) => {
+                if prefix.is_some() {
+                    eprintln!(
+                        "ERROR: Two prefixes provided. Please provide one prefix and one ASN."
+                    );
+                    return;
+                }
+                prefix = Some(p);
+            }
+            Err(e) => {
+                eprintln!("ERROR: {}", e);
+                return;
+            }
+        }
+    }
+
+    let asn = match asn {
+        Some(a) => a,
+        None => {
+            eprintln!("ERROR: No ASN provided. Please provide one prefix and one ASN.");
+            return;
+        }
+    };
+
+    let prefix = match prefix {
+        Some(p) => p,
+        None => {
+            eprintln!("ERROR: No prefix provided. Please provide one prefix and one ASN.");
+            return;
+        }
+    };
+
     let lens = RpkiLens::new();
     let args = RpkiValidationArgs::new(asn, &prefix);
 
@@ -225,76 +299,9 @@ fn run_check(asn: u32, prefix: String, output_format: OutputFormat) {
     }
 }
 
-fn run_list(resource: String, output_format: OutputFormat) {
-    let lens = RpkiLens::new();
-    let args = RpkiListArgs {
-        resource: resource.clone(),
-        format: monocle::lens::rpki::RpkiOutputFormat::Table, // Not used, we handle format ourselves
-    };
-
-    let roas = match lens.list_roas(&args) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("ERROR: {}", e);
-            return;
-        }
-    };
-
-    if roas.is_empty() {
-        if output_format.is_json() {
-            println!("[]");
-        } else {
-            println!("no matching ROAs found for {}", resource);
-        }
-        return;
-    }
-
-    match output_format {
-        OutputFormat::Table => {
-            println!("{}", Table::new(&roas).with(Style::rounded()));
-        }
-        OutputFormat::Markdown => {
-            println!("{}", Table::new(&roas).with(Style::markdown()));
-        }
-        OutputFormat::Json => match serde_json::to_string(&roas) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-        },
-        OutputFormat::JsonPretty => match serde_json::to_string_pretty(&roas) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-        },
-        OutputFormat::JsonLine => {
-            for roa in &roas {
-                match serde_json::to_string(roa) {
-                    Ok(json) => println!("{}", json),
-                    Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-                }
-            }
-        }
-        OutputFormat::Psv => {
-            println!("asn|prefix|max_length|name");
-            for roa in &roas {
-                let roa_json = serde_json::to_value(roa).unwrap_or_default();
-                println!(
-                    "{}|{}|{}|{}",
-                    roa_json.get("asn").and_then(|v| v.as_u64()).unwrap_or(0),
-                    roa_json
-                        .get("prefix")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(""),
-                    roa_json
-                        .get("max_length")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    roa_json.get("name").and_then(|v| v.as_str()).unwrap_or("")
-                );
-            }
-        }
-    }
-}
-
 fn run_summary(asns: Vec<u32>, output_format: OutputFormat) {
+    eprintln!("Data source: Cloudflare RPKI GraphQL API");
+
     let lens = RpkiLens::new();
 
     let mut results = Vec::new();
@@ -382,8 +389,7 @@ fn parse_collector(collector: &str) -> Option<RpkiViewsCollectorOption> {
 }
 
 fn run_roas(
-    origin: Option<u32>,
-    prefix: Option<String>,
+    resources: Vec<String>,
     date: Option<String>,
     source: String,
     collector: String,
@@ -401,24 +407,141 @@ fn run_roas(
         None => None,
     };
 
-    let mut lens = RpkiLens::new();
-    let args = RpkiRoaLookupArgs {
-        prefix,
-        asn: origin,
-        date: parsed_date,
-        source: parse_data_source(&source),
-        collector: parse_collector(&collector),
-        format: monocle::lens::rpki::RpkiOutputFormat::Table, // Not used
+    // Display data source - current data always uses Cloudflare
+    let source_display = match date {
+        Some(ref d) => format!(
+            "Data source: {} (historical data from {})",
+            source.to_uppercase(),
+            d
+        ),
+        None => "Data source: CLOUDFLARE (current data)".to_string(),
     };
+    eprintln!("{}", source_display);
 
-    let roas = match lens.get_roas(&args) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("ERROR: Failed to get ROAs: {}", e);
-            return;
+    // Parse resources into ASNs and prefixes
+    let mut asns: Vec<u32> = Vec::new();
+    let mut prefixes: Vec<String> = Vec::new();
+
+    for resource in &resources {
+        match parse_resource(resource) {
+            Ok(ResourceType::Asn(a)) => asns.push(a),
+            Ok(ResourceType::Prefix(p)) => prefixes.push(p),
+            Err(e) => {
+                eprintln!("ERROR: {}", e);
+                return;
+            }
         }
-    };
+    }
 
+    let mut lens = RpkiLens::new();
+
+    // If no resources specified, get all ROAs
+    if asns.is_empty() && prefixes.is_empty() {
+        let args = RpkiRoaLookupArgs {
+            prefix: None,
+            asn: None,
+            date: parsed_date,
+            source: parse_data_source(&source),
+            collector: parse_collector(&collector),
+            format: monocle::lens::rpki::RpkiOutputFormat::Table,
+        };
+
+        let roas = match lens.get_roas(&args) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("ERROR: Failed to get ROAs: {}", e);
+                return;
+            }
+        };
+
+        output_roas(roas, output_format);
+        return;
+    }
+
+    // Collect all ROAs matching any of the resources (union)
+    let mut all_roas = Vec::new();
+    let mut seen_keys: HashSet<String> = HashSet::new();
+
+    // Query for each ASN
+    for asn in &asns {
+        let args = RpkiRoaLookupArgs {
+            prefix: None,
+            asn: Some(*asn),
+            date: parsed_date,
+            source: parse_data_source(&source),
+            collector: parse_collector(&collector),
+            format: monocle::lens::rpki::RpkiOutputFormat::Table,
+        };
+
+        match lens.get_roas(&args) {
+            Ok(roas) => {
+                for roa in roas {
+                    let roa_json = serde_json::to_value(&roa).unwrap_or_default();
+                    let key = format!(
+                        "{}|{}|{}",
+                        roa_json.get("asn").and_then(|v| v.as_u64()).unwrap_or(0),
+                        roa_json
+                            .get("prefix")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        roa_json
+                            .get("max_length")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0)
+                    );
+                    if seen_keys.insert(key) {
+                        all_roas.push(roa);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("WARNING: Failed to get ROAs for ASN {}: {}", asn, e);
+            }
+        }
+    }
+
+    // Query for each prefix
+    for prefix in &prefixes {
+        let args = RpkiRoaLookupArgs {
+            prefix: Some(prefix.clone()),
+            asn: None,
+            date: parsed_date,
+            source: parse_data_source(&source),
+            collector: parse_collector(&collector),
+            format: monocle::lens::rpki::RpkiOutputFormat::Table,
+        };
+
+        match lens.get_roas(&args) {
+            Ok(roas) => {
+                for roa in roas {
+                    let roa_json = serde_json::to_value(&roa).unwrap_or_default();
+                    let key = format!(
+                        "{}|{}|{}",
+                        roa_json.get("asn").and_then(|v| v.as_u64()).unwrap_or(0),
+                        roa_json
+                            .get("prefix")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        roa_json
+                            .get("max_length")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0)
+                    );
+                    if seen_keys.insert(key) {
+                        all_roas.push(roa);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("WARNING: Failed to get ROAs for prefix {}: {}", prefix, e);
+            }
+        }
+    }
+
+    output_roas(all_roas, output_format);
+}
+
+fn output_roas(roas: Vec<RpkiRoaEntry>, output_format: OutputFormat) {
     if roas.is_empty() {
         if output_format.is_json() {
             println!("[]");
@@ -428,14 +551,7 @@ fn run_roas(
         return;
     }
 
-    eprintln!(
-        "Found {} ROAs{}",
-        roas.len(),
-        match &date {
-            Some(d) => format!(" (historical data from {})", d),
-            None => " (current data)".to_string(),
-        }
-    );
+    eprintln!("Found {} ROAs", roas.len());
 
     match output_format {
         OutputFormat::Table => {
@@ -461,28 +577,11 @@ fn run_roas(
             }
         }
         OutputFormat::Psv => {
-            println!("prefix|asn|max_length|not_before|not_after");
+            println!("prefix|origin_asn|max_length|ta");
             for roa in &roas {
-                let roa_json = serde_json::to_value(roa).unwrap_or_default();
                 println!(
-                    "{}|{}|{}|{}|{}",
-                    roa_json
-                        .get("prefix")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(""),
-                    roa_json.get("asn").and_then(|v| v.as_u64()).unwrap_or(0),
-                    roa_json
-                        .get("max_length")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    roa_json
-                        .get("not_before")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(""),
-                    roa_json
-                        .get("not_after")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                    "{}|{}|{}|{}",
+                    roa.prefix, roa.origin_asn, roa.max_length, roa.ta
                 );
             }
         }
@@ -508,6 +607,17 @@ fn run_aspas(
         },
         None => None,
     };
+
+    // Display data source - current data always uses Cloudflare
+    let source_display = match &date {
+        Some(d) => format!(
+            "Data source: {} (historical data from {})",
+            source.to_uppercase(),
+            d
+        ),
+        None => "Data source: CLOUDFLARE (current data)".to_string(),
+    };
+    eprintln!("{}", source_display);
 
     let mut lens = RpkiLens::new();
     let args = RpkiAspaLookupArgs {
@@ -536,14 +646,7 @@ fn run_aspas(
         return;
     }
 
-    eprintln!(
-        "Found {} ASPAs{}",
-        aspas.len(),
-        match &date {
-            Some(d) => format!(" (historical data from {})", d),
-            None => " (current data)".to_string(),
-        }
-    );
+    eprintln!("Found {} ASPAs", aspas.len());
 
     match output_format {
         OutputFormat::Table => {
@@ -557,12 +660,7 @@ fn run_aspas(
         }
         OutputFormat::Markdown => {
             let table_entries: Vec<RpkiAspaTableEntry> = aspas.iter().map(|a| a.into()).collect();
-            println!(
-                "{}",
-                Table::new(table_entries)
-                    .with(Style::markdown())
-                    .modify(Columns::last(), Width::wrap(60).keep_words(true))
-            );
+            println!("{}", Table::new(table_entries).with(Style::markdown()));
         }
         OutputFormat::Json => match serde_json::to_string(&aspas) {
             Ok(json) => println!("{}", json),
