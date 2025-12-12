@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Breaking Changes
 
+* **Removed `broker` command**: The standalone `broker` command has been removed
+  * Use `search --broker-files` instead to list matching MRT files without performing a search
+  * The new `--broker-files` flag outputs URLs (one per line) or full item details with `--json`
+
+* **Removed `radar` command**: The Cloudflare Radar API command has been removed
+  * This command depended on the `radar-rs` crate which required a Cloudflare API token
+  * Users can access Cloudflare Radar data directly via their API
+
 * **Library API refactoring**: All public functions are now accessed through lens structs
   * Internal helper functions (`ip_lookup`, `time_string_to_time`, `time_parse_to_rfc3339`, `time_to_table`) have been removed from public API
   * Users should use lens methods directly (e.g., `IpLens::lookup()`, `TimeLens::parse_time_string()`)

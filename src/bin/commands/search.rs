@@ -39,6 +39,10 @@ pub struct SearchArgs {
     #[clap(long)]
     pub sqlite_reset: bool,
 
+    /// Output matching broker files (URLs) and exit without searching
+    #[clap(long)]
+    pub broker_files: bool,
+
     /// Filter by AS path regex string
     #[clap(flatten)]
     pub filters: SearchFilters,
@@ -111,6 +115,7 @@ pub fn run(args: SearchArgs, json: bool) {
         sqlite_path,
         mrt_path,
         sqlite_reset,
+        broker_files,
         filters,
     } = args;
 
@@ -143,6 +148,29 @@ pub fn run(args: SearchArgs, json: bool) {
             std::process::exit(1);
         }
     };
+
+    if broker_files {
+        // Output all matching broker files and exit without searching
+        let items = match base_broker.query() {
+            Ok(items) => items,
+            Err(e) => {
+                eprintln!("Failed to query broker: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        if json {
+            match serde_json::to_string_pretty(&items) {
+                Ok(json_str) => println!("{}", json_str),
+                Err(e) => eprintln!("error serializing: {}", e),
+            }
+        } else {
+            for item in &items {
+                println!("{}", item.url);
+            }
+        }
+        return;
+    }
 
     if dry_run {
         // For dry run, get first page to show what would be processed

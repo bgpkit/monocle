@@ -12,12 +12,10 @@ mod commands;
 
 // Re-export argument types from command modules for use in the Commands enum
 use commands::as2rel::As2relArgs;
-use commands::broker::BrokerArgs;
 use commands::country::CountryArgs;
 use commands::ip::IpArgs;
 use commands::parse::ParseArgs;
 use commands::pfx2as::Pfx2asArgs;
-use commands::radar::RadarCommands;
 use commands::rpki::RpkiCommands;
 use commands::search::SearchArgs;
 use commands::time::TimeArgs;
@@ -48,9 +46,6 @@ enum Commands {
     /// Parse individual MRT files given a file path, local or remote.
     Parse(ParseArgs),
 
-    /// Query BGPKIT Broker for the meta data of available MRT files.
-    Broker(BrokerArgs),
-
     /// Search BGP messages from all available public MRT files.
     Search(SearchArgs),
 
@@ -71,12 +66,6 @@ enum Commands {
 
     /// IP information lookup
     Ip(IpArgs),
-
-    /// Cloudflare Radar API lookup (set CF_API_TOKEN to enable)
-    Radar {
-        #[clap(subcommand)]
-        commands: RadarCommands,
-    },
 
     /// Bulk prefix-to-AS mapping lookup with the pre-generated data file.
     Pfx2as(Pfx2asArgs),
@@ -132,12 +121,10 @@ fn main() {
     match cli.command {
         Commands::Parse(args) => commands::parse::run(args, json),
         Commands::Search(args) => commands::search::run(args, json),
-        Commands::Broker(args) => commands::broker::run(args, json),
         Commands::Whois(args) => commands::whois::run(&config, args, json),
         Commands::Time(args) => commands::time::run(args),
         Commands::Country(args) => commands::country::run(args),
         Commands::Rpki { commands } => commands::rpki::run(commands, json),
-        Commands::Radar { commands } => commands::radar::run(commands, json),
         Commands::Ip(args) => commands::ip::run(args, json),
         Commands::Pfx2as(args) => commands::pfx2as::run(args, json),
         Commands::As2rel(args) => commands::as2rel::run(&config, args, json),
