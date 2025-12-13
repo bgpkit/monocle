@@ -98,13 +98,6 @@ pub enum RpkiValidationState {
     Invalid,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RpkiBgpEntry {
-    asn: u32,
-    prefix: String,
-    validation: RpkiValidationResult,
-}
-
 impl Display for RpkiValidationState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -242,70 +235,6 @@ pub fn list_by_asn(asn: u32) -> Result<Vec<RpkiRoaResource>> {
     Ok(resources)
 }
 
-pub fn list_routed_by_state(asn: u32, state: RpkiValidationState) -> Result<Vec<RpkiBgpEntry>> {
-    let route_state_str = match state {
-        RpkiValidationState::NotFound => "NotFound",
-        RpkiValidationState::Valid => "Valid",
-        RpkiValidationState::Invalid => "Invalid",
-    };
-
-    let query_string = format!(
-        r#"
-    query GetRouted {{
-          bgp(asn:{}, state:{}){{
-          asn
-          prefix
-          validation {{
-                state
-                covering {{
-                  asn
-                  prefix {{
-                    maxLength
-                    prefix
-                  }}
-                }}
-              }}
-          }}
-      }}"#,
-        asn, route_state_str
-    );
-
-    let res = ureq::post(CLOUDFLARE_RPKI_GRAPHQL)
-        .header("Content-Type", "application/json")
-        .send_json(serde_json::json!({ "query": query_string }))?
-        .body_mut()
-        .read_json::<Value>()?;
-
-    let bgp_res: Vec<RpkiBgpEntry> = serde_json::from_value(
-        res.get("data")
-            .ok_or_else(|| anyhow::anyhow!("No 'data' field in response"))?
-            .get("bgp")
-            .ok_or_else(|| anyhow::anyhow!("No 'bgp' field in response data"))?
-            .to_owned(),
-    )?;
-    Ok(bgp_res)
-}
-
-pub fn list_routed(asn: u32) -> Result<(Vec<RpkiBgpEntry>, Vec<RpkiBgpEntry>, Vec<RpkiBgpEntry>)> {
-    Ok((
-        list_routed_by_state(asn, RpkiValidationState::Valid)?,
-        list_routed_by_state(asn, RpkiValidationState::Invalid)?,
-        list_routed_by_state(asn, RpkiValidationState::NotFound)?,
-    ))
-}
-
-pub fn summarize_asn(asn: u32) -> Result<RpkiSummaryTableItem> {
-    let (valid, invalid, unknown) = list_routed(asn)?;
-    let signed = list_by_asn(asn)?;
-    Ok(RpkiSummaryTableItem {
-        asn,
-        signed: signed.len(),
-        routed_valid: valid.len(),
-        routed_invalid: invalid.len(),
-        routed_unknown: unknown.len(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,16 +256,5 @@ mod tests {
     fn test_list_asn() {
         let res = list_by_asn(400644).unwrap();
         dbg!(&res);
-    }
-
-    #[test]
-    fn test_bgp() {
-        let (valid, invalid, unknown) = list_routed(701).unwrap();
-        println!(
-            "{} valid, {} invalid, {} unknown",
-            valid.len(),
-            invalid.len(),
-            unknown.len()
-        );
     }
 }

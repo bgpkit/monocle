@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### RPKI SQLite Caching and Validation
+
+* **SQLite-based RPKI cache**: Current RPKI data (ROAs and ASPAs) is now cached in SQLite for fast local queries
+  * IP prefixes stored as 16-byte start/end address pairs (IPv4 converted to IPv6-mapped format)
+  * Separate metadata table tracks update time, ROA count, and ASPA count
+  * Cache expires after 24 hours and automatically refreshes
+  * Use `--refresh` / `-r` flag to force a cache refresh
+
+* **Local RPKI validation**: The `validate` command now uses local SQLite data instead of Cloudflare GraphQL API
+  * Implements RFC 6811 validation logic:
+    * **Valid**: Covering ROA exists with matching ASN and prefix length ≤ max_length
+    * **Invalid**: Covering ROA exists but ASN doesn't match or prefix length exceeds max_length
+    * **NotFound**: No covering ROA exists for the prefix
+  * Returns detailed validation results with reason explanations
+
+* **New database schema (v2)**: Added RPKI tables to the monocle SQLite database
+  * `rpki_roa`: Stores ROA records with prefix ranges for efficient lookups
+  * `rpki_aspa`: Stores ASPA customer-provider relationships
+  * `rpki_meta`: Stores cache metadata (update time, counts)
+
 ### RPKI Command Revisions
 
 * **Removed `list` subcommand**: The `rpki list` command was a duplicate of `rpki roas` and has been removed
@@ -16,8 +36,11 @@ All notable changes to this project will be documented in this file.
   * Resources (prefixes or ASNs) are auto-detected from the input
   * Results are the union of all matching ROAs (deduplicated)
   * If no resources specified, returns all ROAs
+  * Current data uses SQLite cache; historical data fetches from RIPE/RPKIviews
+* **Updated `aspas` subcommand**: Current data now uses SQLite cache
+* **Added `--refresh` flag**: All RPKI commands support `-r`/`--refresh` to force cache refresh
 * **Added data source display**: All RPKI commands now display the data source via `eprintln` at the top of output
-  * Current data always uses Cloudflare's rpki.json endpoint
+  * Current data always uses Cloudflare's rpki.json endpoint (cached locally)
   * Historical data uses the specified source (RIPE or RPKIviews)
 * **Fixed markdown table formatting**: Removed line wrapping in markdown output for ASPAs to comply with markdown table grammar
 

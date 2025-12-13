@@ -106,6 +106,12 @@ pub use monocle::{
     BGPKIT_AS2REL_URL,
 };
 
+// RPKI repository (SQLite-based cache)
+pub use monocle::{
+    RpkiAspaRecord, RpkiCacheMetadata, RpkiRepository, RpkiRoaRecord, RpkiValidationResult,
+    RpkiValidationState, DEFAULT_RPKI_CACHE_TTL,
+};
+
 // Session types (SQLite-based for search result exports)
 pub use session::MsgStore;
 

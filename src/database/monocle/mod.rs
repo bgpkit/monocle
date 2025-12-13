@@ -12,12 +12,17 @@
 mod as2org;
 mod as2rel;
 mod file_cache;
+mod rpki;
 
 // SQLite-based repositories
 pub use as2org::{As2orgRecord, As2orgRepository};
 pub use as2rel::{
     AggregatedRelationship, As2relEntry, As2relMeta, As2relRecord, As2relRepository,
     BGPKIT_AS2REL_URL,
+};
+pub use rpki::{
+    RpkiAspaRecord, RpkiCacheMetadata, RpkiRepository, RpkiRoaRecord, RpkiValidationResult,
+    RpkiValidationState, DEFAULT_RPKI_CACHE_TTL,
 };
 
 // File-based cache for RPKI and Pfx2as
@@ -133,6 +138,11 @@ impl MonocleDatabase {
         As2relRepository::new(&self.db.conn)
     }
 
+    /// Get a reference to the RPKI repository
+    pub fn rpki(&self) -> RpkiRepository<'_> {
+        RpkiRepository::new(&self.db.conn)
+    }
+
     /// Get the underlying database connection (for advanced queries)
     ///
     /// Use this for cross-table queries that span multiple repositories.
@@ -169,6 +179,16 @@ impl MonocleDatabase {
     /// Returns the number of entries loaded.
     pub fn update_as2rel_from(&self, path: &str) -> Result<usize> {
         self.as2rel().load_from_path(path)
+    }
+
+    /// Check if the RPKI cache needs refresh
+    pub fn needs_rpki_refresh(&self) -> bool {
+        self.rpki().needs_refresh(DEFAULT_RPKI_CACHE_TTL)
+    }
+
+    /// Check if the RPKI cache needs refresh with custom TTL
+    pub fn needs_rpki_refresh_with_ttl(&self, ttl: chrono::Duration) -> bool {
+        self.rpki().needs_refresh(ttl)
     }
 
     /// Get metadata value from the database

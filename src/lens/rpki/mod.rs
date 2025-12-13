@@ -443,13 +443,6 @@ impl RpkiLens {
         Ok(roas)
     }
 
-    /// Get RPKI summary for an ASN using Cloudflare's RPKI API
-    ///
-    /// Returns statistics about signed prefixes and routing validity.
-    pub fn summarize(&self, args: &RpkiSummaryArgs) -> Result<RpkiSummaryTableItem> {
-        validator::summarize_asn(args.asn)
-    }
-
     // =========================================================================
     // Formatting methods
     // =========================================================================

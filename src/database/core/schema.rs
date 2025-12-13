@@ -8,7 +8,7 @@ use rusqlite::Connection;
 
 /// Current schema version
 /// Increment this when making breaking schema changes
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Schema definitions for all tables in the shared database
 pub struct SchemaDefinitions;
@@ -96,6 +96,47 @@ impl SchemaDefinitions {
         "CREATE INDEX IF NOT EXISTS idx_as2rel_asn1 ON as2rel(asn1)",
         "CREATE INDEX IF NOT EXISTS idx_as2rel_asn2 ON as2rel(asn2)",
     ];
+
+    /// SQL for creating the RPKI ROA table
+    pub const RPKI_ROA_TABLE: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS rpki_roa (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prefix_start BLOB NOT NULL,
+            prefix_end BLOB NOT NULL,
+            prefix_length INTEGER NOT NULL,
+            max_length INTEGER NOT NULL,
+            origin_asn INTEGER NOT NULL,
+            ta TEXT NOT NULL,
+            prefix_str TEXT NOT NULL
+        );
+    "#;
+
+    /// SQL for creating the RPKI ASPA table
+    pub const RPKI_ASPA_TABLE: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS rpki_aspa (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_asn INTEGER NOT NULL,
+            provider_asn INTEGER NOT NULL
+        );
+    "#;
+
+    /// SQL for creating the RPKI meta table
+    pub const RPKI_META_TABLE: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS rpki_meta (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            updated_at INTEGER NOT NULL,
+            roa_count INTEGER NOT NULL DEFAULT 0,
+            aspa_count INTEGER NOT NULL DEFAULT 0
+        );
+    "#;
+
+    /// SQL for creating RPKI indexes
+    pub const RPKI_INDEXES: &'static [&'static str] = &[
+        "CREATE INDEX IF NOT EXISTS idx_rpki_roa_prefix_range ON rpki_roa(prefix_start, prefix_end)",
+        "CREATE INDEX IF NOT EXISTS idx_rpki_roa_origin_asn ON rpki_roa(origin_asn)",
+        "CREATE INDEX IF NOT EXISTS idx_rpki_aspa_customer ON rpki_aspa(customer_asn)",
+        "CREATE INDEX IF NOT EXISTS idx_rpki_aspa_provider ON rpki_aspa(provider_asn)",
+    ];
 }
 
 /// Schema manager for the shared database
@@ -161,6 +202,26 @@ impl<'a> SchemaManager<'a> {
             self.conn
                 .execute(index_sql, [])
                 .map_err(|e| anyhow!("Failed to create AS2Rel index: {}", e))?;
+        }
+
+        // Create RPKI tables
+        self.conn
+            .execute(SchemaDefinitions::RPKI_ROA_TABLE, [])
+            .map_err(|e| anyhow!("Failed to create rpki_roa table: {}", e))?;
+
+        self.conn
+            .execute(SchemaDefinitions::RPKI_ASPA_TABLE, [])
+            .map_err(|e| anyhow!("Failed to create rpki_aspa table: {}", e))?;
+
+        self.conn
+            .execute(SchemaDefinitions::RPKI_META_TABLE, [])
+            .map_err(|e| anyhow!("Failed to create rpki_meta table: {}", e))?;
+
+        // Create RPKI indexes
+        for index_sql in SchemaDefinitions::RPKI_INDEXES {
+            self.conn
+                .execute(index_sql, [])
+                .map_err(|e| anyhow!("Failed to create RPKI index: {}", e))?;
         }
 
         Ok(())
@@ -230,6 +291,9 @@ impl<'a> SchemaManager<'a> {
             "as2org_org",
             "as2rel",
             "as2rel_meta",
+            "rpki_roa",
+            "rpki_aspa",
+            "rpki_meta",
         ];
 
         for table in required_tables {
@@ -288,6 +352,9 @@ impl<'a> SchemaManager<'a> {
         self.conn.execute("DROP TABLE IF EXISTS as2rel_meta", [])?;
         self.conn.execute("DROP TABLE IF EXISTS as2org_as", [])?;
         self.conn.execute("DROP TABLE IF EXISTS as2org_org", [])?;
+        self.conn.execute("DROP TABLE IF EXISTS rpki_roa", [])?;
+        self.conn.execute("DROP TABLE IF EXISTS rpki_aspa", [])?;
+        self.conn.execute("DROP TABLE IF EXISTS rpki_meta", [])?;
         self.conn.execute("DROP TABLE IF EXISTS monocle_meta", [])?;
 
         Ok(())

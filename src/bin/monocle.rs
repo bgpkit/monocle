@@ -117,7 +117,9 @@ fn main() {
         Commands::Whois(args) => commands::whois::run(&config, args, output_format),
         Commands::Time(args) => commands::time::run(args, output_format),
         Commands::Country(args) => commands::country::run(args, output_format),
-        Commands::Rpki { commands } => commands::rpki::run(commands, output_format),
+        Commands::Rpki { commands } => {
+            commands::rpki::run(commands, output_format, &config.data_dir)
+        }
         Commands::Ip(args) => commands::ip::run(args, output_format),
         Commands::Pfx2as(args) => commands::pfx2as::run(&config, args, output_format),
         Commands::As2rel(args) => commands::as2rel::run(&config, args, output_format),
