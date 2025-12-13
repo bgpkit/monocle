@@ -24,6 +24,12 @@ All notable changes to this project will be documented in this file.
   * `rpki_aspa`: Stores ASPA customer-provider relationships
   * `rpki_meta`: Stores cache metadata (update time, counts)
 
+* **Removed Cloudflare GraphQL API code**: The validator.rs module has been removed
+  * All validation now uses local SQLite-cached data
+  * Removed unused `RpkiValidationArgs`, `RpkiSummaryArgs`, `RpkiListArgs` types
+  * Removed `RpkiLens::validate()`, `RpkiLens::list_roas()` methods
+  * Cleaned up related formatting methods from `RpkiLens`
+
 ### RPKI Command Revisions
 
 * **Removed `list` subcommand**: The `rpki list` command was a duplicate of `rpki roas` and has been removed
