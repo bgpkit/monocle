@@ -27,6 +27,11 @@
 //!   - `search`: BGP message search lens
 //!   - `time`: Time parsing and formatting lens
 //!
+//! - **[`config`]**: Configuration management and shared types
+//!   - `MonocleConfig`: Main configuration struct
+//!   - `DataSource`: Available data sources for refresh operations
+//!   - Database info types for status reporting
+//!
 //! # Database Strategy
 //!
 //! Monocle uses SQLite for AS2Org and AS2Rel data storage. For data requiring
@@ -167,7 +172,7 @@
 //! }
 //! ```
 
-mod config;
+pub mod config;
 pub mod database;
 pub mod lens;
 
@@ -176,6 +181,12 @@ pub mod lens;
 // =============================================================================
 
 pub use config::MonocleConfig;
+
+// Shared database info types (used by config and database commands)
+pub use config::{
+    format_size, get_cache_info, get_cache_settings, get_data_source_info, get_sqlite_info,
+    CacheInfo, CacheSettings, DataSource, DataSourceInfo, DataSourceStatus, SqliteDatabaseInfo,
+};
 
 // =============================================================================
 // Database Module - Re-export commonly used types

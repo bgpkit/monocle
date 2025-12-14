@@ -10,8 +10,8 @@
 //!
 //! All functionality is accessed through the `RpkiLens` struct.
 
-// Internal modules
-mod commons;
+// Public modules (for advanced use cases like database refresh)
+pub mod commons;
 
 // Re-export types needed for external use (input/output structs)
 pub use commons::{RpkiAspaEntry, RpkiAspaTableEntry, RpkiRoaEntry};

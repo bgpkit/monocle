@@ -13,6 +13,7 @@ mod commands;
 use commands::as2rel::As2relArgs;
 use commands::config::ConfigArgs;
 use commands::country::CountryArgs;
+use commands::database::DatabaseArgs;
 use commands::ip::IpArgs;
 use commands::parse::ParseArgs;
 use commands::pfx2as::Pfx2asArgs;
@@ -79,6 +80,9 @@ enum Commands {
 
     /// Show monocle configuration and data paths.
     Config(ConfigArgs),
+
+    /// Database management commands (refresh, backup, status, clear).
+    Database(DatabaseArgs),
 }
 
 fn main() {
@@ -124,5 +128,6 @@ fn main() {
         Commands::Pfx2as(args) => commands::pfx2as::run(&config, args, output_format),
         Commands::As2rel(args) => commands::as2rel::run(&config, args, output_format),
         Commands::Config(args) => commands::config::run(&config, args, output_format),
+        Commands::Database(args) => commands::database::run(&config, args, output_format),
     }
 }

@@ -9,9 +9,7 @@ use monocle::lens::rpki::{
 };
 use monocle::lens::utils::OutputFormat;
 use std::collections::HashSet;
-#[allow(unused_imports)]
 use tabled::settings::object::Columns;
-#[allow(unused_imports)]
 use tabled::settings::width::Width;
 use tabled::settings::Style;
 use tabled::Table;

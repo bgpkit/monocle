@@ -1,6 +1,7 @@
 pub mod as2rel;
 pub mod config;
 pub mod country;
+pub mod database;
 pub mod ip;
 pub mod parse;
 pub mod pfx2as;

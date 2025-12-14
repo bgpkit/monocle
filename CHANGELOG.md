@@ -4,7 +4,38 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-### RPKI SQLite Caching and Validation
+### New `database` Command
+
+* **New `monocle database` command**: Consolidated database management with subcommands for refresh, backup, status, and clear operations
+  * `monocle database` (or `monocle database status`): Show database status including record counts, last update times, and cache settings
+  * `monocle database refresh <source>`: Refresh a specific data source (as2org, as2rel, rpki, pfx2as-cache)
+  * `monocle database refresh --all`: Refresh all data sources at once
+  * `monocle database backup <dest>`: Backup the SQLite database to a destination path
+  * `monocle database backup <dest> --include-cache`: Also backup cache files
+  * `monocle database clear <source>`: Clear a specific data source (with confirmation prompt)
+  * `monocle database clear <source> -y`: Skip confirmation prompt
+  * `monocle database sources`: List available data sources with their status and last update time
+
+* **RPKI is now a proper database source**: RPKI data (ROAs and ASPAs) is stored in SQLite instead of file-based cache
+  * `monocle database refresh rpki` loads current RPKI data from Cloudflare and stores in SQLite
+  * `monocle database refresh --all` includes RPKI data
+  * Status shows separate ROA and ASPA counts (e.g., "784188 ROAs, 388 ASPAs")
+  * Last update time is tracked and displayed
+
+* **Timing information for refresh operations**: All refresh commands now show duration
+  * Single source: `✓ Loaded 120415 ASes and 96828 organizations (5.72s)`
+  * All sources: Shows per-source timing and total time
+
+* **Batch insert performance optimizations**: Database refresh operations use optimized SQLite settings
+  * `PRAGMA synchronous = OFF` during batch inserts
+  * `PRAGMA journal_mode = MEMORY` for faster writes
+  * `PRAGMA cache_size = -64000` (64MB cache)
+  * Settings restored to safe defaults after batch completes
+
+* **Shared database info functions**: Both `monocle config` and `monocle database` commands now use shared functions for consistent status reporting
+  * `get_sqlite_info()`, `get_cache_info()`, `get_cache_settings()`, `get_data_source_info()`
+  * `DataSource` enum for available data sources
+  * `DataSourceInfo` and `DataSourceStatus` types for status reporting
 
 * **SQLite-based RPKI cache**: Current RPKI data (ROAs and ASPAs) is now cached in SQLite for fast local queries
   * IP prefixes stored as 16-byte start/end address pairs (IPv4 converted to IPv6-mapped format)

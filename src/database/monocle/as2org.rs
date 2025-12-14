@@ -173,6 +173,11 @@ impl<'a> As2orgRepository<'a> {
     /// Load AS2Org data from bgpkit-commons
     ///
     /// This method clears existing data and loads fresh data from bgpkit-commons.
+    ///
+    /// Uses optimized batch insert with:
+    /// - Disabled synchronous writes for performance
+    /// - Memory-based journal mode
+    /// - Single transaction for all inserts
     pub fn load_from_commons(&self) -> Result<(usize, usize)> {
         use bgpkit_commons::BgpkitCommons;
 
@@ -194,6 +199,17 @@ impl<'a> As2orgRepository<'a> {
             "Loaded {} AS entries from bgpkit-commons, inserting to sqlite db now",
             asinfo_map.len()
         );
+
+        // Optimize for batch insert performance
+        self.conn
+            .execute("PRAGMA synchronous = OFF", [])
+            .map_err(|e| anyhow!("Failed to set synchronous mode: {}", e))?;
+        self.conn
+            .query_row("PRAGMA journal_mode = MEMORY", [], |_| Ok(()))
+            .map_err(|e| anyhow!("Failed to set journal mode: {}", e))?;
+        self.conn
+            .execute("PRAGMA cache_size = -64000", [])
+            .map_err(|e| anyhow!("Failed to set cache size: {}", e))?; // 64MB cache
 
         // Use a transaction for all inserts
         let tx = self
@@ -262,6 +278,14 @@ impl<'a> As2orgRepository<'a> {
 
         tx.commit()
             .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
+
+        // Restore default settings for safety
+        self.conn
+            .execute("PRAGMA synchronous = FULL", [])
+            .map_err(|e| anyhow!("Failed to restore synchronous mode: {}", e))?;
+        self.conn
+            .query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
+            .map_err(|e| anyhow!("Failed to restore journal mode: {}", e))?;
 
         let org_count = inserted_orgs.len();
         info!(

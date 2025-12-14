@@ -252,6 +252,11 @@ impl<'a> RpkiRepository<'a> {
     }
 
     /// Store ROAs and ASPAs in the database
+    ///
+    /// Uses optimized batch insert with:
+    /// - Disabled synchronous writes for performance
+    /// - Memory-based journal mode
+    /// - Single transaction for all inserts
     pub fn store(&self, roas: &[RpkiRoaRecord], aspas: &[RpkiAspaRecord]) -> Result<()> {
         // Ensure schema exists
         self.initialize_schema()?;
@@ -259,15 +264,27 @@ impl<'a> RpkiRepository<'a> {
         // Clear existing data
         self.clear()?;
 
+        // Optimize for batch insert performance
+        self.conn
+            .execute("PRAGMA synchronous = OFF", [])
+            .map_err(|e| anyhow!("Failed to set synchronous mode: {}", e))?;
+        self.conn
+            .query_row("PRAGMA journal_mode = MEMORY", [], |_| Ok(()))
+            .map_err(|e| anyhow!("Failed to set journal mode: {}", e))?;
+        self.conn
+            .execute("PRAGMA cache_size = -64000", [])
+            .map_err(|e| anyhow!("Failed to set cache size: {}", e))?; // 64MB cache
+
         // Begin transaction for batch insert
         self.conn.execute("BEGIN TRANSACTION", [])?;
 
-        // Insert ROAs
+        // Insert ROAs in batches
         let mut roa_stmt = self.conn.prepare(
             "INSERT INTO rpki_roa (prefix_start, prefix_end, prefix_length, max_length, origin_asn, ta, prefix_str)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
 
+        let mut roa_inserted = 0usize;
         for roa in roas {
             if let Ok((start, end, prefix_len)) = parse_prefix_to_range(&roa.prefix) {
                 roa_stmt.execute(params![
@@ -279,6 +296,7 @@ impl<'a> RpkiRepository<'a> {
                     roa.ta,
                     roa.prefix,
                 ])?;
+                roa_inserted += 1;
             }
         }
 
@@ -287,9 +305,11 @@ impl<'a> RpkiRepository<'a> {
             .conn
             .prepare("INSERT INTO rpki_aspa (customer_asn, provider_asn) VALUES (?1, ?2)")?;
 
+        let mut aspa_pairs_inserted = 0usize;
         for aspa in aspas {
             for provider in &aspa.provider_asns {
                 aspa_stmt.execute(params![aspa.customer_asn, provider])?;
+                aspa_pairs_inserted += 1;
             }
         }
 
@@ -297,14 +317,23 @@ impl<'a> RpkiRepository<'a> {
         let now = Utc::now().timestamp();
         self.conn.execute(
             "INSERT OR REPLACE INTO rpki_meta (id, updated_at, roa_count, aspa_count) VALUES (1, ?1, ?2, ?3)",
-            params![now, roas.len(), aspas.len()],
+            params![now, roa_inserted, aspas.len()],
         )?;
 
         self.conn.execute("COMMIT", [])?;
 
+        // Restore default settings for safety
+        self.conn
+            .execute("PRAGMA synchronous = FULL", [])
+            .map_err(|e| anyhow!("Failed to restore synchronous mode: {}", e))?;
+        self.conn
+            .query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
+            .map_err(|e| anyhow!("Failed to restore journal mode: {}", e))?;
+
         info!(
-            "Stored {} ROAs and {} ASPAs in RPKI cache",
-            roas.len(),
+            "Stored {} ROAs and {} ASPA customer-provider pairs ({} customers) in RPKI database",
+            roa_inserted,
+            aspa_pairs_inserted,
             aspas.len()
         );
 
