@@ -1,547 +1,222 @@
 # Monocle Architecture
 
-This document describes the architecture of the monocle project, a BGP information toolkit that can be used as both a command-line application and a library.
+This document describes the architecture of the `monocle` project: a BGP information toolkit that can be used as both a Rust library and a command-line application.
 
-## Overview
+## Goals and Design Principles
 
-Monocle is designed with the following principles:
+1. **Library-first**: the core capability lives in the library; the CLI is a thin wrapper.
+2. **Clear separation of concerns**:
+   - persistence and caching in `database/`
+   - domain operations in `lens/`
+   - presentation and UX concerns in the CLI (`bin/`)
+3. **Extensible**: new functionality should be added as new lenses (and optionally wired into the CLI).
+4. **Composability**: lenses should be usable programmatically and in batch/automation contexts.
 
-1. **Library-First Design**: Core functionality is implemented as a library that can be reused across different interfaces (CLI, web API, GUI)
-2. **Separation of Concerns**: Clear boundaries between data access, business logic, and presentation
-3. **Extensibility**: Easy to add new data types and services
-4. **Single Source of Truth**: Shared database with unified schema management
+## High-level Architecture
+
+Monocle is organized into three primary layers:
+
+- **CLI layer** (`src/bin/`):
+  - parses flags/arguments
+  - loads configuration
+  - selects output format
+  - calls into lenses
+- **Lens layer** (`src/lens/`):
+  - provides “use-case” APIs (e.g., search, parse, RPKI lookups)
+  - controls output shaping via a unified `OutputFormat`
+  - uses `database/` and external libraries as needed
+- **Database layer** (`src/database/`):
+  - manages storage (SQLite), schema initialization, and caching primitives
+  - contains repositories for specific datasets
 
 ## Directory Structure
 
 ```
 src/
-├── lib.rs                    # Public API exports
-├── config.rs                 # Configuration management (MonocleConfig)
-├── time.rs                   # Time utilities
+├── lib.rs                    # Library entry point / exports
+├── config.rs                 # Configuration and shared status helpers
 │
-├── database/                 # All database functionality
-│   ├── mod.rs                # Module exports
-│   ├── README.md             # Database module documentation
-│   │
-│   ├── core/                 # Core database infrastructure
-│   │   ├── mod.rs
-│   ├── connection.rs     # DatabaseConn connection wrapper
-│   │   └── schema.rs         # Schema definitions and management
-│   │
-│   ├── session/              # One-time/session databases
-│   │   ├── mod.rs
-│   │   └── msg_store.rs      # BGP search results storage
-│   │
-│   └── monocle/              # Main monocle database
-│       ├── mod.rs            # MonocleDatabase entry point
-│       ├── as2org.rs         # AS2Org repository
-│       └── as2rel.rs         # AS2Rel repository
-│
-├── services/                 # Business logic layer
-│   ├── mod.rs                # Service exports
-│   ├── README.md             # Services module documentation
-│   │
-│   ├── as2org/               # AS-to-Organization service
-│   │   ├── mod.rs            # Service implementation
-│   │   ├── types.rs          # Result types (SearchResult, etc.)
-│   │   └── args.rs           # Reusable argument structs
-│   │
-│   ├── as2rel/               # AS-level relationship service
-│   │   ├── mod.rs
-│   │   ├── types.rs
-│   │   └── args.rs
-│   │
-│   └── country.rs            # Country lookup (in-memory)
-│
-├── filters/                  # BGP message filters
+├── database/                 # Persistence + caching
 │   ├── mod.rs
-│   ├── parse.rs              # MRT file parsing filters
-│   └── search.rs             # BGP message search filters
-│
-├── utils/                    # Utility functions
-│   ├── mod.rs                # Utility exports
-│   ├── ip.rs                 # IP information lookup
-│   ├── pfx2as.rs             # Prefix-to-ASN mapping
-│   └── rpki/                 # RPKI utilities
+│   ├── README.md
+│   │
+│   ├── core/                 # Connection + schema
+│   │   ├── mod.rs
+│   │   ├── connection.rs
+│   │   └── schema.rs
+│   │
+│   ├── session/              # Ephemeral / per-run databases
+│   │   ├── mod.rs
+│   │   └── msg_store.rs
+│   │
+│   └── monocle/              # Main persistent monocle database
 │       ├── mod.rs
-│       ├── commons.rs        # bgpkit-commons RPKI data
-│       └── validator.rs      # Cloudflare RPKI GraphQL API
+│       ├── as2org.rs
+│       ├── as2rel.rs
+│       ├── rpki.rs
+│       └── file_cache.rs
+│
+├── lens/                     # Business logic (“use-cases”)
+│   ├── mod.rs
+│   ├── README.md
+│   ├── utils.rs              # OutputFormat, formatting helpers
+│   │
+│   ├── as2org/
+│   │   ├── mod.rs
+│   │   ├── args.rs
+│   │   └── types.rs
+│   ├── as2rel/
+│   │   ├── mod.rs
+│   │   ├── args.rs
+│   │   └── types.rs
+│   ├── country.rs
+│   ├── ip/
+│   │   └── mod.rs
+│   ├── parse/
+│   │   └── mod.rs
+│   ├── pfx2as/
+│   │   └── mod.rs
+│   ├── rpki/
+│   │   ├── mod.rs
+│   │   └── commons.rs
+│   ├── search/
+│   │   ├── mod.rs
+│   │   └── query_builder.rs
+│   └── time/
+│       └── mod.rs
 │
 └── bin/
     ├── monocle.rs            # CLI entry point
-    └── commands/             # CLI command handlers
+    └── commands/             # Command handlers (thin wrappers around lenses)
+        ├── as2rel.rs
+        ├── config.rs
+        ├── country.rs
+        ├── database.rs
+        ├── ip.rs
+        ├── parse.rs
+        ├── pfx2as.rs
+        ├── rpki.rs
+        ├── search.rs
+        ├── time.rs
+        └── whois.rs
 ```
-
-## Implementation Status
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| `database/core` | ✅ Complete | Connection, schema management |
-| `database/session` | ✅ Complete | MsgStore for search results |
-| `database/monocle` | ✅ Complete | MonocleDatabase, As2org/As2rel repos |
-| `lens/as2org` | ✅ Complete | Lens, args, types |
-| `lens/as2rel` | ✅ Complete | Lens, args, types |
-| `lens/country` | ✅ Complete | In-memory lookup using bgpkit-commons |
-| `lens/parse` | ✅ Complete | MRT parsing with progress tracking |
-| `lens/search` | ✅ Complete | BGP search with progress tracking |
-| `lens/rpki` | ✅ Complete | RPKI validation |
-| `lens/ip` | ✅ Complete | IP information lookup |
-| Feature flags | ✅ Complete | cli feature for CLI dependencies |
-| Progress tracking | ✅ Complete | Callback-based progress for parse/search |
-
-### Phase Completion Status
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 1 | ✅ Complete | Database module (`database/`) |
-| Phase 2 | ✅ Complete | Lens module (`lens/`) |
-| Phase 3 | ✅ Complete | Feature flags (cli, full) |
-| Phase 4 | ✅ Complete | Progress tracking for GUI support |
-| Phase 5 | 🔄 In Progress | CLI migration & cleanup |
 
 ## Module Architecture
 
-### Database Module (`database/`)
+### `config/` (Configuration + Status Reporting)
 
-The database module provides all data persistence functionality, organized into three sub-modules:
+Responsibilities:
+- compute default paths and load config file overrides
+- provide shared helpers used by both `config` and `database` CLI commands to display:
+  - SQLite database info (size, table counts, last update time)
+  - cache settings and cache directory info
 
-#### Core (`database/core/`)
+This module is intentionally “infra-ish”: it should not implement domain logic.
 
-Foundation components used by all database operations:
+### `database/` (Persistence and Caching)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    DatabaseConn                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  - SQLite connection wrapper                        │   │
-│  │  - Configuration (WAL mode, cache, etc.)            │   │
-│  │  - Transaction management                           │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│                    SchemaManager                            │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  - Schema definitions for all tables                │   │
-│  │  - Version tracking                                 │   │
-│  │  - Initialization and reset                         │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-```
+The `database` module handles local persistence and caches shared across commands.
 
-**Key Types:**
-- `DatabaseConn`: Core connection wrapper with SQLite optimizations
-- `SchemaManager`: Handles schema initialization and version checking
-- `SchemaStatus`: Enum representing database schema state
+#### `database/core/`
 
-#### Session (`database/session/`)
+Responsibilities:
+- create/configure SQLite connections
+- define and initialize schema
+- expose schema/version checks (used on open)
 
-Storage for one-time/ephemeral data:
+Notes:
+- schema management is owned here; higher-level modules should not issue `CREATE TABLE` etc.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      MsgStore                               │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  - Per-search SQLite database                       │   │
-│  │  - BGP element storage (elems table)                │   │
-│  │  - Batch insert with transactions                   │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-```
+#### `database/monocle/`
 
-**Use Case:** Storing BGP search results during a search operation
+Responsibilities:
+- main persistent monocle dataset store (SQLite DB under the monocle data directory)
+- repositories for datasets:
+  - AS-to-org (as2org)
+  - AS relationships (as2rel)
+  - RPKI (ROAs/ASPAs metadata and lookup tables)
+- file cache helpers for datasets that are stored outside SQLite (if applicable)
 
-#### Monocle (`database/monocle/`)
+Key idea:
+- `MonocleDatabase` is the entry point for accessing the persistent DB/repositories.
 
-Main persistent database for monocle:
+#### `database/session/`
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   MonocleDatabase                           │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Single entry point to monocle data                 │   │
-│  │  - Schema initialization on open                    │   │
-│  │  - Automatic drift detection and reset              │   │
-│  │  - Repository access methods                        │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                           │                                 │
-│         ┌─────────────────┼─────────────────┐              │
-│         ▼                 ▼                 ▼              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │ As2orgRepo  │  │ As2relRepo  │  │  (Future)   │        │
-│  │             │  │             │  │             │        │
-│  │ - as2org_as │  │ - as2rel    │  │ - rpki_roas │        │
-│  │ - as2org_org│  │ - as2rel_   │  │ - etc.      │        │
-│  │ - views     │  │   meta      │  │             │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘        │
-└─────────────────────────────────────────────────────────────┘
-```
+Responsibilities:
+- short-lived, per-operation SQLite storage (e.g., search results)
+- optimized for write-heavy temporary usage and easy export
 
-**Database File:** `~/.monocle/monocle-data.sqlite3`
+### `lens/` (Business Logic / Use-cases)
 
-**Tables:**
-- `monocle_meta`: Schema version and global metadata
-- `as2org_as`: AS to organization mappings
-- `as2org_org`: Organization details
-- `as2rel`: AS-level relationships
-- `as2rel_meta`: AS2Rel data metadata
+Lenses are the primary public-facing API surface for functionality. A lens:
+- defines **argument types** (often serde-serializable; optionally clap-derivable under `cli`)
+- defines **result types** (serde-serializable)
+- performs the operation (may call into Broker, Parser, SQLite repositories, file caches, etc.)
+- emits output using the **unified `OutputFormat`**
 
-### Services Module (`services/`)
+#### Output formatting
 
-Business logic layer that combines database access with domain operations:
+`lens/utils.rs` contains the global `OutputFormat` used across the CLI to keep formatting consistent and predictable.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       Service Layer                         │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │                  As2orgService                       │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌────────────┐   │   │
-│  │  │    args     │  │   types     │  │  service   │   │   │
-│  │  │ SearchArgs  │  │SearchResult │  │  search()  │   │   │
-│  │  │ UpdateArgs  │  │ SearchType  │  │  format()  │   │   │
-│  │  │ OutputArgs  │  │OutputFormat │  │  update()  │   │   │
-│  │  └─────────────┘  └─────────────┘  └────────────┘   │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │                  As2relService                       │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌────────────┐   │   │
-│  │  │    args     │  │   types     │  │  service   │   │   │
-│  │  │ SearchArgs  │  │SearchResult │  │  search()  │   │   │
-│  │  │ UpdateArgs  │  │ SortOrder   │  │  format()  │   │   │
-│  │  │ OutputArgs  │  │OutputFormat │  │  update()  │   │   │
-│  │  └─────────────┘  └─────────────┘  └────────────┘   │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │              CountryLookup (in-memory)              │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-```
+#### Progress reporting
 
-**Key Design Patterns:**
+Certain lenses support progress callbacks (e.g., parse/search). Progress types are designed to be:
+- thread-safe (`Send + Sync`)
+- serializable (for GUI or other frontends)
 
-1. **Reusable Arguments**: Argument structs are serializable and can be used across CLI, REST API, WebSocket, and GUI interfaces.
+### `bin/` (CLI)
 
-2. **Repository Pattern**: Services use repositories from the database module for data access.
+The CLI layer wires together:
+- clap argument parsing
+- config loading
+- output selection (`--format`, `--json`)
+- invocation of lens operations
+- printing human-readable messages to stderr and data output to stdout (to support piping)
 
-3. **Output Formatting**: Services handle result formatting (JSON, table, PSV) internally.
+The CLI should not duplicate core logic. It should:
+- validate/normalize CLI inputs
+- call library APIs
+- format/print results
 
-## Data Flow
+## Typical Data Flows
 
-### Library Usage Flow
+### CLI flow (conceptual)
 
-```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Client     │────▶│   Service    │────▶│  Repository  │
-│   Code       │     │  (As2org)    │     │  (As2orgRepo)│
-└──────────────┘     └──────────────┘     └──────────────┘
-                            │                     │
-                            │                     ▼
-                     ┌──────▼──────┐     ┌───────────────┐
-                     │   Format    │     │MonocleDatabase│
-                     │   Results   │     └───────────────┘
-                     └─────────────┘
-```
+1. User runs `monocle <command> ...`
+2. CLI parses args and loads `MonocleConfig`
+3. CLI determines `OutputFormat`
+4. CLI constructs the lens + arguments
+5. Lens executes operation:
+   - may open `MonocleDatabase`
+   - may fetch/update caches/data when needed
+   - returns typed results (and optionally progress events via callback)
+6. CLI prints results via `OutputFormat`
 
-### CLI Usage Flow
+### Library flow (conceptual)
 
-```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   CLI Args   │────▶│   Command    │────▶│   Service    │
-│   (clap)     │     │   Handler    │     │              │
-└──────────────┘     └──────────────┘     └──────────────┘
-                                                │
-                                         ┌──────▼──────┐
-                                         │   Output    │
-                                         │   (stdout)  │
-                                         └─────────────┘
-```
+1. Application creates (or opens) the relevant database objects (when required)
+2. Application constructs lens args and calls lens methods
+3. Application consumes typed results directly, or uses `OutputFormat` to format for display
 
-## Schema Management
+## Feature Flags
 
-### Version Tracking
+Monocle supports conditional compilation via Cargo features.
 
-The database schema version is tracked in the `monocle_meta` table:
+- `cli` (default):
+  - enables clap derives and other CLI-only dependencies
+  - required to build the `monocle` binary
+- `full`:
+  - currently aliases to `cli`
 
-```sql
-CREATE TABLE monocle_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-```
-
-### Schema Status
-
-```rust
-pub enum SchemaStatus {
-    NotInitialized,  // Fresh database
-    Current,         // Schema matches expected version
-    NeedsMigration { from: u32, to: u32 },
-    Incompatible { database_version: u32, required_version: u32 },
-    Corrupted,       // Missing tables
-}
-```
-
-### Automatic Recovery
-
-When opening a `MonocleDatabase`:
-1. Check schema status
-2. If incompatible or corrupted, reset and reinitialize
-3. Data is repopulated from external sources on next use
-
-## Migration Notes
-
-### Using the New Architecture
-
-For new code, use the services module:
-
-```rust
-use monocle::MonocleDatabase;
-use monocle::services::{As2orgService, As2orgSearchArgs};
-
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
-let service = As2orgService::new(&db);
-let results = service.search(&As2orgSearchArgs::new("cloudflare"))?;
-```
-
-### Utility Functions
-
-For standalone utilities (IP lookup, RPKI, Pfx2AS), use the `utils` module:
-
-```rust
-use monocle::{fetch_ip_info, validate, Pfx2as};
-
-// IP information lookup
-let info = fetch_ip_info(None, false)?;
-
-// RPKI validation
-let (validity, roas) = validate(13335, "1.1.1.0/24")?;
-
-// Prefix-to-AS mapping
-let pfx2as = Pfx2as::new(None)?;
-let origins = pfx2as.lookup_longest("1.1.1.0/24".parse()?);
-```
-
-## Feature Flags (Implemented)
-
-Monocle supports conditional compilation via Cargo features, enabling minimal library builds
-without CLI dependencies.
-
-### Available Features
+Library users can disable default features to reduce dependency footprint:
 
 ```toml
-[features]
-default = ["cli"]
-
-# CLI support (clap derives, terminal output, progress bars)
-cli = [
-    "dep:clap",
-    "dep:indicatif",
-    "dep:json_to_table",
-    "dep:tracing-subscriber",
-]
-
-# Full build with all features (currently same as cli)
-full = ["cli"]
+monocle = { version = "0.10", default-features = false }
 ```
-
-### Feature-Gated Code
-
-Types that conditionally derive clap traits:
-- `ParseFilters` - MRT file parsing filters
-- `SearchFilters` - BGP message search filters
-- `ElemTypeEnum` - BGP element type (announce/withdraw)
-- `DumpType` - MRT dump type (updates/rib)
-- `As2orgSearchArgs`, `As2relSearchArgs` - Service argument structs
-
-Example pattern used:
-```rust
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "cli", derive(clap::Args))]
-pub struct ParseFilters {
-    #[cfg_attr(feature = "cli", clap(short = 'o', long))]
-    pub origin_asn: Option<u32>,
-    // ...
-}
-```
-
-### Usage Examples
-
-```toml
-# Minimal library (no CLI dependencies, smaller binary)
-monocle = { version = "0.9", default-features = false }
-
-# Library with CLI argument structs
-monocle = { version = "0.9", features = ["cli"] }
-
-# Full build (default)
-monocle = { version = "0.9" }
-```
-
-## Progress Tracking
-
-Monocle provides callback-based progress tracking for long-running operations,
-enabling responsive GUI applications and CLI progress bars.
-
-### Parse Progress
-
-The `ParseLens` reports progress every 10,000 messages:
-
-```rust
-use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
-use std::sync::Arc;
-
-let lens = ParseLens::new();
-let filters = ParseFilters::default();
-
-let callback = Arc::new(|progress: ParseProgress| {
-    match progress {
-        ParseProgress::Started { file_path } => {
-            println!("Started parsing: {}", file_path);
-        }
-        ParseProgress::Update { messages_processed, rate, .. } => {
-            println!("Processed {} messages ({:.0} msg/s)", 
-                messages_processed, rate.unwrap_or(0.0));
-        }
-        ParseProgress::Completed { total_messages, duration_secs, .. } => {
-            println!("Done: {} messages in {:.2}s", total_messages, duration_secs);
-        }
-    }
-});
-
-let elems = lens.parse_with_progress(&filters, "file.mrt", Some(callback))?;
-```
-
-### Search Progress
-
-The `SearchLens` reports progress as a percentage of files processed:
-
-```rust
-use monocle::lens::search::{SearchLens, SearchFilters, SearchProgress};
-use std::sync::Arc;
-
-let lens = SearchLens::new();
-let filters = SearchFilters { /* ... */ };
-
-let callback = Arc::new(|progress: SearchProgress| {
-    match progress {
-        SearchProgress::FilesFound { count } => {
-            println!("Found {} files to process", count);
-        }
-        SearchProgress::ProgressUpdate { percent_complete, total_messages, .. } => {
-            println!("Progress: {:.1}%, found {} messages", percent_complete, total_messages);
-        }
-        SearchProgress::Completed { total_files, total_messages, duration_secs, .. } => {
-            println!("Done: {} files, {} messages in {:.2}s", 
-                total_files, total_messages, duration_secs);
-        }
-        _ => {}
-    }
-});
-
-let handler = Arc::new(|elem, collector| {
-    // Process each element
-});
-
-let summary = lens.search_with_progress(&filters, Some(callback), handler)?;
-```
-
-### Progress Types
-
-Progress callbacks are thread-safe (`Send + Sync`) and may be called from multiple
-threads during parallel processing. The progress types are serializable to JSON
-for easy communication with GUI frontends.
-
-## Future Architecture (Planned)
-
-### GUI Integration (GPUI)
-
-Separate crate `monocle-gui` using:
-- `gpui` framework
-- `gpui-component` for UI components
-- Shared lens library from monocle
-- Progress callbacks for responsive UI
-
-## Key Types Reference
-
-### Database Types
-
-| Type | Location | Purpose |
-|------|----------|---------|
-| `DatabaseConn` | `database/core/connection.rs` | SQLite connection wrapper |
-| `SchemaManager` | `database/core/schema.rs` | Schema management |
-| `MonocleDatabase` | `database/monocle/mod.rs` | Main database interface |
-| `MsgStore` | `database/session/msg_store.rs` | BGP message storage |
-| `As2orgRepository` | `database/monocle/as2org.rs` | AS2Org data access |
-| `As2relRepository` | `database/monocle/as2rel.rs` | AS2Rel data access |
-
-### Service Types
-
-| Type | Location | Purpose |
-|------|----------|---------|
-| `As2orgService` | `services/as2org/mod.rs` | AS2Org operations |
-| `As2orgSearchArgs` | `services/as2org/args.rs` | Search parameters |
-| `As2orgSearchResult` | `services/as2org/types.rs` | Search results |
-| `As2relService` | `services/as2rel/mod.rs` | AS2Rel operations |
-| `As2relSearchArgs` | `services/as2rel/args.rs` | Search parameters |
-| `CountryLookup` | `services/country.rs` | Country code/name lookup |
-
-## Usage Examples
-
-### As a Library
-
-```rust
-use monocle::MonocleDatabase;
-use monocle::services::{As2orgService, As2orgSearchArgs, As2orgOutputFormat};
-
-// Open database
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
-
-// Create service
-let service = As2orgService::new(&db);
-
-// Bootstrap if needed
-if service.needs_bootstrap() {
-    service.bootstrap()?;
-}
-
-// Search
-let args = As2orgSearchArgs::new("cloudflare");
-let results = service.search(&args)?;
-
-// Format output
-let output = service.format_results(&results, &As2orgOutputFormat::Json, false);
-println!("{}", output);
-```
-
-### Cross-Table Queries
-
-```rust
-// Get the underlying connection for custom queries
-let conn = db.connection();
-
-// Execute a JOIN query
-let mut stmt = conn.prepare("
-    SELECT r.asn1, o1.org_name, r.asn2, o2.org_name
-    FROM as2rel r
-    JOIN as2org_all o1 ON r.asn1 = o1.asn
-    JOIN as2org_all o2 ON r.asn2 = o2.asn
-    WHERE r.asn1 = ?1
-")?;
-```
-
-## Contributing
-
-When adding new features:
-
-1. **New Data Type**: Add repository in `database/shared/`, service in `services/`
-2. **New Service**: Follow the pattern of `as2org/` with separate `args.rs`, `types.rs`, and `mod.rs`
-3. **Schema Changes**: Update `database/core/schema.rs` and increment `SCHEMA_VERSION`
 
 ## Related Documents
 
-- [REVISION_PLAN.md](REVISION_PLAN.md) - Detailed refactoring plan and progress tracking
-- [CHANGELOG.md](CHANGELOG.md) - Version history and release notes
-- [WEB_API_DESIGN.md](WEB_API_DESIGN.md) - Web API design for REST and WebSocket endpoints
-- [DEVELOPMENT.md](DEVELOPMENT.md) - Contribution guidelines for adding lenses and web endpoints
+- `README.md` — user-facing CLI and library overview
+- `DEVELOPMENT.md` — contributor guide (how to add lenses, tests, style)
+- `src/database/README.md` — database module notes
+- `src/lens/README.md` — lens module patterns and conventions

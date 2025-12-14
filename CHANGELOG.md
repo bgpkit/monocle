@@ -4,208 +4,106 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-### New `database` Command
+This is a major release with significant architectural changes, new commands, and breaking changes.
 
-* **New `monocle database` command**: Consolidated database management with subcommands for refresh, backup, status, and clear operations
-  * `monocle database` (or `monocle database status`): Show database status including record counts, last update times, and cache settings
-  * `monocle database refresh <source>`: Refresh a specific data source (as2org, as2rel, rpki, pfx2as-cache)
-  * `monocle database refresh --all`: Refresh all data sources at once
-  * `monocle database backup <dest>`: Backup the SQLite database to a destination path
-  * `monocle database backup <dest> --include-cache`: Also backup cache files
-  * `monocle database clear <source>`: Clear a specific data source (with confirmation prompt)
-  * `monocle database clear <source> -y`: Skip confirmation prompt
-  * `monocle database sources`: List available data sources with their status and last update time
+### New Commands
 
-* **RPKI is now a proper database source**: RPKI data (ROAs and ASPAs) is stored in SQLite instead of file-based cache
-  * `monocle database refresh rpki` loads current RPKI data from Cloudflare and stores in SQLite
-  * `monocle database refresh --all` includes RPKI data
-  * Status shows separate ROA and ASPA counts (e.g., "784188 ROAs, 388 ASPAs")
-  * Last update time is tracked and displayed
+#### `monocle database` - Database Management
 
-* **Timing information for refresh operations**: All refresh commands now show duration
-  * Single source: `✓ Loaded 120415 ASes and 96828 organizations (5.72s)`
-  * All sources: Shows per-source timing and total time
+Consolidated database management with subcommands:
+* `monocle database` (or `monocle database status`): Show database status including record counts, last update times, and cache settings
+* `monocle database refresh <source>`: Refresh a specific data source (as2org, as2rel, rpki, pfx2as-cache)
+* `monocle database refresh --all`: Refresh all data sources at once
+* `monocle database backup <dest>`: Backup the SQLite database to a destination path
+* `monocle database clear <source>`: Clear a specific data source (with confirmation prompt)
+* `monocle database sources`: List available data sources with their status and last update time
 
-* **Batch insert performance optimizations**: Database refresh operations use optimized SQLite settings
-  * `PRAGMA synchronous = OFF` during batch inserts
-  * `PRAGMA journal_mode = MEMORY` for faster writes
-  * `PRAGMA cache_size = -64000` (64MB cache)
-  * Settings restored to safe defaults after batch completes
+#### `monocle config` - Configuration Display
 
-* **Shared database info functions**: Both `monocle config` and `monocle database` commands now use shared functions for consistent status reporting
-  * `get_sqlite_info()`, `get_cache_info()`, `get_cache_settings()`, `get_data_source_info()`
-  * `DataSource` enum for available data sources
-  * `DataSourceInfo` and `DataSourceStatus` types for status reporting
+Show monocle configuration and data paths:
+* Displays config file location and data directory
+* Shows SQLite database status, size, and record counts
+* `--verbose` flag lists all files in the data directory with sizes and modification times
 
-* **SQLite-based RPKI cache**: Current RPKI data (ROAs and ASPAs) is now cached in SQLite for fast local queries
-  * IP prefixes stored as 16-byte start/end address pairs (IPv4 converted to IPv6-mapped format)
-  * Separate metadata table tracks update time, ROA count, and ASPA count
+#### `monocle as2rel` - AS Relationship Lookup
+
+Query AS-level relationships between ASNs from BGPKIT's AS relationship data:
+* Query relationships for one or two ASNs
+* Output columns: connected, peer, as1_upstream, as2_upstream percentages
+* Local SQLite caching with automatic updates when data is older than 7 days
+* `--show-name` / `--show-full-name`: Show organization name for ASN2
+* `--sort-by-asn`: Sort results by ASN2 ascending (default: sort by connected % descending)
+
+### RPKI Improvements
+
+* **RPKI data now stored in SQLite**: ROAs and ASPAs cached locally for fast queries
+  * IP prefixes stored as 16-byte start/end address pairs for efficient range lookups
   * Cache expires after 24 hours and automatically refreshes
   * Use `--refresh` / `-r` flag to force a cache refresh
-
-* **Local RPKI validation**: The `validate` command now uses local SQLite data instead of Cloudflare GraphQL API
-  * Implements RFC 6811 validation logic:
-    * **Valid**: Covering ROA exists with matching ASN and prefix length ≤ max_length
-    * **Invalid**: Covering ROA exists but ASN doesn't match or prefix length exceeds max_length
-    * **NotFound**: No covering ROA exists for the prefix
-  * Returns detailed validation results with reason explanations
-
-* **New database schema (v2)**: Added RPKI tables to the monocle SQLite database
-  * `rpki_roa`: Stores ROA records with prefix ranges for efficient lookups
-  * `rpki_aspa`: Stores ASPA customer-provider relationships
-  * `rpki_meta`: Stores cache metadata (update time, counts)
-
-* **Removed Cloudflare GraphQL API code**: The validator.rs module has been removed
-  * All validation now uses local SQLite-cached data
-  * Removed unused `RpkiValidationArgs`, `RpkiSummaryArgs`, `RpkiListArgs` types
-  * Removed `RpkiLens::validate()`, `RpkiLens::list_roas()` methods
-  * Cleaned up related formatting methods from `RpkiLens`
-
-### RPKI Command Revisions
-
-* **Removed `list` subcommand**: The `rpki list` command was a duplicate of `rpki roas` and has been removed
-* **Removed `summary` subcommand**: The `rpki summary` command has been removed as the underlying Cloudflare GraphQL data is no longer available
-* **Renamed `check` to `validate`**: The `rpki check` command is now `rpki validate`
-  * Now takes two positional arguments (prefix and ASN) in any order
-  * Automatically detects which argument is the prefix and which is the ASN
-  * Returns an error if both resources are the same type or if parsing fails
-* **Updated `roas` subcommand**: Now accepts multiple positional resource arguments
-  * Resources (prefixes or ASNs) are auto-detected from the input
-  * Results are the union of all matching ROAs (deduplicated)
-  * If no resources specified, returns all ROAs
-  * Current data uses SQLite cache; historical data fetches from RIPE/RPKIviews
+* **Local RPKI validation**: Implements RFC 6811 validation logic locally instead of calling external API
+* **Renamed `check` to `validate`**: Now takes two positional arguments (prefix and ASN) in any order
+* **Updated `roas` subcommand**: Now accepts multiple positional resource arguments (auto-detected)
 * **Updated `aspas` subcommand**: Current data now uses SQLite cache
-* **Added `--refresh` flag**: All RPKI commands support `-r`/`--refresh` to force cache refresh
-* **Added data source display**: All RPKI commands now display the data source via `eprintln` at the top of output
-  * Current data always uses Cloudflare's rpki.json endpoint (cached locally)
-  * Historical data uses the specified source (RIPE or RPKIviews)
-* **Fixed markdown table formatting**: Removed line wrapping in markdown output for ASPAs to comply with markdown table grammar
+* **Removed `list` subcommand**: Use `rpki roas` instead
+* **Removed `summary` subcommand**: Cloudflare GraphQL API no longer available
 
-### Progress Tracking for GUI Support
+### Progress Tracking (Library Feature)
 
-* **Added progress tracking for parse operations**: `ParseLens` now supports callback-based progress reporting
+* **Parse operations**: `ParseLens` supports callback-based progress reporting
   * `ParseProgress` enum with `Started`, `Update`, and `Completed` variants
-  * Progress updates emitted every 10,000 messages processed
-  * Includes processing rate (messages/second) and elapsed time
   * New methods: `parse_with_progress()` and `parse_with_handler()`
-
-* **Added progress tracking for search operations**: `SearchLens` now supports callback-based progress reporting
-  * `SearchProgress` enum with variants: `QueryingBroker`, `FilesFound`, `FileStarted`, `FileCompleted`, `ProgressUpdate`, `Completed`
-  * Reports percentage completion based on files processed
-  * Includes ETA estimation and per-file success/failure status
+* **Search operations**: `SearchLens` supports callback-based progress reporting
+  * `SearchProgress` enum with file-level progress tracking
   * New methods: `search_with_progress()` and `search_and_collect()`
-
-* **Thread-safe callbacks**: Progress callbacks are `Arc<dyn Fn(...) + Send + Sync>` for safe use in parallel processing
-
-* **JSON-serializable progress types**: All progress types derive `Serialize`/`Deserialize` for easy GUI communication
-
-### Removed Features
-
-* **Removed server module**: The web API and WebSocket server implementation has been removed to keep focus on library-level functionality
-  * Removed `src/server/` module and all submodules
-  * Removed `server` feature from Cargo.toml
-  * Removed server-related dependencies: axum, tokio, tokio-util, tower, tower-http, tokio-tungstenite, futures, uuid
-  * Removed `WEB_API_DESIGN.md`
-  * Removed `examples/run_server.rs`
+* **Thread-safe callbacks**: `Arc<dyn Fn(...) + Send + Sync>` for parallel processing
+* **JSON-serializable**: All progress types derive `Serialize`/`Deserialize`
 
 ### Unified Output Format
 
-* **Global `--format` option**: All commands now support a unified output format option (long form only, no `-f` short form to avoid conflicts with subcommand flags like `whois -f`)
+* **Global `--format` option**: All commands support unified output formats
   * `table` (default): Pretty table with rounded borders
   * `markdown` / `md`: Markdown table format
   * `json`: Compact JSON (single line)
-  * `json-pretty`: Pretty-printed JSON with indentation (same as `--json` flag)
-  * `json-line` / `jsonl` / `ndjson`: JSON Lines format (one JSON object per line, for streaming)
+  * `json-pretty`: Pretty-printed JSON (same as `--json` flag)
+  * `json-line` / `jsonl` / `ndjson`: JSON Lines format
   * `psv`: Pipe-separated values with header row
-
-* **All informational messages now go to stderr**: Debug messages, progress updates, and explanatory text are now printed to stderr instead of stdout, enabling clean piping of data
-  * Examples: "Updating AS2org data...", "Found 4407 ROAs (current data)", explanation text for as2rel
-  * This allows: `monocle rpki roas --origin 13335 -f json | jq '.[0]'`
-
-* **Removed per-command format flags**: The following flags have been removed in favor of the global `--format` option:
-  * `--pretty` flag from `whois`, `as2rel`, `search`, `parse` commands
-  * `--psv` / `-P` flag from `whois` command
-  * Local `--json` flags (global `--json` still works as shortcut for `--format json-pretty`)
-
-### New Features
-
-* **New `as2rel` command**: AS-level relationship lookup between ASNs
-  * Query relationships for one or two ASNs from BGPKIT's AS relationship data
-  * Data source: `https://data.bgpkit.com/as2rel/as2rel-latest.json.bz2`
-  * Output columns:
-    - `connected`: Percentage of peers that see any connection between asn1 and asn2
-    - `peer`: Percentage seeing pure peering (connected - as1_upstream - as2_upstream)
-    - `as1_upstream`: Percentage of peers that see asn1 as upstream of asn2
-    - `as2_upstream`: Percentage of peers that see asn2 as upstream of asn1
-  * Local SQLite caching with automatic updates when data is older than 7 days
-  * `--update`: Force update the local database
-  * `--update-with <PATH>`: Update with a custom data file (local path or URL)
-  * `--no-explain`: Hide the explanation text in table output
-  * `--sort-by-asn`: Sort results by ASN2 ascending (default: sort by connected % descending)
-  * `--show-name`: Show organization name for ASN2 (truncated to 20 chars)
-  * `--show-full-name`: Show full organization name without truncation
-
-* **New `config` command**: Show monocle configuration and data paths
-  * Displays config file location and data directory
-  * Shows SQLite database status, size, and record counts
-  * `--verbose` flag lists all files in the data directory with sizes and modification times
-  * Supports all output formats via `--format` option
-
-* **New `rpki roas` command**: List ROAs from RPKI data (current or historical)
-  * `--origin <ASN>`: Filter by origin ASN
-  * `--prefix <PREFIX>`: Filter by prefix
-  * `--date <YYYY-MM-DD>`: Load historical data for a specific date
-  * `--source <ripe|rpkiviews>`: Select historical data source (default: ripe)
-  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector
-
-* **New `rpki aspas` command**: List ASPAs from RPKI data (current or historical)
-  * `--customer <ASN>`: Filter by customer ASN
-  * `--provider <ASN>`: Filter by provider ASN
-  * `--date <YYYY-MM-DD>`: Load historical data for a specific date
-  * `--source <ripe|rpkiviews>`: Select historical data source (default: ripe)
-  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector
-
-### Bug Fixes
-
-* **Fixed AS2Rel data loading**: Removed incorrect serde attribute that caused JSON deserialization to fail with "missing field `relationship`" error
-* **Fixed AS2Rel duplicate rows**: Fixed aggregation logic that showed multiple rows for the same ASN pair
-* **Fixed AS2Rel percentage calculation**: 
-  * `connected` now correctly uses `rel=0` peer count (total peers seeing any connection)
-  * `as1_upstream` / `as2_upstream` are subsets from `rel=1` / `rel=-1` records
-  * `peer` is calculated as `connected - as1_upstream - as2_upstream`
-  * All percentages divided by `max_peers_count`
-* **Optimized AS2Rel queries**: Replaced inefficient two-step aggregation with SQL JOINs and GROUP BY
+* **All informational messages go to stderr**: Enables clean piping of data
+* **Removed per-command format flags**: `--pretty`, `--psv` flags removed in favor of `--format`
 
 ### Improvements
 
-* **Name truncation in tables**: Long names (AS names, org names) are now truncated to 20 characters in table output
-  * New `--show-full-name` flag available on `whois` and `as2rel` commands to disable truncation
-  * JSON output never truncates names
+* **Name truncation in tables**: Long names truncated to 20 characters (use `--show-full-name` to disable)
+* **as2org data source**: Now uses `bgpkit-commons` asinfo module instead of custom CAIDA parsing
+* **Database performance**: Batch insert operations use optimized SQLite settings
+* **Table formatting**: ASPA table output wraps long provider lists at 60 characters
 
-* **as2org data source**: Replaced custom CAIDA as2org file parsing with `bgpkit-commons` asinfo module
-  * SQLite caching is preserved for fast repeated queries
-  * `whois --update` now reloads data from `bgpkit-commons`
+### Bug Fixes
 
-* **Table formatting**: ASPA table output now wraps long provider lists at 60 characters for better readability
+* Fixed AS2Rel data loading (incorrect serde attribute)
+* Fixed AS2Rel duplicate rows and percentage calculation
+* Optimized AS2Rel queries with SQL JOINs
 
 ### Breaking Changes
 
-* **Removed `broker` command**: Use `search --broker-files` instead to list matching MRT files
-* **Removed `radar` command**: Users can access Cloudflare Radar data directly via their API
-* **Removed `rpki read-roa` and `rpki read-aspa` commands**: Replaced with `rpki roas` and `rpki aspas`
-* **Library API refactoring**: All public functions are now accessed through lens structs
+* **Removed `broker` command**: Use `search --broker-files` instead
+* **Removed `radar` command**: Access Cloudflare Radar directly via their API
+* **Removed `rpki list` and `rpki summary` commands**: Use `rpki roas` instead
+* **Renamed `rpki check` to `rpki validate`**
+* **Removed server module**: Web API/WebSocket server removed to focus on library functionality
+* **Library API refactoring**: All public functions now accessed through lens structs
 * **Default output format**: Changed from markdown to table (pretty borders)
 
 ### Code Improvements
 
-* Refactored CLI command modules for better code organization
 * **Lens-based architecture**: All functionality accessed through lens structs
+* Refactored CLI command modules for better code organization
 * Added `lens/utils.rs` with `OutputFormat` enum and `truncate_name` helper
 
 ### Dependencies
 
 * Added `bgpkit-commons` with features: `asinfo`, `rpki`, `countries`
 * Removed `rpki` crate dependency
+* Removed server-related dependencies: axum, tokio, tower, etc.
 
 ## v0.9.1 - 2025-11-05
 

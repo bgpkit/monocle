@@ -1,6 +1,6 @@
 # Database Module
 
-The database module provides all database functionality for monocle, organized into three sub-modules.
+The database module provides all persistence and caching functionality for monocle, organized into three sub-modules.
 
 ## Architecture
 
@@ -13,24 +13,28 @@ database/
 ├── session/            # Temporary/session storage
 │   └── msg_store       # BGP message storage for search results (SQLite)
 │
-└── monocle/            # Main monocle database
-    ├── as2org          # AS-to-Organization mappings (SQLite)
-    ├── as2rel          # AS-level relationships (SQLite)
-    └── file_cache      # File-based caches for RPKI and Pfx2as (JSON)
+└── monocle/            # Main monocle database (SQLite)
+    ├── as2org          # AS-to-Organization mappings
+    ├── as2rel          # AS-level relationships
+    ├── rpki            # RPKI ROA/ASPA data stored in SQLite
+    └── file_cache      # File-based caches (e.g., pfx2as)
 ```
 
 ## Database Backend Strategy
 
-Monocle uses **SQLite** for structured data that doesn't require INET operations:
+Monocle uses **SQLite** as its primary persistence layer:
 - AS2Org mappings (AS-to-Organization)
 - AS2Rel relationships (AS-level relationships)
-- Search result exports
+- RPKI ROA/ASPA data (cached locally for fast queries and offline validation)
+- Search result exports / session stores
 
-For data requiring **INET operations** (prefix matching, containment queries), monocle uses **file-based JSON caching**:
-- RPKI ROA/ASPA data
+For datasets that are better handled as **file-based caches** (large read-mostly blobs or data loaded into in-memory structures),
+Monocle uses JSON caches under the data directory:
 - Pfx2as prefix mappings
 
-This approach is used because SQLite doesn't natively support INET operations. The cached data is loaded into memory using trie data structures for efficient prefix lookups.
+Why not “INET types” in SQLite?
+- SQLite doesn't have native INET/cidr operators. For RPKI, Monocle stores prefixes as normalized start/end ranges (16-byte values),
+  enabling efficient range lookups directly in SQLite instead of relying on file caches.
 
 ## Module Overview
 
@@ -58,9 +62,9 @@ The main persistent database for monocle data.
 - `As2orgRepository` - AS-to-Organization queries
 - `As2relRepository` - AS-level relationship queries
 
-#### File-based Caches
-- `RpkiFileCache` - RPKI ROA/ASPA cache with TTL support
-- `Pfx2asFileCache` - Prefix-to-AS mappings cache with TTL support
+#### Repositories and Caches
+- `RpkiRepository` - RPKI ROA/ASPA tables + local validation using SQLite
+- `Pfx2asFileCache` - Prefix-to-AS mappings cache with TTL support (file-based)
 
 ## Usage Examples
 
@@ -110,31 +114,29 @@ if db.needs_as2rel_update() {
 let rels = db.as2rel().search_asn(13335)?;
 ```
 
-### RPKI File Cache
+### RPKI (SQLite Repository)
+
+RPKI current data (ROAs and ASPAs) is stored in the monocle SQLite database and can be queried locally.
 
 ```rust
-use monocle::database::{RpkiFileCache, RoaRecord, DEFAULT_RPKI_TTL};
-use std::time::Duration;
+use monocle::database::{MonocleDatabase, RpkiRepository, DEFAULT_RPKI_CACHE_TTL};
 
-let cache = RpkiFileCache::new("~/.monocle")?;
+let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let rpki = db.rpki();
 
-// Check if cache is fresh
-if !cache.is_fresh("cloudflare", None, DEFAULT_RPKI_TTL) {
-    // Store new ROA data
-    let roas = vec![
-        RoaRecord {
-            prefix: "1.0.0.0/24".to_string(),
-            max_length: 24,
-            origin_asn: 13335,
-            ta: Some("ARIN".to_string()),
-        },
-    ];
-    cache.store("cloudflare", None, roas, vec![])?;
+// Check metadata / whether refresh is needed
+if rpki.needs_refresh(DEFAULT_RPKI_CACHE_TTL)? {
+    // Typically refreshed via CLI (`monocle database refresh rpki`) or higher-level lens logic.
+    // This example intentionally does not fetch from the network directly.
 }
 
-// Load cached data
-let data = cache.load("cloudflare", None)?;
-println!("Loaded {} ROAs", data.roas.len());
+// Query ROAs by ASN
+let roas = rpki.get_roas_by_asn(13335)?;
+println!("Loaded {} ROAs for AS13335", roas.len());
+
+// Validate prefix-ASN pair locally (RFC 6811-style)
+let result = rpki.validate_detailed(13335, "1.1.1.0/24")?;
+println!("{} {} -> {} ({})", result.prefix, result.asn, result.state, result.reason);
 ```
 
 ### Pfx2as File Cache
@@ -214,7 +216,11 @@ CREATE TABLE as2rel (
 
 ## File Cache Format
 
-### RPKI Cache
+Monocle uses file-based caches for some datasets that are convenient to store as JSON blobs and/or load into in-memory data structures.
+
+### RPKI Cache (Historical / Auxiliary)
+
+Current RPKI data is stored in SQLite (see `monocle/rpki` repository). The JSON cache format below is used for **historical snapshots** and/or auxiliary workflows.
 
 Files are stored at: `{data_dir}/cache/rpki/rpki_{source}_{date}.json`
 
@@ -270,9 +276,9 @@ Default TTL values:
 
 | Cache Type | Default TTL | Constant |
 |------------|-------------|----------|
-| RPKI (current) | 1 hour | `DEFAULT_RPKI_TTL` |
-| RPKI (historical) | 7 days | `DEFAULT_RPKI_HISTORICAL_TTL` |
-| Pfx2as | 24 hours | `DEFAULT_PFX2AS_TTL` |
+| RPKI (current, SQLite) | 24 hours | `DEFAULT_RPKI_CACHE_TTL` |
+| RPKI (historical, file cache) | 7 days | `DEFAULT_RPKI_HISTORICAL_TTL` |
+| Pfx2as (file cache) | 24 hours | `DEFAULT_PFX2AS_TTL` |
 
 ## Testing
 
@@ -302,7 +308,7 @@ For file cache tests, use `tempfile`:
 #[test]
 fn test_cache() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let cache = RpkiFileCache::new(temp_dir.path().to_str().unwrap()).unwrap();
+    let cache = Pfx2asFileCache::new(temp_dir.path().to_str().unwrap()).unwrap();
     // Test with temporary cache directory
 }
 ```
@@ -310,4 +316,4 @@ fn test_cache() {
 ## Related Documentation
 
 - [Architecture Overview](../../ARCHITECTURE.md) - System architecture
-- [Lens Module](../lens/README.md) - Data access patterns
+- [Lens Module](../lens/README.md) - Lens patterns and conventions
