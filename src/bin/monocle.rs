@@ -2,7 +2,7 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use monocle::lens::utils::OutputFormat;
 use monocle::*;
 use tracing::Level;
@@ -54,6 +54,11 @@ enum Commands {
     /// Search BGP messages from all available public MRT files.
     Search(SearchArgs),
 
+    /// Start the WebSocket server (ws://<address>:<port>/ws, health: http://<address>:<port>/health)
+    ///
+    /// Note: This requires building with the `server` feature enabled.
+    Server(ServerArgs),
+
     /// ASN and organization lookup utility.
     Whois(WhoisArgs),
 
@@ -83,6 +88,37 @@ enum Commands {
 
     /// Database management commands (refresh, backup, status, clear).
     Database(DatabaseArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct ServerArgs {
+    /// Address to bind to (default: 127.0.0.1)
+    #[clap(long, default_value = "127.0.0.1")]
+    address: String,
+
+    /// Port to listen on (default: 8080)
+    #[clap(long, default_value_t = 8080)]
+    port: u16,
+
+    /// Monocle data directory (default: $HOME/.monocle)
+    #[clap(long)]
+    data_dir: Option<String>,
+
+    /// Maximum concurrent operations per connection (0 = unlimited)
+    #[clap(long)]
+    max_concurrent_ops: Option<usize>,
+
+    /// Maximum websocket message size in bytes
+    #[clap(long)]
+    max_message_size: Option<usize>,
+
+    /// Idle timeout in seconds
+    #[clap(long)]
+    connection_timeout_secs: Option<u64>,
+
+    /// Ping interval in seconds
+    #[clap(long)]
+    ping_interval_secs: Option<u64>,
 }
 
 fn main() {
@@ -118,6 +154,56 @@ fn main() {
     match cli.command {
         Commands::Parse(args) => commands::parse::run(args, output_format),
         Commands::Search(args) => commands::search::run(args, output_format),
+
+        Commands::Server(args) => {
+            // The server requires the `server` feature (axum + tokio). Keep the CLI
+            // binary as the entrypoint, but compile this arm only when `server` is enabled.
+            #[cfg(feature = "cli")]
+            {
+                let data_dir = args.data_dir.unwrap_or_else(|| config.data_dir.clone());
+
+                let router = monocle::server::create_router();
+                let context = monocle::server::WsContext::new(data_dir);
+
+                let mut server_config = monocle::server::ServerConfig::default()
+                    .with_address(args.address)
+                    .with_port(args.port);
+
+                if let Some(v) = args.max_concurrent_ops {
+                    server_config.max_concurrent_ops = v;
+                }
+                if let Some(v) = args.max_message_size {
+                    server_config.max_message_size = v;
+                }
+                if let Some(v) = args.connection_timeout_secs {
+                    server_config.connection_timeout_secs = v;
+                }
+                if let Some(v) = args.ping_interval_secs {
+                    server_config.ping_interval_secs = v;
+                }
+
+                // Start server (blocks current thread until shutdown)
+                let rt = tokio::runtime::Runtime::new()
+                    .expect("failed to create tokio runtime for server");
+                if let Err(e) = rt.block_on(monocle::server::start_server(
+                    router,
+                    context,
+                    server_config,
+                )) {
+                    eprintln!("Server failed: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+
+            #[cfg(not(feature = "cli"))]
+            {
+                let _ = args;
+                eprintln!("ERROR: server subcommand requires building with --features cli");
+                std::process::exit(2);
+            }
+        }
+
         Commands::Whois(args) => commands::whois::run(&config, args, output_format),
         Commands::Time(args) => commands::time::run(args, output_format),
         Commands::Country(args) => commands::country::run(args, output_format),

@@ -106,6 +106,21 @@ Method-specific details belong in additional fields (e.g., counters, ETA, filena
 
 ## Message Protocol
 
+### `op_id` Presence Policy (Strict)
+To keep streaming state machine simple and reduce client ambiguity:
+
+- **Non-streaming methods**:
+  - `op_id` MUST be absent in all server responses (`result` / `error`).
+  - Clients MUST NOT include `op_id` in requests (requests do not have an `op_id` field).
+- **Streaming methods**:
+  - Server MUST generate an `op_id` and include it in **every** server envelope for that operation:
+    - all `progress` messages
+    - all `stream` messages
+    - the final terminal `result` or `error`
+  - Streaming messages without `op_id` are invalid.
+
+This document treats `op_id` as the single, stable identity for a streaming operation across all emitted messages. `id` remains the request correlation identifier.
+
 All messages are JSON-encoded and follow a consistent envelope structure.
 
 ### Client → Server (Request)
@@ -155,6 +170,15 @@ All messages are JSON-encoded and follow a consistent envelope structure.
 - **`error`**: Error response (terminal; ends the operation)
 
 #### Streaming Contract (UI-Friendly)
+For streaming methods (`*.start` that stream), the server follows this exact contract:
+
+- 0..N `progress` messages (each includes `id` and `op_id`)
+- 0..N `stream` messages (each includes `id` and `op_id`)
+- then **exactly one** terminal message:
+  - `result` (includes `id` and `op_id`) OR
+  - `error` (includes `id` and `op_id`)
+
+After a terminal message, the operation is finished and no further messages for that `op_id` will be sent.
 
 - For a given request `id` / operation `op_id`, the server may emit:
   - `progress` messages (optional),
@@ -396,6 +420,11 @@ Validate a prefix-ASN pair against RPKI data.
 
 List ROAs filtered by ASN and/or prefix.
 
+**DB-first policy:** this method reads from the local Monocle database only (no remote fetch).
+If RPKI data is not present locally, the server returns a terminal `error` with code `NOT_INITIALIZED`.
+
+**Current support note:** `date` and `source` parameters are accepted for forward compatibility, but **historical snapshots and source selection are not supported in DB-first mode yet**. If `date` is provided, the server returns a terminal `error` with code `INVALID_PARAMS`.
+
 **Request:**
 ```json
 {
@@ -435,12 +464,17 @@ List ROAs filtered by ASN and/or prefix.
 |-----------|--------|----------|--------------|---------------------------------------|
 | `asn`     | number | No       | null         | Filter by origin ASN                  |
 | `prefix`  | string | No       | null         | Filter by prefix                      |
-| `date`    | string | No       | null         | Historical date (YYYY-MM-DD)          |
-| `source`  | string | No       | "cloudflare" | Data source: cloudflare, ripe, rpkiviews |
+| `date`    | string | No       | null         | Historical date (YYYY-MM-DD). **Not supported in DB-first mode** (request will be rejected). |
+| `source`  | string | No       | "cloudflare" | Data source selector. **Not supported in DB-first mode** (ignored today; reserved for future). |
 
 #### `rpki.aspas`
 
 List ASPAs filtered by customer and/or provider ASN.
+
+**DB-first policy:** this method reads from the local Monocle database only (no remote fetch).
+If RPKI data is not present locally, the server returns a terminal `error` with code `NOT_INITIALIZED`.
+
+**Current support note:** `date` and `source` parameters are accepted for forward compatibility, but **historical snapshots and source selection are not supported in DB-first mode yet**. If `date` is provided, the server returns a terminal `error` with code `INVALID_PARAMS`.
 
 **Request:**
 ```json
@@ -594,6 +628,8 @@ Update AS2Rel data from BGPKIT.
 #### `pfx2as.lookup`
 
 Look up the origin AS for a prefix.
+
+**DB-first policy:** this method is **cache-only**. The server MUST NOT fetch remote pfx2as data as part of `pfx2as.lookup`. If the pfx2as cache is missing/stale, clients should call `database.refresh` for `pfx2as-cache` first; otherwise the server returns a terminal `error` with code `NOT_INITIALIZED`.
 
 **Request:**
 ```json
@@ -925,6 +961,34 @@ DB-first rule:
 - The server should deduplicate refresh: if `database.refresh` is called while a refresh for the same `source` is already running and `force=false`, return a response that references the existing `op_id` (and then stream progress for that operation).
 
 ---
+
+## Client Libraries
+
+### Examples (kept out of this design doc)
+
+Full runnable client examples live in the repo under `monocle/examples/` to avoid bloating this design document.
+
+- WebSocket client (Rust): `monocle/examples/ws_client_all.rs`
+  - Demonstrates calling all currently registered WebSocket methods.
+  - Includes the requested `search.start` / `parse.start` request presets as commented blocks (disabled until those endpoints exist).
+- WebSocket client (JavaScript/TypeScript): `monocle/examples/ws_client_all.js`
+  - Demonstrates calling all currently registered WebSocket methods.
+- Library (non-WS) examples:
+  - `monocle/examples/search_bgp_messages.rs`
+
+To run the WebSocket client examples:
+
+1) Start the server (in a separate terminal):
+- `cargo run --features server --bin monocle -- server --address 127.0.0.1 --port 8080`
+
+2) Ensure the server is healthy:
+- `curl http://127.0.0.1:8080/health`
+
+3) Run the examples:
+- Rust:
+  - `MONOCLE_WS_URL=ws://127.0.0.1:8080/ws cargo run --example ws_client_all`
+- JS:
+  - `MONOCLE_WS_URL=ws://127.0.0.1:8080/ws node monocle/examples/ws_client_all.js`
 
 ## Client Operations
 

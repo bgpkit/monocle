@@ -17,15 +17,26 @@ name = "monocle"
 path = "src/bin/monocle.rs"
 required-features = ["cli"]
 
+
+
 [features]
 default = ["cli"]
 
-# CLI support (clap derives, terminal output, progress bars)
+# CLI support (clap derives, terminal output, progress bars) + WebSocket server support
 cli = [
     "dep:clap",
     "dep:indicatif",
     "dep:json_to_table",
     "dep:tracing-subscriber",
+
+    # server deps merged into cli
+    "dep:axum",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:futures",
+    "dep:uuid",
+    "dep:async-trait",
+    "dep:tower-http",
 ]
 
 # Full build with all features
@@ -57,6 +68,15 @@ tabled = "0.20"
 tracing = "0.1"
 ureq = { version = "3.1", features = ["json"] }
 
+# WebSocket server dependencies (optional)
+axum = { version = "0.7", features = ["ws"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+tokio-util = { version = "0.7", optional = true }
+futures = { version = "0.3", optional = true }
+uuid = { version = "1.0", features = ["v4"], optional = true }
+async-trait = { version = "0.1", optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+
 # CLI-only dependencies (optional)
 clap = { version = "4.1", features = ["derive"], optional = true }
 indicatif = { version = "0.18.0", optional = true }
@@ -65,6 +85,10 @@ tracing-subscriber = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+futures-util = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio-tungstenite = "0.24"
+tungstenite = "0.24"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"

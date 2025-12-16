@@ -176,6 +176,9 @@ pub mod config;
 pub mod database;
 pub mod lens;
 
+#[cfg(feature = "cli")]
+pub mod server;
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -204,3 +207,13 @@ pub use database::{Pfx2asFileCache, RpkiFileCache};
 
 // Unified output format for all commands
 pub use lens::utils::OutputFormat;
+
+// =============================================================================
+// Server Module (WebSocket API) - requires "server" feature
+// =============================================================================
+
+#[cfg(feature = "cli")]
+pub use server::{
+    create_router, start_server, Dispatcher, OperationRegistry, Router, ServerConfig, ServerState,
+    WsContext, WsError, WsMethod, WsRequest, WsResult, WsSink,
+};

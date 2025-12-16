@@ -8,6 +8,33 @@ This is a major release with significant architectural changes, new commands, an
 
 ### New Commands
 
+#### `monocle server` - WebSocket API Server
+
+Start a WebSocket server for programmatic access to monocle functionality:
+* `monocle server`: Start server on default address (127.0.0.1:8080)
+* `monocle server --address 0.0.0.0 --port 3000`: Custom bind address and port
+* WebSocket endpoint: `ws://<address>:<port>/ws`
+* Health check endpoint: `http://<address>:<port>/health`
+
+**Features:**
+* JSON-RPC style request/response protocol with streaming support
+* Operation cancellation via `op_id` for long-running tasks
+* Progress reporting for parse and search operations
+* DB-first policy: queries read from local SQLite cache
+
+**Available methods:**
+* `system.info`, `system.methods` - Server introspection
+* `time.parse` - Time string parsing
+* `ip.lookup`, `ip.public` - IP information lookup
+* `rpki.validate`, `rpki.roas`, `rpki.aspas` - RPKI operations
+* `as2org.search`, `as2org.bootstrap` - AS-to-Organization mappings
+* `as2rel.search`, `as2rel.relationship`, `as2rel.update` - AS relationships
+* `pfx2as.lookup` - Prefix-to-ASN mapping
+* `country.lookup` - Country code/name lookup
+* `parse.start`, `parse.cancel` - MRT file parsing (streaming)
+* `search.start`, `search.cancel` - BGP message search (streaming)
+* `database.status`, `database.refresh` - Database management
+
 #### `monocle database` - Database Management
 
 Consolidated database management with subcommands:
