@@ -2,16 +2,13 @@
 //!
 //! This module provides handlers for Pfx2as-related methods like `pfx2as.lookup`.
 //!
-//! The handler uses the SQLite-based Pfx2as repository for efficient prefix queries,
-//! with fallback to the file-based cache for backward compatibility.
+//! The handler uses the SQLite-based Pfx2as repository for efficient prefix queries.
 
-use crate::database::{MonocleDatabase, Pfx2asFileCache, Pfx2asRecord};
-use crate::lens::pfx2as::{Pfx2asLens, Pfx2asLookupArgs, Pfx2asLookupMode};
+use crate::database::MonocleDatabase;
 use crate::server::handler::{WsContext, WsError, WsMethod, WsRequest, WsResult};
 use crate::server::op_sink::WsOpSink;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 // =============================================================================
@@ -94,173 +91,94 @@ impl WsMethod for Pfx2asLookupHandler {
         params: Self::Params,
         sink: WsOpSink,
     ) -> WsResult<()> {
-        // DB-first policy: Try SQLite repository first, then fall back to file cache
         let mode_str = params.mode.as_deref().unwrap_or("longest").to_lowercase();
 
-        // Try SQLite-based repository first (do all DB work before any await)
-        let sqlite_response: Option<Pfx2asLookupResponse> = {
-            let db_result = MonocleDatabase::open_in_dir(&ctx.data_dir);
+        // Do all DB work before any await to avoid Send issues with rusqlite::Connection
+        let response: Pfx2asLookupResponse = {
+            let db = MonocleDatabase::open_in_dir(&ctx.data_dir)
+                .map_err(|e| WsError::internal(format!("Failed to open database: {}", e)))?;
 
-            if let Ok(db) = db_result {
-                let repo = db.pfx2as();
+            let repo = db.pfx2as();
 
-                // Check if SQLite has data
-                if !repo.is_empty() {
-                    let response = match mode_str.as_str() {
-                        "exact" => {
-                            let asns = repo
-                                .lookup_exact(&params.prefix)
-                                .map_err(|e| WsError::operation_failed(e.to_string()))?;
-
-                            Some(Pfx2asLookupResponse {
-                                prefix: params.prefix.clone(),
-                                asns,
-                                match_type: "exact".to_string(),
-                                results: None,
-                            })
-                        }
-                        "longest" => {
-                            let result = repo
-                                .lookup_longest(&params.prefix)
-                                .map_err(|e| WsError::operation_failed(e.to_string()))?;
-
-                            Some(Pfx2asLookupResponse {
-                                prefix: result.prefix,
-                                asns: result.origin_asns,
-                                match_type: "longest".to_string(),
-                                results: None,
-                            })
-                        }
-                        "covering" => {
-                            let results = repo
-                                .lookup_covering(&params.prefix)
-                                .map_err(|e| WsError::operation_failed(e.to_string()))?;
-
-                            let match_results: Vec<Pfx2asMatchResult> = results
-                                .into_iter()
-                                .map(|r| Pfx2asMatchResult {
-                                    prefix: r.prefix,
-                                    asns: r.origin_asns,
-                                })
-                                .collect();
-
-                            Some(Pfx2asLookupResponse {
-                                prefix: params.prefix.clone(),
-                                asns: vec![],
-                                match_type: "covering".to_string(),
-                                results: Some(match_results),
-                            })
-                        }
-                        "covered" => {
-                            let results = repo
-                                .lookup_covered(&params.prefix)
-                                .map_err(|e| WsError::operation_failed(e.to_string()))?;
-
-                            let match_results: Vec<Pfx2asMatchResult> = results
-                                .into_iter()
-                                .map(|r| Pfx2asMatchResult {
-                                    prefix: r.prefix,
-                                    asns: r.origin_asns,
-                                })
-                                .collect();
-
-                            Some(Pfx2asLookupResponse {
-                                prefix: params.prefix.clone(),
-                                asns: vec![],
-                                match_type: "covered".to_string(),
-                                results: Some(match_results),
-                            })
-                        }
-                        _ => {
-                            return Err(WsError::invalid_params(format!(
-                                "Unknown mode: {}",
-                                mode_str
-                            )));
-                        }
-                    };
-                    response
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
-
-        // Send result if we got one from SQLite (await is now safe - no DB references held)
-        if let Some(response) = sqlite_response {
-            sink.send_result(response)
-                .await
-                .map_err(|e| WsError::internal(e.to_string()))?;
-
-            return Ok(());
-        }
-
-        // Fall back to file-based cache for backward compatibility
-        let cache = Pfx2asFileCache::new(&ctx.data_dir)
-            .map_err(|e| WsError::internal(format!("Failed to access pfx2as cache: {}", e)))?;
-
-        // Default BGPKIT source string used by CLI and lens docs.
-        let source = "https://data.bgpkit.com/pfx2as/pfx2as-latest.json.bz2";
-
-        let cached = match cache.load(source) {
-            Ok(data) => data,
-            Err(_) => {
+            // Check if SQLite has data
+            if repo.is_empty() {
                 return Err(WsError::not_initialized(
-                    "pfx2as cache (run database.refresh source=pfx2as-cache first)",
+                    "pfx2as cache (run database.refresh source=pfx2as first)",
                 ));
             }
-        };
 
-        // Convert cached records into the lens's record type
-        let mut prefix_map: HashMap<String, HashSet<u32>> = HashMap::new();
-        for rec in cached.records {
-            prefix_map
-                .entry(rec.prefix.clone())
-                .or_default()
-                .extend(rec.origin_asns.into_iter());
-        }
+            match mode_str.as_str() {
+                "exact" => {
+                    let asns = repo
+                        .lookup_exact(&params.prefix)
+                        .map_err(|e| WsError::operation_failed(e.to_string()))?;
 
-        let records: Vec<Pfx2asRecord> = prefix_map
-            .into_iter()
-            .map(|(prefix, asns)| Pfx2asRecord {
-                prefix,
-                origin_asns: asns.into_iter().collect(),
-            })
-            .collect();
+                    Pfx2asLookupResponse {
+                        prefix: params.prefix.clone(),
+                        asns,
+                        match_type: "exact".to_string(),
+                        results: None,
+                    }
+                }
+                "longest" => {
+                    let result = repo
+                        .lookup_longest(&params.prefix)
+                        .map_err(|e| WsError::operation_failed(e.to_string()))?;
 
-        let lens = Pfx2asLens::from_records(records)
-            .map_err(|e| WsError::internal(format!("Failed to build pfx2as trie: {}", e)))?;
+                    Pfx2asLookupResponse {
+                        prefix: result.prefix,
+                        asns: result.origin_asns,
+                        match_type: "longest".to_string(),
+                        results: None,
+                    }
+                }
+                "covering" => {
+                    let results = repo
+                        .lookup_covering(&params.prefix)
+                        .map_err(|e| WsError::operation_failed(e.to_string()))?;
 
-        // Parse mode (file cache only supports exact and longest)
-        let mode = match mode_str.as_str() {
-            "exact" => Pfx2asLookupMode::Exact,
-            "longest" => Pfx2asLookupMode::Longest,
-            "covering" | "covered" => {
-                return Err(WsError::invalid_params(
-                    "covering/covered modes require SQLite cache. Run database.refresh source=pfx2as-cache to populate it.",
-                ));
+                    let match_results: Vec<Pfx2asMatchResult> = results
+                        .into_iter()
+                        .map(|r| Pfx2asMatchResult {
+                            prefix: r.prefix,
+                            asns: r.origin_asns,
+                        })
+                        .collect();
+
+                    Pfx2asLookupResponse {
+                        prefix: params.prefix.clone(),
+                        asns: vec![],
+                        match_type: "covering".to_string(),
+                        results: Some(match_results),
+                    }
+                }
+                "covered" => {
+                    let results = repo
+                        .lookup_covered(&params.prefix)
+                        .map_err(|e| WsError::operation_failed(e.to_string()))?;
+
+                    let match_results: Vec<Pfx2asMatchResult> = results
+                        .into_iter()
+                        .map(|r| Pfx2asMatchResult {
+                            prefix: r.prefix,
+                            asns: r.origin_asns,
+                        })
+                        .collect();
+
+                    Pfx2asLookupResponse {
+                        prefix: params.prefix.clone(),
+                        asns: vec![],
+                        match_type: "covered".to_string(),
+                        results: Some(match_results),
+                    }
+                }
+                _ => {
+                    return Err(WsError::invalid_params(format!(
+                        "Unknown mode: {}",
+                        mode_str
+                    )));
+                }
             }
-            _ => Pfx2asLookupMode::Longest,
-        };
-
-        // Build lookup args
-        let args = Pfx2asLookupArgs::new(&params.prefix).with_mode(mode.clone());
-
-        // Perform the lookup
-        let asns = lens
-            .lookup(&args)
-            .map_err(|e| WsError::operation_failed(e.to_string()))?;
-
-        // Build response
-        let response = Pfx2asLookupResponse {
-            prefix: params.prefix,
-            asns,
-            match_type: match mode {
-                Pfx2asLookupMode::Exact => "exact".to_string(),
-                Pfx2asLookupMode::Longest => "longest".to_string(),
-            },
-            results: None,
         };
 
         sink.send_result(response)

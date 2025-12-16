@@ -1,8 +1,8 @@
 use clap::Args;
 use ipnet::IpNet;
 use itertools::Itertools;
-use monocle::database::{Pfx2asFileCache, Pfx2asRecord};
-use monocle::lens::pfx2as::Pfx2asLens;
+use monocle::database::{MonocleDatabase, Pfx2asDbRecord};
+use monocle::lens::pfx2as::Pfx2asEntry;
 use monocle::lens::utils::OutputFormat;
 use monocle::MonocleConfig;
 use serde::{Deserialize, Serialize};
@@ -14,13 +14,6 @@ use tabled::Table;
 /// Arguments for the Pfx2as command
 #[derive(Args)]
 pub struct Pfx2asArgs {
-    /// Prefix-to-AS mapping data file location
-    #[clap(
-        long,
-        default_value = "https://data.bgpkit.com/pfx2as/pfx2as-latest.json.bz2"
-    )]
-    pub data_file_path: String,
-
     /// IP prefixes or prefix files (one prefix per line)
     #[clap(required = true)]
     pub input: Vec<String>,
@@ -33,18 +26,22 @@ pub struct Pfx2asArgs {
     #[clap(short, long)]
     pub refresh: bool,
 
-    /// Skip cache and use direct in-memory lookup (legacy behavior)
+    /// Show covering prefixes (supernets) instead of longest match
     #[clap(long)]
-    pub no_cache: bool,
+    pub covering: bool,
+
+    /// Show covered prefixes (subnets) instead of longest match
+    #[clap(long)]
+    pub covered: bool,
 }
 
 pub fn run(config: &MonocleConfig, args: Pfx2asArgs, output_format: OutputFormat) {
     let Pfx2asArgs {
-        data_file_path,
         input,
         exact_match,
         refresh,
-        no_cache,
+        covering,
+        covered,
     } = args;
 
     // Collect all prefixes to look up
@@ -76,154 +73,158 @@ pub fn run(config: &MonocleConfig, args: Pfx2asArgs, output_format: OutputFormat
 
     prefixes.sort();
 
-    // If no_cache is set, use the legacy in-memory approach
-    if no_cache {
-        run_legacy(&data_file_path, &prefixes, exact_match, output_format);
-        return;
-    }
-
-    // Use file-based cache
-    run_with_cache(
-        config,
-        &data_file_path,
-        &prefixes,
-        exact_match,
-        refresh,
-        output_format,
-    );
-}
-
-/// Run with file-based caching and in-memory trie
-fn run_with_cache(
-    config: &MonocleConfig,
-    data_source: &str,
-    prefixes: &[IpNet],
-    exact_match: bool,
-    refresh: bool,
-    output_format: OutputFormat,
-) {
-    let data_dir = config.data_dir.as_str();
-
-    // Initialize the file cache
-    let cache = match Pfx2asFileCache::new(data_dir) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to initialize cache: {}", e);
-            // Fall back to legacy mode
-            run_legacy(data_source, prefixes, exact_match, output_format);
-            return;
-        }
+    // Determine lookup mode
+    let mode = if exact_match {
+        LookupMode::Exact
+    } else if covering {
+        LookupMode::Covering
+    } else if covered {
+        LookupMode::Covered
+    } else {
+        LookupMode::Longest
     };
 
-    // Check if we need to refresh the cache
-    let ttl = config.pfx2as_cache_ttl();
-    let needs_refresh = refresh || !cache.is_fresh(data_source, ttl);
-
-    if needs_refresh {
-        eprintln!("Loading pfx2as data from {}...", data_source);
-
-        // Load data from source
-        let entries: Vec<monocle::lens::pfx2as::Pfx2asEntry> =
-            match oneio::read_json_struct(data_source) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("ERROR: unable to load data file: {}", e);
-                    std::process::exit(1);
-                }
-            };
-
-        eprintln!("Caching {} entries...", entries.len());
-
-        // Convert to cache records (aggregate by prefix)
-        let mut prefix_map: HashMap<String, HashSet<u32>> = HashMap::new();
-        for entry in entries {
-            prefix_map
-                .entry(entry.prefix.clone())
-                .or_default()
-                .insert(entry.asn);
-        }
-
-        let records: Vec<Pfx2asRecord> = prefix_map
-            .into_iter()
-            .map(|(prefix, asns)| Pfx2asRecord {
-                prefix,
-                origin_asns: asns.into_iter().collect(),
-            })
-            .collect();
-
-        // Store in cache
-        if let Err(e) = cache.store(data_source, records) {
-            eprintln!("Warning: Failed to cache data: {}", e);
-            // Fall back to legacy mode
-            run_legacy(data_source, prefixes, exact_match, output_format);
-            return;
-        }
-
-        eprintln!("Cache updated");
-    }
-
-    // Load cached data and perform lookups using in-memory trie
-    let cached_data = match cache.load(data_source) {
-        Ok(data) => data,
+    // Open the database
+    let db = match MonocleDatabase::open_in_dir(&config.data_dir) {
+        Ok(db) => db,
         Err(e) => {
-            eprintln!("Warning: Failed to load cached data: {}", e);
-            // Fall back to legacy mode
-            run_legacy(data_source, prefixes, exact_match, output_format);
-            return;
-        }
-    };
-
-    // Build a Pfx2asLens from cached data
-    let pfx2as = match Pfx2asLens::from_records(cached_data.records) {
-        Ok(lens) => lens,
-        Err(e) => {
-            eprintln!("Warning: Failed to build lookup trie: {}", e);
-            // Fall back to legacy mode
-            run_legacy(data_source, prefixes, exact_match, output_format);
-            return;
-        }
-    };
-
-    // Perform lookups
-    let mut prefix_origins_map: HashMap<IpNet, HashSet<u32>> = HashMap::new();
-    for p in prefixes {
-        let origins = if exact_match {
-            pfx2as.lookup_exact(*p)
-        } else {
-            pfx2as.lookup_longest(*p)
-        };
-        prefix_origins_map.entry(*p).or_default().extend(origins);
-    }
-
-    display_results(&prefix_origins_map, output_format);
-}
-
-/// Run with legacy in-memory trie (no caching)
-fn run_legacy(
-    data_source: &str,
-    prefixes: &[IpNet],
-    exact_match: bool,
-    output_format: OutputFormat,
-) {
-    let pfx2as = match Pfx2asLens::new(Some(data_source.to_string())) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("ERROR: unable to open data file: {}", e);
+            eprintln!("ERROR: Failed to open database: {}", e);
             std::process::exit(1);
         }
     };
 
-    let mut prefix_origins_map: HashMap<IpNet, HashSet<u32>> = HashMap::new();
-    for p in prefixes {
-        let origins = if exact_match {
-            pfx2as.lookup_exact(*p)
-        } else {
-            pfx2as.lookup_longest(*p)
+    let repo = db.pfx2as();
+
+    // Check if we need to refresh the cache
+    let ttl_std = config.pfx2as_cache_ttl();
+    let ttl = chrono::Duration::from_std(ttl_std).unwrap_or(chrono::Duration::hours(24));
+    let needs_refresh = refresh || repo.needs_refresh(ttl);
+
+    if needs_refresh {
+        let url = "https://data.bgpkit.com/pfx2as/pfx2as-latest.json.bz2";
+        eprintln!("Loading pfx2as data from {}...", url);
+
+        // Load data from source
+        let entries: Vec<Pfx2asEntry> = match oneio::read_json_struct(url) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("ERROR: unable to load data file: {}", e);
+                std::process::exit(1);
+            }
         };
-        prefix_origins_map.entry(*p).or_default().extend(origins);
+
+        eprintln!("Storing {} entries in database...", entries.len());
+
+        // Convert to database records
+        let records: Vec<Pfx2asDbRecord> = entries
+            .into_iter()
+            .map(|e| Pfx2asDbRecord {
+                prefix: e.prefix,
+                origin_asn: e.asn,
+            })
+            .collect();
+
+        // Store in SQLite
+        if let Err(e) = repo.store(&records, url) {
+            eprintln!("ERROR: Failed to store data: {}", e);
+            std::process::exit(1);
+        }
+
+        eprintln!("Database updated");
     }
 
-    display_results(&prefix_origins_map, output_format);
+    // Check if database has data
+    if repo.is_empty() {
+        eprintln!("ERROR: No pfx2as data in database. Run with --refresh to populate.");
+        std::process::exit(1);
+    }
+
+    // Perform lookups based on mode
+    match mode {
+        LookupMode::Exact => {
+            let mut prefix_origins_map: HashMap<IpNet, HashSet<u32>> = HashMap::new();
+            for p in &prefixes {
+                let prefix_str = p.to_string();
+                match repo.lookup_exact(&prefix_str) {
+                    Ok(asns) => {
+                        prefix_origins_map.entry(*p).or_default().extend(asns);
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to lookup {}: {}", p, e);
+                    }
+                }
+            }
+            display_simple_results(&prefix_origins_map, output_format);
+        }
+        LookupMode::Longest => {
+            let mut prefix_origins_map: HashMap<IpNet, HashSet<u32>> = HashMap::new();
+            for p in &prefixes {
+                let prefix_str = p.to_string();
+                match repo.lookup_longest(&prefix_str) {
+                    Ok(result) => {
+                        prefix_origins_map
+                            .entry(*p)
+                            .or_default()
+                            .extend(result.origin_asns);
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to lookup {}: {}", p, e);
+                    }
+                }
+            }
+            display_simple_results(&prefix_origins_map, output_format);
+        }
+        LookupMode::Covering => {
+            let mut results: Vec<CoveringResult> = Vec::new();
+            for p in &prefixes {
+                let prefix_str = p.to_string();
+                match repo.lookup_covering(&prefix_str) {
+                    Ok(covering_results) => {
+                        for r in covering_results {
+                            results.push(CoveringResult {
+                                query: p.to_string(),
+                                prefix: r.prefix,
+                                origins: r.origin_asns,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to lookup {}: {}", p, e);
+                    }
+                }
+            }
+            display_covering_results(&results, output_format);
+        }
+        LookupMode::Covered => {
+            let mut results: Vec<CoveringResult> = Vec::new();
+            for p in &prefixes {
+                let prefix_str = p.to_string();
+                match repo.lookup_covered(&prefix_str) {
+                    Ok(covered_results) => {
+                        for r in covered_results {
+                            results.push(CoveringResult {
+                                query: p.to_string(),
+                                prefix: r.prefix,
+                                origins: r.origin_asns,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to lookup {}: {}", p, e);
+                    }
+                }
+            }
+            display_covering_results(&results, output_format);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LookupMode {
+    Exact,
+    Longest,
+    Covering,
+    Covered,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, tabled::Tabled)]
@@ -232,8 +233,25 @@ struct Pfx2asResult {
     origins: String,
 }
 
-/// Display results in the appropriate format
-fn display_results(prefix_origins_map: &HashMap<IpNet, HashSet<u32>>, output_format: OutputFormat) {
+#[derive(Debug, Clone)]
+struct CoveringResult {
+    query: String,
+    prefix: String,
+    origins: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, tabled::Tabled)]
+struct CoveringResultDisplay {
+    query: String,
+    prefix: String,
+    origins: String,
+}
+
+/// Display simple results (exact/longest match)
+fn display_simple_results(
+    prefix_origins_map: &HashMap<IpNet, HashSet<u32>>,
+    output_format: OutputFormat,
+) {
     let sorted_results: Vec<_> = prefix_origins_map
         .iter()
         .sorted_by_key(|(p, _)| *p)
@@ -298,6 +316,95 @@ fn display_results(prefix_origins_map: &HashMap<IpNet, HashSet<u32>>, output_for
             println!("prefix|origins");
             for (p, o) in &sorted_results {
                 println!("{}|{}", p, o.iter().join(","));
+            }
+        }
+    }
+}
+
+/// Display covering/covered results
+fn display_covering_results(results: &[CoveringResult], output_format: OutputFormat) {
+    let sorted_results: Vec<_> = results
+        .iter()
+        .sorted_by(|a, b| a.query.cmp(&b.query).then(a.prefix.cmp(&b.prefix)))
+        .collect();
+
+    match output_format {
+        OutputFormat::Table => {
+            let display: Vec<CoveringResultDisplay> = sorted_results
+                .iter()
+                .map(|r| CoveringResultDisplay {
+                    query: r.query.clone(),
+                    prefix: r.prefix.clone(),
+                    origins: r.origins.iter().sorted().join(","),
+                })
+                .collect();
+            println!("{}", Table::new(display).with(Style::rounded()));
+        }
+        OutputFormat::Markdown => {
+            let display: Vec<CoveringResultDisplay> = sorted_results
+                .iter()
+                .map(|r| CoveringResultDisplay {
+                    query: r.query.clone(),
+                    prefix: r.prefix.clone(),
+                    origins: r.origins.iter().sorted().join(","),
+                })
+                .collect();
+            println!("{}", Table::new(display).with(Style::markdown()));
+        }
+        OutputFormat::Json => {
+            let data: Vec<Value> = sorted_results
+                .iter()
+                .map(|r| {
+                    json!({
+                        "query": r.query,
+                        "prefix": r.prefix,
+                        "origins": r.origins.iter().sorted().collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            match serde_json::to_string(&data) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+            }
+        }
+        OutputFormat::JsonPretty => {
+            let data: Vec<Value> = sorted_results
+                .iter()
+                .map(|r| {
+                    json!({
+                        "query": r.query,
+                        "prefix": r.prefix,
+                        "origins": r.origins.iter().sorted().collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            match serde_json::to_string_pretty(&data) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+            }
+        }
+        OutputFormat::JsonLine => {
+            for r in &sorted_results {
+                let obj = json!({
+                    "query": r.query,
+                    "prefix": r.prefix,
+                    "origins": r.origins.iter().sorted().collect::<Vec<_>>()
+                });
+                match serde_json::to_string(&obj) {
+                    Ok(json) => println!("{}", json),
+                    Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                }
+            }
+        }
+        OutputFormat::Psv => {
+            println!("query|prefix|origins");
+            for r in &sorted_results {
+                println!(
+                    "{}|{}|{}",
+                    r.query,
+                    r.prefix,
+                    r.origins.iter().sorted().join(",")
+                );
             }
         }
     }

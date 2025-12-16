@@ -3,7 +3,8 @@ use monocle::config::{
     format_size, get_cache_info, get_cache_settings, get_data_source_info, get_sqlite_info,
     CacheInfo, CacheSettings, DataSource, DataSourceInfo, DataSourceStatus, SqliteDatabaseInfo,
 };
-use monocle::database::{MonocleDatabase, Pfx2asFileCache};
+use monocle::database::{MonocleDatabase, Pfx2asDbRecord};
+use monocle::lens::pfx2as::Pfx2asEntry;
 use monocle::lens::rpki::commons::load_current_rpki;
 use monocle::lens::utils::OutputFormat;
 use monocle::MonocleConfig;
@@ -23,7 +24,7 @@ pub struct DatabaseArgs {
 pub enum DatabaseCommands {
     /// Refresh data source(s)
     Refresh {
-        /// Name of the data source to refresh: as2org, as2rel, rpki, pfx2as-cache
+        /// Name of the data source to refresh: as2org, as2rel, rpki, pfx2as
         #[clap(value_name = "DB_NAME")]
         source: Option<String>,
 
@@ -48,7 +49,7 @@ pub enum DatabaseCommands {
 
     /// Clear data source(s)
     Clear {
-        /// Name of the data source to clear: as2org, as2rel, rpki, pfx2as-cache, all
+        /// Name of the data source to clear: as2org, as2rel, rpki, pfx2as, all
         #[clap(value_name = "DB_NAME")]
         source: String,
 
@@ -442,14 +443,31 @@ fn do_refresh(config: &MonocleConfig, source: DataSource) -> Result<String, Stri
             ))
         }
         DataSource::Pfx2asCache => {
-            let cache = Pfx2asFileCache::new(&config.data_dir)
-                .map_err(|e| format!("Failed to access Pfx2as cache: {}", e))?;
+            // Fetch pfx2as data from BGPKIT and store in SQLite
+            let url = "https://data.bgpkit.com/pfx2as/pfx2as-latest.json.bz2";
+            eprintln!("Loading pfx2as data from {}...", url);
 
-            cache
-                .clear_all()
-                .map_err(|e| format!("Failed to clear Pfx2as cache: {}", e))?;
+            let entries: Vec<Pfx2asEntry> = oneio::read_json_struct(url)
+                .map_err(|e| format!("Failed to fetch pfx2as data: {}", e))?;
 
-            Ok("Pfx2as cache cleared (will be refreshed on next use)".to_string())
+            let records: Vec<Pfx2asDbRecord> = entries
+                .into_iter()
+                .map(|e| Pfx2asDbRecord {
+                    prefix: e.prefix,
+                    origin_asn: e.asn,
+                })
+                .collect();
+
+            let count = records.len();
+
+            let db = MonocleDatabase::open(&config.sqlite_path())
+                .map_err(|e| format!("Failed to open database: {}", e))?;
+
+            db.pfx2as()
+                .store(&records, url)
+                .map_err(|e| format!("Failed to store pfx2as data: {}", e))?;
+
+            Ok(format!("Loaded {} pfx2as records", count))
         }
     }
 }
@@ -584,7 +602,7 @@ fn run_clear(
             Some(ds) => vec![ds],
             None => {
                 eprintln!(
-                    "ERROR: Unknown data source '{}'. Available: as2org, as2rel, rpki, pfx2as-cache, all",
+                    "ERROR: Unknown data source '{}'. Available: as2org, as2rel, rpki, pfx2as, all",
                     source
                 );
                 std::process::exit(1);
@@ -692,12 +710,12 @@ fn do_clear(config: &MonocleConfig, source: DataSource) -> Result<String, String
             Ok("Cleared".to_string())
         }
         DataSource::Pfx2asCache => {
-            let cache = Pfx2asFileCache::new(&config.data_dir)
-                .map_err(|e| format!("Failed to access Pfx2as cache: {}", e))?;
+            let db = MonocleDatabase::open(&config.sqlite_path())
+                .map_err(|e| format!("Failed to open database: {}", e))?;
 
-            cache
-                .clear_all()
-                .map_err(|e| format!("Failed to clear Pfx2as cache: {}", e))?;
+            db.pfx2as()
+                .clear()
+                .map_err(|e| format!("Failed to clear pfx2as: {}", e))?;
 
             Ok("Cleared".to_string())
         }

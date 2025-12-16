@@ -56,7 +56,6 @@ dirs = "6"
 dotenvy = "0.15"
 humantime = "2.1"
 ipnet = { version = "2.10", features = ["json"] }
-ipnet-trie = "0.3.0"
 itertools = "0.14"
 oneio = { version = "0.20.0", default-features = false, features = ["https", "gz", "bz", "json"] }
 radar-rs = "0.1.0"

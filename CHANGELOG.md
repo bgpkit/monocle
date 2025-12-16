@@ -68,7 +68,6 @@ Query AS-level relationships between ASNs from BGPKIT's AS relationship data:
   * Supports multiple query modes: exact, longest prefix match, covering (supernets), covered (subnets)
   * Cache expires after 24 hours and automatically refreshes
   * Use `database refresh pfx2as` or WebSocket `database.refresh` with `source: "pfx2as"` to populate
-  * Backward compatible with file-based cache for existing installations
 
 ### RPKI Improvements
 

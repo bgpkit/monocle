@@ -34,25 +34,19 @@ pub use pfx2as::{
     Pfx2asSchemaDefinitions, DEFAULT_PFX2AS_CACHE_TTL,
 };
 
-// File-based cache for RPKI and Pfx2as
+// File-based cache for RPKI
 pub use file_cache::{
-    // Pfx2as cache
     // Cache utilities
     cache_size,
     clear_all_caches,
     ensure_cache_dirs,
     // RPKI cache
     AspaRecord,
-    Pfx2asCacheData,
-    Pfx2asCacheMeta,
-    Pfx2asFileCache,
-    Pfx2asRecord,
     RoaRecord,
     RpkiCacheData,
     RpkiCacheMeta,
     RpkiFileCache,
     // TTL defaults
-    DEFAULT_PFX2AS_TTL,
     DEFAULT_RPKI_HISTORICAL_TTL,
     DEFAULT_RPKI_TTL,
 };

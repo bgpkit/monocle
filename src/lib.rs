@@ -198,8 +198,8 @@ pub use config::{
 // Primary database type (SQLite)
 pub use database::MonocleDatabase;
 
-// File-based caches for RPKI and Pfx2as
-pub use database::{Pfx2asFileCache, RpkiFileCache};
+// File-based cache for RPKI
+pub use database::RpkiFileCache;
 
 // =============================================================================
 // Common Types

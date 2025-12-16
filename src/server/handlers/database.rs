@@ -316,7 +316,7 @@ impl WsMethod for DatabaseRefreshHandler {
 
     fn validate(params: &Self::Params) -> WsResult<()> {
         match params.source.to_lowercase().as_str() {
-            "rpki" | "as2org" | "as2rel" | "pfx2as" | "pfx2as-cache" | "all" => Ok(()),
+            "rpki" | "as2org" | "as2rel" | "pfx2as" | "all" => Ok(()),
             _ => Err(WsError::invalid_params(format!(
                 "Invalid source: {}. Use 'rpki', 'as2org', 'as2rel', 'pfx2as', or 'all'",
                 params.source
@@ -373,7 +373,7 @@ impl WsMethod for DatabaseRefreshHandler {
                     Some(count_usize),
                 )
             }
-            "pfx2as" | "pfx2as-cache" => {
+            "pfx2as" => {
                 // Fetch pfx2as data from BGPKIT and store in SQLite
                 let url = "https://data.bgpkit.com/pfx2as/pfx2as-latest.json.bz2";
 
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn test_database_refresh_params_validation() {
         // Valid sources
-        for source in &["rpki", "as2org", "as2rel", "pfx2as", "pfx2as-cache", "all"] {
+        for source in &["rpki", "as2org", "as2rel", "pfx2as", "all"] {
             let params = DatabaseRefreshParams {
                 source: source.to_string(),
                 force: None,

@@ -212,24 +212,6 @@ impl<'a> Pfx2asRepository<'a> {
         Ok(())
     }
 
-    /// Store Pfx2as records from legacy format (prefix string -> list of ASNs)
-    ///
-    /// This accepts the format used by the file cache: Vec<(prefix, Vec<asn>)>
-    pub fn store_from_legacy(&self, records: &[(String, Vec<u32>)], source: &str) -> Result<()> {
-        // Convert to flat records
-        let flat_records: Vec<Pfx2asDbRecord> = records
-            .iter()
-            .flat_map(|(prefix, asns)| {
-                asns.iter().map(move |&asn| Pfx2asDbRecord {
-                    prefix: prefix.clone(),
-                    origin_asn: asn,
-                })
-            })
-            .collect();
-
-        self.store(&flat_records, source)
-    }
-
     /// Store Pfx2as records
     pub fn store(&self, records: &[Pfx2asDbRecord], source: &str) -> Result<()> {
         // Ensure schema exists
@@ -863,24 +845,5 @@ mod tests {
         let google_prefixes = repo.get_by_asn(15169).unwrap();
         assert_eq!(google_prefixes.len(), 1);
         assert_eq!(google_prefixes[0].prefix, "8.8.8.0/24");
-    }
-
-    #[test]
-    fn test_store_from_legacy() {
-        let conn = create_test_db();
-        let repo = Pfx2asRepository::new(&conn);
-
-        let legacy_records = vec![
-            ("1.1.1.0/24".to_string(), vec![13335, 13336]),
-            ("8.8.8.0/24".to_string(), vec![15169]),
-        ];
-
-        repo.store_from_legacy(&legacy_records, "test").unwrap();
-
-        assert_eq!(repo.record_count().unwrap(), 3);
-        assert_eq!(repo.prefix_count().unwrap(), 2);
-
-        let asns = repo.lookup_exact("1.1.1.0/24").unwrap();
-        assert_eq!(asns.len(), 2);
     }
 }

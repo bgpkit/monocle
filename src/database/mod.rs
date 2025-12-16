@@ -122,18 +122,13 @@ pub use monocle::{
 pub use session::MsgStore;
 
 // =============================================================================
-// File-based Cache Types (for RPKI and Pfx2as)
+// File-based Cache Types (for RPKI)
 // =============================================================================
 
 // RPKI file cache
 pub use monocle::{
     AspaRecord, RoaRecord, RpkiCacheData, RpkiCacheMeta, RpkiFileCache,
     DEFAULT_RPKI_HISTORICAL_TTL, DEFAULT_RPKI_TTL,
-};
-
-// Pfx2as file cache
-pub use monocle::{
-    Pfx2asCacheData, Pfx2asCacheMeta, Pfx2asFileCache, Pfx2asRecord, DEFAULT_PFX2AS_TTL,
 };
 
 // Cache utilities

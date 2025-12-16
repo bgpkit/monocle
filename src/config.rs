@@ -431,7 +431,7 @@ pub fn get_sqlite_info(config: &MonocleConfig) -> SqliteDatabaseInfo {
 
 /// Get cache information
 pub fn get_cache_info(config: &MonocleConfig) -> CacheInfo {
-    use crate::database::{cache_size, Pfx2asFileCache};
+    use crate::database::cache_size;
 
     let cache_dir = config.cache_dir();
     let cache_exists = Path::new(&cache_dir).exists();
@@ -441,17 +441,11 @@ pub fn get_cache_info(config: &MonocleConfig) -> CacheInfo {
         None
     };
 
-    // Count cached files
-    let pfx2as_cache_count = Pfx2asFileCache::new(&config.data_dir)
-        .ok()
-        .and_then(|c| c.list_cached().ok())
-        .map(|v| v.len());
-
     CacheInfo {
         directory: cache_dir,
         exists: cache_exists,
         size_bytes: cache_size_bytes,
-        pfx2as_cache_count,
+        pfx2as_cache_count: None, // Pfx2as now uses SQLite, not file cache
     }
 }
 
