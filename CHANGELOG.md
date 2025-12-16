@@ -61,6 +61,15 @@ Query AS-level relationships between ASNs from BGPKIT's AS relationship data:
 * `--show-name` / `--show-full-name`: Show organization name for ASN2
 * `--sort-by-asn`: Sort results by ASN2 ascending (default: sort by connected % descending)
 
+### Pfx2as Improvements
+
+* **Pfx2as data now stored in SQLite**: Prefix-to-ASN mappings cached locally for fast queries
+  * IP prefixes stored as 16-byte start/end address pairs for efficient range lookups
+  * Supports multiple query modes: exact, longest prefix match, covering (supernets), covered (subnets)
+  * Cache expires after 24 hours and automatically refreshes
+  * Use `database refresh pfx2as` or WebSocket `database.refresh` with `source: "pfx2as"` to populate
+  * Backward compatible with file-based cache for existing installations
+
 ### RPKI Improvements
 
 * **RPKI data now stored in SQLite**: ROAs and ASPAs cached locally for fast queries

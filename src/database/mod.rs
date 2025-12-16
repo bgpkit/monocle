@@ -112,6 +112,12 @@ pub use monocle::{
     RpkiValidationState, DEFAULT_RPKI_CACHE_TTL,
 };
 
+// Pfx2as repository (SQLite-based cache)
+pub use monocle::{
+    Pfx2asCacheDbMetadata, Pfx2asDbRecord, Pfx2asQueryResult, Pfx2asRepository,
+    Pfx2asSchemaDefinitions, DEFAULT_PFX2AS_CACHE_TTL,
+};
+
 // Session types (SQLite-based for search result exports)
 pub use session::MsgStore;
 

@@ -4,14 +4,17 @@
 //! The monocle database stores:
 //! - AS2Org mappings (AS to Organization) - SQLite
 //! - AS2Rel data (AS-level relationships) - SQLite
+//! - RPKI ROAs and ASPAs - SQLite (with blob-based prefix storage)
+//! - Pfx2as mappings - SQLite (with blob-based prefix storage)
 //!
-//! For data requiring INET operations (prefix matching), file-based caching is used:
+//! Legacy file-based caching is still available for backward compatibility:
 //! - RPKI ROAs and ASPAs - JSON file cache
 //! - Pfx2as mappings - JSON file cache
 
 mod as2org;
 mod as2rel;
 mod file_cache;
+mod pfx2as;
 mod rpki;
 
 // SQLite-based repositories
@@ -23,6 +26,12 @@ pub use as2rel::{
 pub use rpki::{
     RpkiAspaRecord, RpkiCacheMetadata, RpkiRepository, RpkiRoaRecord, RpkiValidationResult,
     RpkiValidationState, DEFAULT_RPKI_CACHE_TTL,
+};
+
+// Pfx2as repository (SQLite-based)
+pub use pfx2as::{
+    Pfx2asCacheDbMetadata, Pfx2asDbRecord, Pfx2asQueryResult, Pfx2asRepository,
+    Pfx2asSchemaDefinitions, DEFAULT_PFX2AS_CACHE_TTL,
 };
 
 // File-based cache for RPKI and Pfx2as
@@ -143,6 +152,11 @@ impl MonocleDatabase {
         RpkiRepository::new(&self.db.conn)
     }
 
+    /// Get a reference to the Pfx2as repository
+    pub fn pfx2as(&self) -> Pfx2asRepository<'_> {
+        Pfx2asRepository::new(&self.db.conn)
+    }
+
     /// Get the underlying database connection (for advanced queries)
     ///
     /// Use this for cross-table queries that span multiple repositories.
@@ -189,6 +203,16 @@ impl MonocleDatabase {
     /// Check if the RPKI cache needs refresh with custom TTL
     pub fn needs_rpki_refresh_with_ttl(&self, ttl: chrono::Duration) -> bool {
         self.rpki().needs_refresh(ttl)
+    }
+
+    /// Check if the Pfx2as cache needs refresh
+    pub fn needs_pfx2as_refresh(&self) -> bool {
+        self.pfx2as().needs_refresh(DEFAULT_PFX2AS_CACHE_TTL)
+    }
+
+    /// Check if the Pfx2as cache needs refresh with custom TTL
+    pub fn needs_pfx2as_refresh_with_ttl(&self, ttl: chrono::Duration) -> bool {
+        self.pfx2as().needs_refresh(ttl)
     }
 
     /// Get metadata value from the database
