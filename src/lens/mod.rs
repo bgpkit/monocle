@@ -16,11 +16,6 @@
 //!
 //! ```text
 //! lens/
-//! ├── as2org/     # AS-to-Organization lookup lens
-//! │   ├── args    # Reusable argument structs
-//! │   ├── types   # Result types and enums
-//! │   └── mod     # As2orgLens implementation
-//! │
 //! ├── as2rel/     # AS-level relationship lens
 //! │   ├── args    # Reusable argument structs
 //! │   ├── types   # Result types and enums
@@ -33,9 +28,6 @@
 //! │
 //! ├── parse/      # ParseLens - MRT file parsing
 //! │   └── mod     # Lens implementation with filters
-//! │
-//! ├── pfx2as/     # Pfx2asLens - prefix-to-ASN mapping
-//! │   └── mod     # Lens implementation with types and args
 //! │
 //! ├── rpki/       # RpkiLens - RPKI validation and data
 //! │   ├── commons # (internal) bgpkit-commons integration
@@ -55,9 +47,6 @@
 //! specific lens module you need:
 //!
 //! ```rust,ignore
-//! // AS-to-Organization lookup
-//! use monocle::lens::as2org::{As2orgLens, As2orgSearchArgs, As2orgOutputFormat};
-//!
 //! // Time parsing
 //! use monocle::lens::time::{TimeLens, TimeParseArgs, TimeOutputFormat};
 //!
@@ -67,8 +56,8 @@
 //! // IP information
 //! use monocle::lens::ip::{IpLens, IpLookupArgs, IpInfo};
 //!
-//! // Prefix-to-ASN mapping
-//! use monocle::lens::pfx2as::{Pfx2asLens, Pfx2asLookupArgs};
+//! // Unified AS/prefix inspection
+//! use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 //! ```
 //!
 //! # Examples
@@ -123,9 +112,9 @@
 //! let info = lens.lookup(&args)?;
 //! ```
 
-pub mod as2org;
 pub mod as2rel;
 pub mod country;
+pub mod inspect;
 pub mod ip;
 pub mod parse;
 pub mod pfx2as;

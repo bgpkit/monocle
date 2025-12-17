@@ -94,16 +94,20 @@ pub mod session;
 // SQLite connection and schema management
 pub use core::{DatabaseConn, SchemaDefinitions, SchemaManager, SchemaStatus, SCHEMA_VERSION};
 
-// Monocle database (main entry point for AS2Org and AS2Rel)
+// Monocle database (main entry point for AS2Rel)
 pub use monocle::MonocleDatabase;
-
-// AS2Org repository
-pub use monocle::{As2orgRecord, As2orgRepository};
 
 // AS2Rel repository
 pub use monocle::{
     AggregatedRelationship, As2relEntry, As2relMeta, As2relRecord, As2relRepository,
-    BGPKIT_AS2REL_URL,
+    AsConnectivitySummary, ConnectivityEntry, ConnectivityGroup, BGPKIT_AS2REL_URL,
+};
+
+// ASInfo repository (unified AS information from multiple sources)
+pub use monocle::{
+    AsinfoAs2orgRecord, AsinfoCoreRecord, AsinfoFullRecord, AsinfoHegemonyRecord, AsinfoMetadata,
+    AsinfoPeeringdbRecord, AsinfoPopulationRecord, AsinfoRepository, AsinfoSchemaDefinitions,
+    AsinfoStoreCounts, JsonlRecord, ASINFO_DATA_URL, DEFAULT_ASINFO_TTL,
 };
 
 // RPKI repository (SQLite-based cache)
@@ -115,7 +119,7 @@ pub use monocle::{
 // Pfx2as repository (SQLite-based cache)
 pub use monocle::{
     Pfx2asCacheDbMetadata, Pfx2asDbRecord, Pfx2asQueryResult, Pfx2asRepository,
-    Pfx2asSchemaDefinitions, DEFAULT_PFX2AS_CACHE_TTL,
+    Pfx2asSchemaDefinitions, ValidationStats, DEFAULT_PFX2AS_CACHE_TTL,
 };
 
 // Session types (SQLite-based for search result exports)

@@ -11,17 +11,21 @@
 //! - RPKI ROAs and ASPAs - JSON file cache
 //! - Pfx2as mappings - JSON file cache
 
-mod as2org;
 mod as2rel;
+mod asinfo;
 mod file_cache;
 mod pfx2as;
 mod rpki;
 
 // SQLite-based repositories
-pub use as2org::{As2orgRecord, As2orgRepository};
 pub use as2rel::{
     AggregatedRelationship, As2relEntry, As2relMeta, As2relRecord, As2relRepository,
-    BGPKIT_AS2REL_URL,
+    AsConnectivitySummary, ConnectivityEntry, ConnectivityGroup, BGPKIT_AS2REL_URL,
+};
+pub use asinfo::{
+    AsinfoAs2orgRecord, AsinfoCoreRecord, AsinfoFullRecord, AsinfoHegemonyRecord, AsinfoMetadata,
+    AsinfoPeeringdbRecord, AsinfoPopulationRecord, AsinfoRepository, AsinfoSchemaDefinitions,
+    AsinfoStoreCounts, JsonlRecord, ASINFO_DATA_URL, DEFAULT_ASINFO_TTL,
 };
 pub use rpki::{
     RpkiAspaRecord, RpkiCacheMetadata, RpkiRepository, RpkiRoaRecord, RpkiValidationResult,
@@ -31,7 +35,7 @@ pub use rpki::{
 // Pfx2as repository (SQLite-based)
 pub use pfx2as::{
     Pfx2asCacheDbMetadata, Pfx2asDbRecord, Pfx2asQueryResult, Pfx2asRepository,
-    Pfx2asSchemaDefinitions, DEFAULT_PFX2AS_CACHE_TTL,
+    Pfx2asSchemaDefinitions, ValidationStats, DEFAULT_PFX2AS_CACHE_TTL,
 };
 
 // File-based cache for RPKI
@@ -131,11 +135,6 @@ impl MonocleDatabase {
         Ok(Self { db })
     }
 
-    /// Get a reference to the AS2Org repository
-    pub fn as2org(&self) -> As2orgRepository<'_> {
-        As2orgRepository::new(&self.db.conn)
-    }
-
     /// Get a reference to the AS2Rel repository
     pub fn as2rel(&self) -> As2relRepository<'_> {
         As2relRepository::new(&self.db.conn)
@@ -151,6 +150,11 @@ impl MonocleDatabase {
         Pfx2asRepository::new(&self.db.conn)
     }
 
+    /// Get a reference to the ASInfo repository
+    pub fn asinfo(&self) -> AsinfoRepository<'_> {
+        AsinfoRepository::new(&self.db.conn)
+    }
+
     /// Get the underlying database connection (for advanced queries)
     ///
     /// Use this for cross-table queries that span multiple repositories.
@@ -158,21 +162,26 @@ impl MonocleDatabase {
         &self.db.conn
     }
 
-    /// Check if the AS2Org data needs to be bootstrapped
-    pub fn needs_as2org_bootstrap(&self) -> bool {
-        self.as2org().is_empty()
+    /// Check if the ASInfo data needs to be bootstrapped
+    pub fn needs_asinfo_bootstrap(&self) -> bool {
+        self.asinfo().is_empty()
+    }
+
+    /// Check if the ASInfo data needs refresh
+    pub fn needs_asinfo_refresh(&self) -> bool {
+        self.asinfo().needs_refresh(DEFAULT_ASINFO_TTL)
+    }
+
+    /// Bootstrap ASInfo data from the default URL
+    ///
+    /// Returns the counts of records loaded per table.
+    pub fn bootstrap_asinfo(&self) -> Result<AsinfoStoreCounts> {
+        self.asinfo().load_from_url(ASINFO_DATA_URL)
     }
 
     /// Check if the AS2Rel data needs to be updated
     pub fn needs_as2rel_update(&self) -> bool {
         self.as2rel().should_update()
-    }
-
-    /// Bootstrap AS2Org data from bgpkit-commons
-    ///
-    /// Returns (as_count, org_count) on success.
-    pub fn bootstrap_as2org(&self) -> Result<(usize, usize)> {
-        self.as2org().load_from_commons()
     }
 
     /// Update AS2Rel data from the default URL
@@ -243,7 +252,6 @@ mod tests {
         let db = MonocleDatabase::open_in_memory().unwrap();
 
         // Should have empty repositories
-        assert!(db.as2org().is_empty());
         assert!(db.as2rel().is_empty());
     }
 
@@ -251,7 +259,6 @@ mod tests {
     fn test_needs_bootstrap() {
         let db = MonocleDatabase::open_in_memory().unwrap();
 
-        assert!(db.needs_as2org_bootstrap());
         assert!(db.needs_as2rel_update());
     }
 

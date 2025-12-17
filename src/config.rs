@@ -231,7 +231,9 @@ pub struct SqliteDatabaseInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema_version: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub as2org_count: Option<u64>,
+    pub asinfo_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asinfo_last_updated: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub as2rel_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -242,6 +244,10 @@ pub struct SqliteDatabaseInfo {
     pub rpki_aspa_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rpki_last_updated: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pfx2as_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pfx2as_last_updated: Option<String>,
 }
 
 /// Information about the file-based cache
@@ -251,8 +257,6 @@ pub struct CacheInfo {
     pub exists: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pfx2as_cache_count: Option<usize>,
 }
 
 /// Cache settings
@@ -265,57 +269,54 @@ pub struct CacheSettings {
 /// Available data sources that can be refreshed
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataSource {
-    As2org,
+    Asinfo,
     As2rel,
     Rpki,
-    Pfx2asCache,
+    Pfx2as,
 }
 
 impl DataSource {
     pub fn all() -> Vec<DataSource> {
         vec![
-            DataSource::As2org,
+            DataSource::Asinfo,
             DataSource::As2rel,
             DataSource::Rpki,
-            DataSource::Pfx2asCache,
+            DataSource::Pfx2as,
         ]
     }
 
     /// Get database sources only (excluding caches)
     pub fn database_sources() -> Vec<DataSource> {
-        vec![DataSource::As2org, DataSource::As2rel, DataSource::Rpki]
+        vec![DataSource::Asinfo, DataSource::As2rel, DataSource::Rpki]
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<DataSource> {
         match s.to_lowercase().as_str() {
-            "as2org" => Some(DataSource::As2org),
+            "asinfo" => Some(DataSource::Asinfo),
             "as2rel" => Some(DataSource::As2rel),
             "rpki" => Some(DataSource::Rpki),
-            "pfx2as" | "pfx2as-cache" => Some(DataSource::Pfx2asCache),
+            "pfx2as" => Some(DataSource::Pfx2as),
             _ => None,
         }
     }
 
     pub fn name(&self) -> &'static str {
         match self {
-            DataSource::As2org => "as2org",
+            DataSource::Asinfo => "asinfo",
             DataSource::As2rel => "as2rel",
             DataSource::Rpki => "rpki",
-            DataSource::Pfx2asCache => "pfx2as-cache",
+            DataSource::Pfx2as => "pfx2as",
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self {
-            DataSource::As2org => "AS-to-Organization mappings (from bgpkit-commons)",
+            DataSource::Asinfo => "AS information data (from BGPKIT)",
             DataSource::As2rel => "AS-level relationship data (from BGPKIT)",
             DataSource::Rpki => "RPKI ROAs and ASPAs (from Cloudflare)",
-            DataSource::Pfx2asCache => "Prefix-to-AS mapping cache files",
+            DataSource::Pfx2as => "Prefix-to-AS mappings (from BGPKIT)",
         }
-    }
-
-    pub fn is_cache(&self) -> bool {
-        matches!(self, DataSource::Pfx2asCache)
     }
 }
 
@@ -340,12 +341,15 @@ pub fn get_sqlite_info(config: &MonocleConfig) -> SqliteDatabaseInfo {
     let (
         schema_initialized,
         schema_version,
-        as2org_count,
+        asinfo_count,
+        asinfo_last_updated,
         as2rel_count,
         as2rel_last_updated,
         rpki_roa_count,
         rpki_aspa_count,
         rpki_last_updated,
+        pfx2as_count,
+        pfx2as_last_updated,
     ) = if sqlite_exists {
         match MonocleDatabase::open(&sqlite_path) {
             Ok(db) => {
@@ -366,52 +370,84 @@ pub fn get_sqlite_info(config: &MonocleConfig) -> SqliteDatabaseInfo {
                 };
 
                 // Get record counts and metadata if schema is initialized
-                let (as2org, as2rel, as2rel_updated, rpki_roa, rpki_aspa, rpki_updated) =
-                    if initialized {
-                        let as2org = db.as2org().as_count().ok();
-                        let as2rel = db.as2rel().count().ok();
-                        let as2rel_meta = db.as2rel().get_meta().ok().flatten();
-                        let as2rel_updated = as2rel_meta.map(|m| {
-                            let datetime =
-                                chrono::DateTime::from_timestamp(m.last_updated as i64, 0)
-                                    .unwrap_or_default();
-                            datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-                        });
-
-                        // Get RPKI counts
-                        let rpki_roa = db.rpki().roa_count().ok();
-                        let rpki_aspa = db.rpki().aspa_count().ok();
-                        let rpki_meta = db.rpki().get_metadata().ok().flatten();
-                        let rpki_updated = rpki_meta
-                            .map(|m| m.updated_at.format("%Y-%m-%d %H:%M:%S UTC").to_string());
-
-                        (
-                            as2org,
-                            as2rel,
-                            as2rel_updated,
-                            rpki_roa,
-                            rpki_aspa,
-                            rpki_updated,
-                        )
-                    } else {
-                        (None, None, None, None, None, None)
-                    };
-
-                (
-                    initialized,
-                    version,
-                    as2org,
+                let (
+                    asinfo,
+                    asinfo_updated,
                     as2rel,
                     as2rel_updated,
                     rpki_roa,
                     rpki_aspa,
                     rpki_updated,
+                    pfx2as,
+                    pfx2as_updated,
+                ) = if initialized {
+                    // Get ASInfo counts
+                    let asinfo = Some(db.asinfo().core_count() as u64);
+                    let asinfo_meta = db.asinfo().get_metadata().ok().flatten();
+                    let asinfo_updated = asinfo_meta.map(|m| {
+                        let datetime =
+                            chrono::DateTime::from_timestamp(m.last_updated, 0).unwrap_or_default();
+                        datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+                    });
+
+                    let as2rel = db.as2rel().count().ok();
+                    let as2rel_meta = db.as2rel().get_meta().ok().flatten();
+                    let as2rel_updated = as2rel_meta.map(|m| {
+                        let datetime = chrono::DateTime::from_timestamp(m.last_updated as i64, 0)
+                            .unwrap_or_default();
+                        datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+                    });
+
+                    // Get RPKI counts
+                    let rpki_roa = db.rpki().roa_count().ok();
+                    let rpki_aspa = db.rpki().aspa_count().ok();
+                    let rpki_meta = db.rpki().get_metadata().ok().flatten();
+                    let rpki_updated =
+                        rpki_meta.map(|m| m.updated_at.format("%Y-%m-%d %H:%M:%S UTC").to_string());
+
+                    // Get Pfx2as counts
+                    let pfx2as = db.pfx2as().record_count().ok();
+                    let pfx2as_meta = db.pfx2as().get_metadata().ok().flatten();
+                    let pfx2as_updated = pfx2as_meta
+                        .map(|m| m.updated_at.format("%Y-%m-%d %H:%M:%S UTC").to_string());
+
+                    (
+                        asinfo,
+                        asinfo_updated,
+                        as2rel,
+                        as2rel_updated,
+                        rpki_roa,
+                        rpki_aspa,
+                        rpki_updated,
+                        pfx2as,
+                        pfx2as_updated,
+                    )
+                } else {
+                    (None, None, None, None, None, None, None, None, None)
+                };
+
+                (
+                    initialized,
+                    version,
+                    asinfo,
+                    asinfo_updated,
+                    as2rel,
+                    as2rel_updated,
+                    rpki_roa,
+                    rpki_aspa,
+                    rpki_updated,
+                    pfx2as,
+                    pfx2as_updated,
                 )
             }
-            Err(_) => (false, None, None, None, None, None, None, None),
+            Err(_) => (
+                false, None, None, None, None, None, None, None, None, None, None,
+            ),
         }
     } else {
-        (false, None, None, None, None, None, None, None)
+        (
+            false, None, None, None, None, None, None, None, None, None, None,
+        )
     };
 
     SqliteDatabaseInfo {
@@ -420,12 +456,15 @@ pub fn get_sqlite_info(config: &MonocleConfig) -> SqliteDatabaseInfo {
         size_bytes: sqlite_size,
         schema_initialized,
         schema_version,
-        as2org_count,
+        asinfo_count,
+        asinfo_last_updated,
         as2rel_count,
         as2rel_last_updated,
         rpki_roa_count,
         rpki_aspa_count,
         rpki_last_updated,
+        pfx2as_count,
+        pfx2as_last_updated,
     }
 }
 
@@ -445,7 +484,6 @@ pub fn get_cache_info(config: &MonocleConfig) -> CacheInfo {
         directory: cache_dir,
         exists: cache_exists,
         size_bytes: cache_size_bytes,
-        pfx2as_cache_count: None, // Pfx2as now uses SQLite, not file cache
     }
 }
 
@@ -460,22 +498,21 @@ pub fn get_cache_settings(config: &MonocleConfig) -> CacheSettings {
 /// Get detailed information about all data sources
 pub fn get_data_source_info(config: &MonocleConfig) -> Vec<DataSourceInfo> {
     let sqlite_info = get_sqlite_info(config);
-    let cache_info = get_cache_info(config);
 
     let mut sources = Vec::new();
 
-    // AS2Org
-    let as2org_status = match sqlite_info.as2org_count {
+    // ASInfo
+    let asinfo_status = match sqlite_info.asinfo_count {
         Some(count) if count > 0 => DataSourceStatus::Ready,
         Some(_) => DataSourceStatus::Empty,
         None => DataSourceStatus::NotInitialized,
     };
     sources.push(DataSourceInfo {
-        name: DataSource::As2org.name().to_string(),
-        description: DataSource::As2org.description().to_string(),
-        record_count: sqlite_info.as2org_count,
-        last_updated: None, // AS2Org doesn't track last updated time currently
-        status: as2org_status,
+        name: DataSource::Asinfo.name().to_string(),
+        description: DataSource::Asinfo.description().to_string(),
+        record_count: sqlite_info.asinfo_count,
+        last_updated: sqlite_info.asinfo_last_updated.clone(),
+        status: asinfo_status,
     });
 
     // AS2Rel
@@ -512,17 +549,17 @@ pub fn get_data_source_info(config: &MonocleConfig) -> Vec<DataSourceInfo> {
         status: rpki_status,
     });
 
-    // Pfx2as Cache
-    let pfx2as_status = match cache_info.pfx2as_cache_count {
+    // Pfx2as
+    let pfx2as_status = match sqlite_info.pfx2as_count {
         Some(count) if count > 0 => DataSourceStatus::Ready,
         Some(_) => DataSourceStatus::Empty,
         None => DataSourceStatus::NotInitialized,
     };
     sources.push(DataSourceInfo {
-        name: DataSource::Pfx2asCache.name().to_string(),
-        description: DataSource::Pfx2asCache.description().to_string(),
-        record_count: cache_info.pfx2as_cache_count.map(|c| c as u64),
-        last_updated: None, // Could be enhanced to show cache file timestamps
+        name: DataSource::Pfx2as.name().to_string(),
+        description: DataSource::Pfx2as.description().to_string(),
+        record_count: sqlite_info.pfx2as_count,
+        last_updated: sqlite_info.pfx2as_last_updated.clone(),
         status: pfx2as_status,
     });
 
@@ -589,26 +626,11 @@ mod tests {
 
     #[test]
     fn test_data_source_from_str() {
-        assert_eq!(DataSource::from_str("as2org"), Some(DataSource::As2org));
+        assert_eq!(DataSource::from_str("asinfo"), Some(DataSource::Asinfo));
         assert_eq!(DataSource::from_str("AS2REL"), Some(DataSource::As2rel));
         assert_eq!(DataSource::from_str("rpki"), Some(DataSource::Rpki));
-        assert_eq!(
-            DataSource::from_str("pfx2as"),
-            Some(DataSource::Pfx2asCache)
-        );
-        assert_eq!(
-            DataSource::from_str("pfx2as-cache"),
-            Some(DataSource::Pfx2asCache)
-        );
+        assert_eq!(DataSource::from_str("pfx2as"), Some(DataSource::Pfx2as));
         assert_eq!(DataSource::from_str("unknown"), None);
-    }
-
-    #[test]
-    fn test_data_source_is_cache() {
-        assert!(!DataSource::As2org.is_cache());
-        assert!(!DataSource::As2rel.is_cache());
-        assert!(!DataSource::Rpki.is_cache());
-        assert!(DataSource::Pfx2asCache.is_cache());
     }
 
     #[test]

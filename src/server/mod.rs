@@ -164,10 +164,6 @@ pub fn create_router() -> Router {
     router.register::<RpkiRoasHandler>();
     router.register::<RpkiAspasHandler>();
 
-    // AS2Org handlers
-    router.register::<As2orgSearchHandler>();
-    router.register::<As2orgBootstrapHandler>();
-
     // AS2Rel handlers
     router.register::<As2relSearchHandler>();
     router.register::<As2relRelationshipHandler>();
@@ -179,6 +175,10 @@ pub fn create_router() -> Router {
     // Database handlers
     router.register::<DatabaseStatusHandler>();
     router.register::<DatabaseRefreshHandler>();
+
+    // Inspect handlers
+    router.register::<InspectQueryHandler>();
+    router.register::<InspectRefreshHandler>();
 
     router
 }
@@ -401,14 +401,14 @@ mod tests {
         assert!(router.has_method("rpki.validate"));
         assert!(router.has_method("rpki.roas"));
         assert!(router.has_method("rpki.aspas"));
-        assert!(router.has_method("as2org.search"));
-        assert!(router.has_method("as2org.bootstrap"));
         assert!(router.has_method("as2rel.search"));
         assert!(router.has_method("as2rel.relationship"));
         assert!(router.has_method("as2rel.update"));
         assert!(router.has_method("pfx2as.lookup"));
         assert!(router.has_method("database.status"));
         assert!(router.has_method("database.refresh"));
+        assert!(router.has_method("inspect.query"));
+        assert!(router.has_method("inspect.refresh"));
 
         // Check that unknown methods return false
         assert!(!router.has_method("unknown.method"));

@@ -14,10 +14,9 @@
 //! - **[`database`]**: All database functionality
 //!   - `core`: SQLite connection management and schema definitions
 //!   - `session`: One-time storage (e.g., search results)
-//!   - `monocle`: Main monocle database (AS2Org, AS2Rel) and file caches
+//!   - `monocle`: Main monocle database (ASInfo, AS2Rel) and file caches
 //!
 //! - **[`lens`]**: High-level business logic (reusable across CLI, API, GUI)
-//!   - `as2org`: AS-to-Organization lookup lens
 //!   - `as2rel`: AS-level relationships lens
 //!   - `country`: Country code/name lookup lens
 //!   - `ip`: IP information lookup lens
@@ -34,7 +33,7 @@
 //!
 //! # Database Strategy
 //!
-//! Monocle uses SQLite for AS2Org and AS2Rel data storage. For data requiring
+//! Monocle uses SQLite for ASInfo and AS2Rel data storage. For data requiring
 //! INET operations (prefix matching, containment queries), file-based JSON
 //! caching is used since SQLite doesn't natively support these operations.
 //!
@@ -64,25 +63,23 @@
 //!
 //! ```rust,ignore
 //! use monocle::database::MonocleDatabase;
-//! use monocle::lens::as2org::{As2orgLens, As2orgSearchArgs, As2orgOutputFormat};
+//! use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 //!
 //! // Open the monocle database
 //! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 //!
-//! // Create a lens and search
-//! let lens = As2orgLens::new(&db);
+//! // Create a lens and query
+//! let lens = InspectLens::new(&db);
 //!
-//! // Bootstrap data if needed
-//! if lens.needs_bootstrap() {
-//!     lens.bootstrap()?;
-//! }
+//! // Ensure data is available
+//! lens.ensure_data_available()?;
 //!
-//! // Search
-//! let args = As2orgSearchArgs::new("cloudflare");
-//! let results = lens.search(&args)?;
+//! // Query ASN information
+//! let options = InspectQueryOptions::default();
+//! let results = lens.query(&["13335".to_string()], &options)?;
 //!
 //! // Format output
-//! let output = lens.format_results(&results, &As2orgOutputFormat::Json, false);
+//! let output = lens.format_json(&results, true);
 //! ```
 //!
 //! # Example: Using Lenses

@@ -1,8 +1,6 @@
 use chrono::NaiveDate;
 use clap::Subcommand;
-use monocle::database::{
-    MonocleDatabase, RpkiAspaRecord, RpkiRepository, RpkiRoaRecord, DEFAULT_RPKI_CACHE_TTL,
-};
+use monocle::database::{MonocleDatabase, RpkiRoaRecord};
 use monocle::lens::rpki::{
     RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource, RpkiLens, RpkiRoaEntry,
     RpkiRoaLookupArgs, RpkiViewsCollectorOption,
@@ -153,47 +151,22 @@ enum ResourceType {
 
 /// Ensure RPKI cache is populated (refresh if needed or forced)
 fn ensure_rpki_cache(
-    repo: &RpkiRepository,
+    lens: &RpkiLens,
     force_refresh: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let needs_refresh = force_refresh || repo.needs_refresh(DEFAULT_RPKI_CACHE_TTL);
+    let needs_refresh = force_refresh
+        || lens
+            .needs_refresh()
+            .map_err(|e| format!("Failed to check cache: {}", e))?;
 
     if needs_refresh {
         eprintln!("Refreshing RPKI cache from Cloudflare...");
 
-        // Load data from bgpkit-commons (Cloudflare endpoint)
-        let mut lens = RpkiLens::new();
-        let roa_args = RpkiRoaLookupArgs::new();
-        let aspa_args = RpkiAspaLookupArgs::new();
+        let (roa_count, aspa_count) = lens
+            .refresh()
+            .map_err(|e| format!("Failed to refresh cache: {}", e))?;
 
-        let roas = lens.get_roas(&roa_args)?;
-        let aspas = lens.get_aspas(&aspa_args)?;
-
-        // Convert to database records
-        let roa_records: Vec<RpkiRoaRecord> = roas
-            .into_iter()
-            .map(|r| RpkiRoaRecord {
-                prefix: r.prefix,
-                max_length: r.max_length,
-                origin_asn: r.origin_asn,
-                ta: r.ta,
-            })
-            .collect();
-
-        let aspa_records: Vec<RpkiAspaRecord> = aspas
-            .into_iter()
-            .map(|a| RpkiAspaRecord {
-                customer_asn: a.customer_asn,
-                provider_asns: a.providers,
-            })
-            .collect();
-
-        repo.store(&roa_records, &aspa_records)?;
-        eprintln!(
-            "Cached {} ROAs and {} ASPAs",
-            roa_records.len(),
-            aspa_records.len()
-        );
+        eprintln!("Cached {} ROAs and {} ASPAs", roa_count, aspa_count);
     }
 
     Ok(())
@@ -256,7 +229,7 @@ fn run_validate(
         }
     };
 
-    // Open database and ensure cache is populated
+    // Open database and create lens
     let db = match MonocleDatabase::open_in_dir(data_dir) {
         Ok(db) => db,
         Err(e) => {
@@ -265,14 +238,14 @@ fn run_validate(
         }
     };
 
-    let repo = db.rpki();
-    if let Err(e) = ensure_rpki_cache(&repo, refresh) {
+    let lens = RpkiLens::new(&db);
+    if let Err(e) = ensure_rpki_cache(&lens, refresh) {
         eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
         return;
     }
 
     // Display data source
-    if let Ok(Some(meta)) = repo.get_metadata() {
+    if let Ok(Some(meta)) = lens.get_metadata() {
         eprintln!(
             "Data source: CLOUDFLARE (cached at {}, {} ROAs)",
             meta.updated_at.format("%Y-%m-%d %H:%M:%S UTC"),
@@ -280,8 +253,8 @@ fn run_validate(
         );
     }
 
-    // Perform validation using SQLite
-    let result = match repo.validate_detailed(&prefix, asn) {
+    // Perform validation using lens (policy logic now in lens layer)
+    let result = match lens.validate(&prefix, asn) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("ERROR: Validation failed: {}", e);
@@ -289,17 +262,29 @@ fn run_validate(
         }
     };
 
-    // Get covering ROAs for display
-    let covering_roas = repo.get_covering_roas(&prefix).unwrap_or_default();
-
     match output_format {
         OutputFormat::Table => {
-            let mut output = Table::new(vec![&result]).with(Style::rounded()).to_string();
+            #[derive(tabled::Tabled)]
+            struct ValidationRow {
+                prefix: String,
+                asn: u32,
+                state: String,
+                reason: String,
+            }
 
-            if !covering_roas.is_empty() {
+            let row = ValidationRow {
+                prefix: result.prefix.clone(),
+                asn: result.asn,
+                state: result.state.to_string(),
+                reason: result.reason.clone(),
+            };
+
+            let mut output = Table::new(vec![row]).with(Style::rounded()).to_string();
+
+            if !result.covering_roas.is_empty() {
                 output.push_str("\n\nCovering ROAs:\n");
                 output.push_str(
-                    &Table::new(&covering_roas)
+                    &Table::new(&result.covering_roas)
                         .with(Style::rounded())
                         .to_string(),
                 );
@@ -307,60 +292,55 @@ fn run_validate(
             println!("{}", output);
         }
         OutputFormat::Markdown => {
-            let mut output = Table::new(vec![&result])
-                .with(Style::markdown())
-                .to_string();
+            #[derive(tabled::Tabled)]
+            struct ValidationRow {
+                prefix: String,
+                asn: u32,
+                state: String,
+                reason: String,
+            }
 
-            if !covering_roas.is_empty() {
+            let row = ValidationRow {
+                prefix: result.prefix.clone(),
+                asn: result.asn,
+                state: result.state.to_string(),
+                reason: result.reason.clone(),
+            };
+
+            let mut output = Table::new(vec![row]).with(Style::markdown()).to_string();
+
+            if !result.covering_roas.is_empty() {
                 output.push_str("\n\nCovering ROAs:\n");
                 output.push_str(
-                    &Table::new(&covering_roas)
+                    &Table::new(&result.covering_roas)
                         .with(Style::markdown())
                         .to_string(),
                 );
             }
             println!("{}", output);
         }
-        OutputFormat::Json => {
-            let json_result = serde_json::json!({
-                "validation": result,
-                "covering_roas": covering_roas,
-            });
-            match serde_json::to_string(&json_result) {
-                Ok(json) => println!("{}", json),
-                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-            }
-        }
-        OutputFormat::JsonPretty => {
-            let json_result = serde_json::json!({
-                "validation": result,
-                "covering_roas": covering_roas,
-            });
-            match serde_json::to_string_pretty(&json_result) {
-                Ok(json) => println!("{}", json),
-                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-            }
-        }
-        OutputFormat::JsonLine => {
-            let json_result = serde_json::json!({
-                "validation": result,
-                "covering_roas": covering_roas,
-            });
-            match serde_json::to_string(&json_result) {
-                Ok(json) => println!("{}", json),
-                Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-            }
-        }
+        OutputFormat::Json => match serde_json::to_string(&result) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonPretty => match serde_json::to_string_pretty(&result) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonLine => match serde_json::to_string(&result) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
         OutputFormat::Psv => {
             println!("prefix|asn|state|reason");
             println!(
                 "{}|{}|{}|{}",
                 result.prefix, result.asn, result.state, result.reason
             );
-            if !covering_roas.is_empty() {
+            if !result.covering_roas.is_empty() {
                 eprintln!("\nCovering ROAs:");
                 println!("prefix|origin_asn|max_length|ta");
-                for roa in &covering_roas {
+                for roa in &result.covering_roas {
                     println!(
                         "{}|{}|{}|{}",
                         roa.prefix, roa.origin_asn, roa.max_length, roa.ta
@@ -399,29 +379,27 @@ fn run_roas(
     data_dir: &str,
 ) {
     // Parse date if provided
-    let parsed_date = match &date {
+    let (parsed_date, date_str) = match &date {
         Some(d) => match NaiveDate::parse_from_str(d, "%Y-%m-%d") {
-            Ok(date) => Some(date),
+            Ok(parsed) => (parsed, d.clone()),
             Err(e) => {
                 eprintln!("ERROR: Invalid date format '{}': {}. Use YYYY-MM-DD", d, e);
                 return;
             }
         },
-        None => None,
+        None => {
+            // For current data (no date), use SQLite cache
+            run_roas_from_cache(resources, refresh, output_format, data_dir);
+            return;
+        }
     };
-
-    // For current data (no date), use SQLite cache
-    if parsed_date.is_none() {
-        run_roas_from_cache(resources, refresh, output_format, data_dir);
-        return;
-    }
 
     // For historical data, use the lens directly
     // Display data source
     let source_display = format!(
         "Data source: {} (historical data from {})",
         source.to_uppercase(),
-        date.as_ref().unwrap()
+        date_str
     );
     eprintln!("{}", source_display);
 
@@ -440,12 +418,21 @@ fn run_roas(
         }
     }
 
-    let mut lens = RpkiLens::new();
+    // For historical data, we need a database reference but won't use its cache
+    let db = match MonocleDatabase::open_in_dir(data_dir) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("ERROR: Failed to open database: {}", e);
+            return;
+        }
+    };
+
+    let mut lens = RpkiLens::new(&db);
 
     // If no resources specified, get all ROAs
     if asns.is_empty() && prefixes.is_empty() {
         let args = RpkiRoaLookupArgs::new()
-            .with_date(parsed_date.unwrap())
+            .with_date(parsed_date)
             .with_source(parse_data_source(&source));
 
         let args = if let Some(c) = parse_collector(&collector) {
@@ -477,7 +464,7 @@ fn run_roas(
     for asn in &asns {
         let args = RpkiRoaLookupArgs::new()
             .with_asn(*asn)
-            .with_date(parsed_date.unwrap())
+            .with_date(parsed_date)
             .with_source(parse_data_source(&source));
 
         let args = if let Some(c) = parse_collector(&collector) {
@@ -508,7 +495,7 @@ fn run_roas(
     for prefix in &prefixes {
         let args = RpkiRoaLookupArgs::new()
             .with_prefix(prefix)
-            .with_date(parsed_date.unwrap())
+            .with_date(parsed_date)
             .with_source(parse_data_source(&source));
 
         let args = if let Some(c) = parse_collector(&collector) {
@@ -544,7 +531,7 @@ fn run_roas_from_cache(
     output_format: OutputFormat,
     data_dir: &str,
 ) {
-    // Open database and ensure cache is populated
+    // Open database and create lens
     let db = match MonocleDatabase::open_in_dir(data_dir) {
         Ok(db) => db,
         Err(e) => {
@@ -553,14 +540,14 @@ fn run_roas_from_cache(
         }
     };
 
-    let repo = db.rpki();
-    if let Err(e) = ensure_rpki_cache(&repo, refresh) {
+    let lens = RpkiLens::new(&db);
+    if let Err(e) = ensure_rpki_cache(&lens, refresh) {
         eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
         return;
     }
 
     // Display data source
-    if let Ok(Some(meta)) = repo.get_metadata() {
+    if let Ok(Some(meta)) = lens.get_metadata() {
         eprintln!(
             "Data source: CLOUDFLARE (cached at {}, {} ROAs)",
             meta.updated_at.format("%Y-%m-%d %H:%M:%S UTC"),
@@ -585,7 +572,7 @@ fn run_roas_from_cache(
 
     // If no resources specified, get all ROAs
     if asns.is_empty() && prefixes.is_empty() {
-        let roas = match repo.get_all_roas() {
+        let roas = match db.rpki().get_all_roas() {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("ERROR: Failed to get ROAs: {}", e);
@@ -603,7 +590,7 @@ fn run_roas_from_cache(
 
     // Query for each ASN
     for asn in &asns {
-        match repo.get_roas_by_asn(*asn) {
+        match lens.get_roas_by_asn(*asn) {
             Ok(roas) => {
                 for roa in roas {
                     let key = format!("{}|{}|{}", roa.origin_asn, roa.prefix, roa.max_length);
@@ -620,7 +607,7 @@ fn run_roas_from_cache(
 
     // Query for each prefix (get covering ROAs)
     for prefix in &prefixes {
-        match repo.get_covering_roas(prefix) {
+        match lens.get_covering_roas(prefix) {
             Ok(roas) => {
                 for roa in roas {
                     let key = format!("{}|{}|{}", roa.origin_asn, roa.prefix, roa.max_length);
@@ -635,10 +622,60 @@ fn run_roas_from_cache(
         }
     }
 
-    output_roas_records(all_roas, output_format);
+    output_roas_records_from_lens(all_roas, output_format);
 }
 
 fn output_roas_entries(roas: Vec<RpkiRoaEntry>, output_format: OutputFormat) {
+    if roas.is_empty() {
+        if output_format.is_json() {
+            println!("[]");
+        } else {
+            println!("No ROAs found matching the criteria");
+        }
+        return;
+    }
+
+    eprintln!("Found {} ROAs", roas.len());
+
+    match output_format {
+        OutputFormat::Table => {
+            println!("{}", Table::new(&roas).with(Style::rounded()));
+        }
+        OutputFormat::Markdown => {
+            println!("{}", Table::new(&roas).with(Style::markdown()));
+        }
+        OutputFormat::Json => match serde_json::to_string(&roas) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonPretty => match serde_json::to_string_pretty(&roas) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+        },
+        OutputFormat::JsonLine => {
+            for roa in &roas {
+                match serde_json::to_string(roa) {
+                    Ok(json) => println!("{}", json),
+                    Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
+                }
+            }
+        }
+        OutputFormat::Psv => {
+            println!("prefix|origin_asn|max_length|ta");
+            for roa in &roas {
+                println!(
+                    "{}|{}|{}|{}",
+                    roa.prefix, roa.origin_asn, roa.max_length, roa.ta
+                );
+            }
+        }
+    }
+}
+
+fn output_roas_records_from_lens(
+    roas: Vec<monocle::lens::rpki::RpkiRoaRecord>,
+    output_format: OutputFormat,
+) {
     if roas.is_empty() {
         if output_format.is_json() {
             println!("[]");
@@ -732,6 +769,7 @@ fn output_roas_records(roas: Vec<RpkiRoaRecord>, output_format: OutputFormat) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_aspas(
     customer: Option<u32>,
     provider: Option<u32>,
@@ -743,33 +781,40 @@ fn run_aspas(
     data_dir: &str,
 ) {
     // Parse date if provided
-    let parsed_date = match &date {
+    let (parsed_date, date_str) = match &date {
         Some(d) => match NaiveDate::parse_from_str(d, "%Y-%m-%d") {
-            Ok(date) => Some(date),
+            Ok(parsed) => (parsed, d.clone()),
             Err(e) => {
                 eprintln!("ERROR: Invalid date format '{}': {}. Use YYYY-MM-DD", d, e);
                 return;
             }
         },
-        None => None,
+        None => {
+            // For current data (no date), use SQLite cache
+            run_aspas_from_cache(customer, provider, refresh, output_format, data_dir);
+            return;
+        }
     };
-
-    // For current data (no date), use SQLite cache
-    if parsed_date.is_none() {
-        run_aspas_from_cache(customer, provider, refresh, output_format, data_dir);
-        return;
-    }
 
     // For historical data, use the lens directly
     // Display data source
     let source_display = format!(
         "Data source: {} (historical data from {})",
         source.to_uppercase(),
-        date.as_ref().unwrap()
+        date_str
     );
     eprintln!("{}", source_display);
 
-    let mut lens = RpkiLens::new();
+    // For historical data, we need a database reference but won't use its cache
+    let db = match MonocleDatabase::open_in_dir(data_dir) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("ERROR: Failed to open database: {}", e);
+            return;
+        }
+    };
+
+    let mut lens = RpkiLens::new(&db);
     let mut args = RpkiAspaLookupArgs::new();
 
     if let Some(c) = customer {
@@ -781,7 +826,7 @@ fn run_aspas(
 
     // Set date and source
     args = RpkiAspaLookupArgs {
-        date: parsed_date,
+        date: Some(parsed_date),
         source: parse_data_source(&source),
         collector: parse_collector(&collector),
         ..args
@@ -805,7 +850,7 @@ fn run_aspas_from_cache(
     output_format: OutputFormat,
     data_dir: &str,
 ) {
-    // Open database and ensure cache is populated
+    // Open database and create lens
     let db = match MonocleDatabase::open_in_dir(data_dir) {
         Ok(db) => db,
         Err(e) => {
@@ -814,14 +859,14 @@ fn run_aspas_from_cache(
         }
     };
 
-    let repo = db.rpki();
-    if let Err(e) = ensure_rpki_cache(&repo, refresh) {
+    let lens = RpkiLens::new(&db);
+    if let Err(e) = ensure_rpki_cache(&lens, refresh) {
         eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
         return;
     }
 
     // Display data source
-    if let Ok(Some(meta)) = repo.get_metadata() {
+    if let Ok(Some(meta)) = lens.get_metadata() {
         eprintln!(
             "Data source: CLOUDFLARE (cached at {}, {} ASPAs)",
             meta.updated_at.format("%Y-%m-%d %H:%M:%S UTC"),
@@ -829,33 +874,26 @@ fn run_aspas_from_cache(
         );
     }
 
-    let aspas = if let Some(c) = customer {
-        match repo.get_aspas_by_customer(c) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("ERROR: Failed to get ASPAs: {}", e);
-                return;
-            }
-        }
-    } else if let Some(p) = provider {
-        match repo.get_aspas_by_provider(p) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("ERROR: Failed to get ASPAs: {}", e);
-                return;
-            }
-        }
-    } else {
-        match repo.get_all_aspas() {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("ERROR: Failed to get ASPAs: {}", e);
-                return;
-            }
+    // Use lens methods for cache queries
+    let args = RpkiAspaLookupArgs {
+        customer_asn: customer,
+        provider_asn: provider,
+        date: None,
+        source: RpkiDataSource::Cloudflare,
+        collector: None,
+        format: monocle::lens::rpki::RpkiOutputFormat::Table,
+    };
+
+    let mut lens_mut = RpkiLens::new(&db);
+    let aspas = match lens_mut.get_aspas(&args) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("ERROR: Failed to get ASPAs: {}", e);
+            return;
         }
     };
 
-    output_aspas_records(aspas, output_format);
+    output_aspas_entries(aspas, output_format);
 }
 
 fn output_aspas_entries(
@@ -916,91 +954,4 @@ fn output_aspas_entries(
             }
         }
     }
-}
-
-fn output_aspas_records(aspas: Vec<RpkiAspaRecord>, output_format: OutputFormat) {
-    if aspas.is_empty() {
-        if output_format.is_json() {
-            println!("[]");
-        } else {
-            println!("No ASPAs found matching the criteria");
-        }
-        return;
-    }
-
-    eprintln!("Found {} ASPAs", aspas.len());
-
-    match output_format {
-        OutputFormat::Table => {
-            // Convert to table entries for display
-            let table_entries: Vec<AspaTableEntry> = aspas
-                .iter()
-                .map(|a| AspaTableEntry {
-                    customer_asn: a.customer_asn,
-                    providers: a
-                        .provider_asns
-                        .iter()
-                        .map(|p| p.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                })
-                .collect();
-            println!(
-                "{}",
-                Table::new(table_entries)
-                    .with(Style::rounded())
-                    .modify(Columns::last(), Width::wrap(60).keep_words(true))
-            );
-        }
-        OutputFormat::Markdown => {
-            let table_entries: Vec<AspaTableEntry> = aspas
-                .iter()
-                .map(|a| AspaTableEntry {
-                    customer_asn: a.customer_asn,
-                    providers: a
-                        .provider_asns
-                        .iter()
-                        .map(|p| p.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                })
-                .collect();
-            println!("{}", Table::new(table_entries).with(Style::markdown()));
-        }
-        OutputFormat::Json => match serde_json::to_string(&aspas) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-        },
-        OutputFormat::JsonPretty => match serde_json::to_string_pretty(&aspas) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-        },
-        OutputFormat::JsonLine => {
-            for aspa in &aspas {
-                match serde_json::to_string(aspa) {
-                    Ok(json) => println!("{}", json),
-                    Err(e) => eprintln!("ERROR: Failed to serialize to JSON: {}", e),
-                }
-            }
-        }
-        OutputFormat::Psv => {
-            println!("customer_asn|providers");
-            for aspa in &aspas {
-                let providers = aspa
-                    .provider_asns
-                    .iter()
-                    .map(|p| p.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                println!("{}|{}", aspa.customer_asn, providers);
-            }
-        }
-    }
-}
-
-/// Helper struct for ASPA table display
-#[derive(tabled::Tabled)]
-struct AspaTableEntry {
-    customer_asn: u32,
-    providers: String,
 }

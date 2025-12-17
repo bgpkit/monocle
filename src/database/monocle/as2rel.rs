@@ -62,6 +62,45 @@ pub struct As2relMeta {
     pub max_peers_count: u32,
 }
 
+/// Summary of AS connectivity (upstreams, peers, downstreams)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsConnectivitySummary {
+    pub asn: u32,
+    /// Upstream providers (ASes that provide transit)
+    pub upstreams: ConnectivityGroup,
+    /// Peers (settlement-free interconnection)
+    pub peers: ConnectivityGroup,
+    /// Downstream customers (ASes that receive transit)
+    pub downstreams: ConnectivityGroup,
+    /// Total number of neighbors
+    pub total_neighbors: u32,
+    /// Maximum peers count (for visibility percentage calculation)
+    pub max_peers_count: u32,
+}
+
+/// A group of related ASes (upstreams, peers, or downstreams)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectivityGroup {
+    /// Total count in this category
+    pub count: u32,
+    /// Percentage of total neighbors (0.0 - 100.0)
+    pub percent: f64,
+    /// Top N entries sorted by peers_count DESC
+    pub top: Vec<ConnectivityEntry>,
+}
+
+/// A single connectivity entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectivityEntry {
+    pub asn: u32,
+    /// AS name (if available)
+    pub name: Option<String>,
+    /// Number of peers observing this relationship
+    pub peers_count: u32,
+    /// Percentage of max peers (visibility indicator, 0.0 - 100.0)
+    pub peers_percent: f64,
+}
+
 impl<'a> As2relRepository<'a> {
     /// Create a new AS2Rel repository
     pub fn new(conn: &'a Connection) -> Self {
@@ -273,6 +312,151 @@ impl<'a> As2relRepository<'a> {
             .map_err(|e| anyhow!("Failed to search pair with names: {}", e))?;
 
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get connectivity summary for an ASN
+    ///
+    /// Returns categorized relationships (upstreams, peers, downstreams) with:
+    /// - Counts and percentages for each category
+    /// - Top N entries per category, sorted by peers_count DESC, then ASN ASC
+    /// - AS names enriched from asinfo_core table
+    ///
+    /// # Arguments
+    /// * `asn` - The ASN to query
+    /// * `top_n` - Maximum number of entries to return per category (0 = unlimited)
+    /// * `name_lookup` - Function to look up AS names by ASN
+    pub fn get_connectivity_summary<F>(
+        &self,
+        asn: u32,
+        top_n: usize,
+        name_lookup: F,
+    ) -> Result<Option<AsConnectivitySummary>>
+    where
+        F: Fn(&[u32]) -> std::collections::HashMap<u32, String>,
+    {
+        let relationships = self.search_asn(asn)?;
+
+        if relationships.is_empty() {
+            return Ok(None);
+        }
+
+        // Categorize relationships
+        // rel: -1 = asn1 is customer of asn2 (asn2 is provider)
+        // rel: 0 = peers
+        // rel: 1 = asn1 is provider of asn2 (asn2 is customer)
+        let mut upstreams: Vec<(u32, u32)> = Vec::new(); // (neighbor_asn, peers_count)
+        let mut peers_list: Vec<(u32, u32)> = Vec::new();
+        let mut downstreams: Vec<(u32, u32)> = Vec::new();
+
+        for rel in &relationships {
+            let (neighbor_asn, relationship_type) = if rel.asn1 == asn {
+                (rel.asn2, rel.rel)
+            } else {
+                (rel.asn1, -rel.rel) // Reverse the relationship
+            };
+
+            match relationship_type {
+                -1 => upstreams.push((neighbor_asn, rel.peers_count)),
+                0 => peers_list.push((neighbor_asn, rel.peers_count)),
+                1 => downstreams.push((neighbor_asn, rel.peers_count)),
+                _ => {}
+            }
+        }
+
+        // Sort by peers_count DESC, then ASN ASC
+        let sort_fn = |a: &(u32, u32), b: &(u32, u32)| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0));
+        upstreams.sort_by(sort_fn);
+        peers_list.sort_by(sort_fn);
+        downstreams.sort_by(sort_fn);
+
+        let total = upstreams.len() + peers_list.len() + downstreams.len();
+        let total_f64 = total as f64;
+
+        let effective_top_n = if top_n > 0 { top_n } else { 100 };
+
+        // Collect all ASNs that need name lookup
+        let all_top_asns: Vec<u32> = upstreams
+            .iter()
+            .take(effective_top_n)
+            .chain(peers_list.iter().take(effective_top_n))
+            .chain(downstreams.iter().take(effective_top_n))
+            .map(|(asn, _)| *asn)
+            .collect();
+
+        let names = name_lookup(&all_top_asns);
+
+        let max_peers_count = self.get_max_peers_count();
+        let max_peers_f64 = max_peers_count as f64;
+
+        let build_group = |items: &[(u32, u32)],
+                           names: &std::collections::HashMap<u32, String>|
+         -> ConnectivityGroup {
+            let count = items.len() as u32;
+            let percent = if total > 0 {
+                (count as f64 / total_f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let top: Vec<ConnectivityEntry> = items
+                .iter()
+                .take(effective_top_n)
+                .map(|(asn, peers_count)| {
+                    let peers_percent = if max_peers_count > 0 {
+                        (*peers_count as f64 / max_peers_f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    ConnectivityEntry {
+                        asn: *asn,
+                        name: names.get(asn).cloned(),
+                        peers_count: *peers_count,
+                        peers_percent,
+                    }
+                })
+                .collect();
+
+            ConnectivityGroup {
+                count,
+                percent,
+                top,
+            }
+        };
+
+        Ok(Some(AsConnectivitySummary {
+            asn,
+            upstreams: build_group(&upstreams, &names),
+            peers: build_group(&peers_list, &names),
+            downstreams: build_group(&downstreams, &names),
+            total_neighbors: total as u32,
+            max_peers_count,
+        }))
+    }
+
+    /// Check if results would be truncated for connectivity summary
+    pub fn would_truncate_connectivity(&self, asn: u32, top_n: usize) -> Result<bool> {
+        let relationships = self.search_asn(asn)?;
+
+        if relationships.is_empty() || top_n == 0 {
+            return Ok(false);
+        }
+
+        let mut upstreams_count = 0;
+        let mut peers_count = 0;
+        let mut downstreams_count = 0;
+
+        for rel in &relationships {
+            let relationship_type = if rel.asn1 == asn { rel.rel } else { -rel.rel };
+
+            match relationship_type {
+                -1 => upstreams_count += 1,
+                0 => peers_count += 1,
+                1 => downstreams_count += 1,
+                _ => {}
+            }
+        }
+
+        Ok(upstreams_count > top_n || peers_count > top_n || downstreams_count > top_n)
     }
 
     /// Clear all AS2Rel data

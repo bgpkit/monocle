@@ -173,7 +173,7 @@ impl RpkiFileCache {
         if let Ok(entries) = fs::read_dir(&self.cache_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "json") {
+                if path.extension().is_some_and(|e| e == "json") {
                     if let Ok(content) = fs::read_to_string(&path) {
                         if let Ok(data) = serde_json::from_str::<RpkiCacheData>(&content) {
                             results.push(data.meta);
@@ -202,7 +202,7 @@ impl RpkiFileCache {
         if self.cache_dir.exists() {
             for entry in fs::read_dir(&self.cache_dir)?.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "json") {
+                if path.extension().is_some_and(|e| e == "json") {
                     fs::remove_file(&path)?;
                 }
             }

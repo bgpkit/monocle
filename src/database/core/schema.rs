@@ -8,7 +8,7 @@ use rusqlite::Connection;
 
 /// Current schema version
 /// Increment this when making breaking schema changes
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Schema definitions for all tables in the shared database
 pub struct SchemaDefinitions;
@@ -137,6 +137,85 @@ impl SchemaDefinitions {
         "CREATE INDEX IF NOT EXISTS idx_rpki_aspa_customer ON rpki_aspa(customer_asn)",
         "CREATE INDEX IF NOT EXISTS idx_rpki_aspa_provider ON rpki_aspa(provider_asn)",
     ];
+
+    // =========================================================================
+    // ASInfo Tables (normalized AS information from multiple sources)
+    // =========================================================================
+
+    /// Core AS table (always populated)
+    pub const ASINFO_CORE_TABLE: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS asinfo_core (
+            asn INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            country TEXT NOT NULL
+        );
+    "#;
+
+    /// AS2Org data (from CAIDA)
+    pub const ASINFO_AS2ORG_TABLE: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS asinfo_as2org (
+            asn INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            org_id TEXT NOT NULL,
+            org_name TEXT NOT NULL,
+            country TEXT NOT NULL
+        );
+    "#;
+
+    /// PeeringDB data
+    pub const ASINFO_PEERINGDB_TABLE: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS asinfo_peeringdb (
+            asn INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            name_long TEXT,
+            aka TEXT,
+            website TEXT,
+            irr_as_set TEXT
+        );
+    "#;
+
+    /// IHR Hegemony scores
+    pub const ASINFO_HEGEMONY_TABLE: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS asinfo_hegemony (
+            asn INTEGER PRIMARY KEY,
+            ipv4 REAL NOT NULL,
+            ipv6 REAL NOT NULL
+        );
+    "#;
+
+    /// APNIC Population estimates
+    pub const ASINFO_POPULATION_TABLE: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS asinfo_population (
+            asn INTEGER PRIMARY KEY,
+            percent_country REAL NOT NULL,
+            percent_global REAL NOT NULL,
+            sample_count INTEGER NOT NULL,
+            user_count INTEGER NOT NULL
+        );
+    "#;
+
+    /// ASInfo metadata table
+    pub const ASINFO_META_TABLE: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS asinfo_meta (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            source_url TEXT NOT NULL,
+            last_updated INTEGER NOT NULL,
+            core_count INTEGER NOT NULL,
+            as2org_count INTEGER NOT NULL,
+            peeringdb_count INTEGER NOT NULL,
+            hegemony_count INTEGER NOT NULL,
+            population_count INTEGER NOT NULL
+        );
+    "#;
+
+    /// ASInfo indexes
+    pub const ASINFO_INDEXES: &'static [&'static str] = &[
+        "CREATE INDEX IF NOT EXISTS idx_asinfo_core_name ON asinfo_core(name)",
+        "CREATE INDEX IF NOT EXISTS idx_asinfo_core_country ON asinfo_core(country)",
+        "CREATE INDEX IF NOT EXISTS idx_asinfo_as2org_org_id ON asinfo_as2org(org_id)",
+        "CREATE INDEX IF NOT EXISTS idx_asinfo_as2org_org_name ON asinfo_as2org(org_name)",
+        "CREATE INDEX IF NOT EXISTS idx_asinfo_peeringdb_name ON asinfo_peeringdb(name)",
+    ];
 }
 
 /// Schema manager for the shared database
@@ -224,6 +303,38 @@ impl<'a> SchemaManager<'a> {
                 .map_err(|e| anyhow!("Failed to create RPKI index: {}", e))?;
         }
 
+        // Create ASInfo tables
+        self.conn
+            .execute(SchemaDefinitions::ASINFO_CORE_TABLE, [])
+            .map_err(|e| anyhow!("Failed to create asinfo_core table: {}", e))?;
+
+        self.conn
+            .execute(SchemaDefinitions::ASINFO_AS2ORG_TABLE, [])
+            .map_err(|e| anyhow!("Failed to create asinfo_as2org table: {}", e))?;
+
+        self.conn
+            .execute(SchemaDefinitions::ASINFO_PEERINGDB_TABLE, [])
+            .map_err(|e| anyhow!("Failed to create asinfo_peeringdb table: {}", e))?;
+
+        self.conn
+            .execute(SchemaDefinitions::ASINFO_HEGEMONY_TABLE, [])
+            .map_err(|e| anyhow!("Failed to create asinfo_hegemony table: {}", e))?;
+
+        self.conn
+            .execute(SchemaDefinitions::ASINFO_POPULATION_TABLE, [])
+            .map_err(|e| anyhow!("Failed to create asinfo_population table: {}", e))?;
+
+        self.conn
+            .execute(SchemaDefinitions::ASINFO_META_TABLE, [])
+            .map_err(|e| anyhow!("Failed to create asinfo_meta table: {}", e))?;
+
+        // Create ASInfo indexes
+        for index_sql in SchemaDefinitions::ASINFO_INDEXES {
+            self.conn
+                .execute(index_sql, [])
+                .map_err(|e| anyhow!("Failed to create ASInfo index: {}", e))?;
+        }
+
         Ok(())
     }
 
@@ -294,6 +405,12 @@ impl<'a> SchemaManager<'a> {
             "rpki_roa",
             "rpki_aspa",
             "rpki_meta",
+            "asinfo_core",
+            "asinfo_as2org",
+            "asinfo_peeringdb",
+            "asinfo_hegemony",
+            "asinfo_population",
+            "asinfo_meta",
         ];
 
         for table in required_tables {
@@ -355,6 +472,19 @@ impl<'a> SchemaManager<'a> {
         self.conn.execute("DROP TABLE IF EXISTS rpki_roa", [])?;
         self.conn.execute("DROP TABLE IF EXISTS rpki_aspa", [])?;
         self.conn.execute("DROP TABLE IF EXISTS rpki_meta", [])?;
+
+        // Drop ASInfo tables
+        self.conn.execute("DROP TABLE IF EXISTS asinfo_core", [])?;
+        self.conn
+            .execute("DROP TABLE IF EXISTS asinfo_as2org", [])?;
+        self.conn
+            .execute("DROP TABLE IF EXISTS asinfo_peeringdb", [])?;
+        self.conn
+            .execute("DROP TABLE IF EXISTS asinfo_hegemony", [])?;
+        self.conn
+            .execute("DROP TABLE IF EXISTS asinfo_population", [])?;
+        self.conn.execute("DROP TABLE IF EXISTS asinfo_meta", [])?;
+
         self.conn.execute("DROP TABLE IF EXISTS monocle_meta", [])?;
 
         Ok(())

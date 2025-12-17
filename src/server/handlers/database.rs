@@ -34,9 +34,6 @@ pub struct SqliteInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
 
-    /// AS2Org record count
-    pub as2org_count: u64,
-
     /// AS2Rel record count
     pub as2rel_count: u64,
 
@@ -67,9 +64,6 @@ pub struct SourceInfo {
 pub struct SourcesInfo {
     /// RPKI source status
     pub rpki: SourceInfo,
-
-    /// AS2Org source status
-    pub as2org: SourceInfo,
 
     /// AS2Rel source status
     pub as2rel: SourceInfo,
@@ -131,78 +125,58 @@ impl WsMethod for DatabaseStatusHandler {
         };
 
         // Open database to get counts
-        let (
-            as2org_count,
-            as2rel_count,
-            rpki_roa_count,
-            pfx2as_count,
-            as2org_status,
-            as2rel_status,
-            rpki_status,
-            pfx2as_status,
-        ) = if sqlite_exists {
-            match MonocleDatabase::open_in_dir(&ctx.data_dir) {
-                Ok(db) => {
-                    let as2org = db.as2org().as_count().unwrap_or(0) as u64;
-                    let as2rel = db.as2rel().count().unwrap_or(0) as u64;
-                    let rpki_roa = db.rpki().roa_count().unwrap_or(0) as u64;
-                    let pfx2as = db.pfx2as().record_count().unwrap_or(0);
+        let (as2rel_count, rpki_roa_count, pfx2as_count, as2rel_status, rpki_status, pfx2as_status) =
+            if sqlite_exists {
+                match MonocleDatabase::open_in_dir(&ctx.data_dir) {
+                    Ok(db) => {
+                        let as2rel = db.as2rel().count().unwrap_or(0);
+                        let rpki_roa = db.rpki().roa_count().unwrap_or(0);
+                        let pfx2as = db.pfx2as().record_count().unwrap_or(0);
 
-                    let as2org_status = if as2org > 0 {
-                        DataSourceStatus::Ready
-                    } else {
-                        DataSourceStatus::Empty
-                    };
-                    let as2rel_status = if as2rel > 0 {
-                        DataSourceStatus::Ready
-                    } else {
-                        DataSourceStatus::Empty
-                    };
-                    let rpki_status = if rpki_roa > 0 {
-                        DataSourceStatus::Ready
-                    } else {
-                        DataSourceStatus::Empty
-                    };
-                    let pfx2as_status = if pfx2as > 0 {
-                        DataSourceStatus::Ready
-                    } else {
-                        DataSourceStatus::Empty
-                    };
+                        let as2rel_status = if as2rel > 0 {
+                            DataSourceStatus::Ready
+                        } else {
+                            DataSourceStatus::Empty
+                        };
+                        let rpki_status = if rpki_roa > 0 {
+                            DataSourceStatus::Ready
+                        } else {
+                            DataSourceStatus::Empty
+                        };
+                        let pfx2as_status = if pfx2as > 0 {
+                            DataSourceStatus::Ready
+                        } else {
+                            DataSourceStatus::Empty
+                        };
 
-                    (
-                        as2org,
-                        as2rel,
-                        rpki_roa,
-                        pfx2as,
-                        as2org_status,
-                        as2rel_status,
-                        rpki_status,
-                        pfx2as_status,
-                    )
+                        (
+                            as2rel,
+                            rpki_roa,
+                            pfx2as,
+                            as2rel_status,
+                            rpki_status,
+                            pfx2as_status,
+                        )
+                    }
+                    Err(_) => (
+                        0,
+                        0,
+                        0,
+                        DataSourceStatus::NotInitialized,
+                        DataSourceStatus::NotInitialized,
+                        DataSourceStatus::NotInitialized,
+                    ),
                 }
-                Err(_) => (
-                    0,
+            } else {
+                (
                     0,
                     0,
                     0,
                     DataSourceStatus::NotInitialized,
                     DataSourceStatus::NotInitialized,
                     DataSourceStatus::NotInitialized,
-                    DataSourceStatus::NotInitialized,
-                ),
-            }
-        } else {
-            (
-                0,
-                0,
-                0,
-                0,
-                DataSourceStatus::NotInitialized,
-                DataSourceStatus::NotInitialized,
-                DataSourceStatus::NotInitialized,
-                DataSourceStatus::NotInitialized,
-            )
-        };
+                )
+            };
 
         // Count pfx2as cache files
         let pfx2as_cache_count = if cache_exists {
@@ -231,7 +205,6 @@ impl WsMethod for DatabaseStatusHandler {
                 path: sqlite_path,
                 exists: sqlite_exists,
                 size_bytes: sqlite_size,
-                as2org_count,
                 as2rel_count,
                 rpki_roa_count,
                 pfx2as_count,
@@ -239,11 +212,6 @@ impl WsMethod for DatabaseStatusHandler {
             sources: SourcesInfo {
                 rpki: SourceInfo {
                     state: status_to_string(&rpki_status),
-                    last_updated: None,
-                    next_refresh_after: None,
-                },
-                as2org: SourceInfo {
-                    state: status_to_string(&as2org_status),
                     last_updated: None,
                     next_refresh_after: None,
                 },
@@ -316,9 +284,9 @@ impl WsMethod for DatabaseRefreshHandler {
 
     fn validate(params: &Self::Params) -> WsResult<()> {
         match params.source.to_lowercase().as_str() {
-            "rpki" | "as2org" | "as2rel" | "pfx2as" | "all" => Ok(()),
+            "rpki" | "as2rel" | "pfx2as" | "all" => Ok(()),
             _ => Err(WsError::invalid_params(format!(
-                "Invalid source: {}. Use 'rpki', 'as2org', 'as2rel', 'pfx2as', or 'all'",
+                "Invalid source: {}. Use 'rpki', 'as2rel', 'pfx2as', or 'all'",
                 params.source
             ))),
         }
@@ -338,18 +306,6 @@ impl WsMethod for DatabaseRefreshHandler {
             .map_err(|e| WsError::operation_failed(format!("Failed to open database: {}", e)))?;
 
         let (message, count) = match source.as_str() {
-            "as2org" => {
-                let (as_count, _org_count) = db.bootstrap_as2org().map_err(|e| {
-                    WsError::operation_failed(format!("AS2Org refresh failed: {}", e))
-                })?;
-                (
-                    format!(
-                        "Successfully refreshed AS2Org data with {} entries",
-                        as_count
-                    ),
-                    Some(as_count),
-                )
-            }
             "as2rel" => {
                 let count = db.update_as2rel().map_err(|e| {
                     WsError::operation_failed(format!("AS2Rel refresh failed: {}", e))
@@ -387,6 +343,7 @@ impl WsMethod for DatabaseRefreshHandler {
                     .map(|e| Pfx2asDbRecord {
                         prefix: e.prefix,
                         origin_asn: e.asn,
+                        validation: "unknown".to_string(),
                     })
                     .collect();
 
@@ -406,12 +363,6 @@ impl WsMethod for DatabaseRefreshHandler {
                 // Refresh all sources
                 let mut messages = Vec::new();
 
-                // AS2Org
-                match db.bootstrap_as2org() {
-                    Ok((as_count, _)) => messages.push(format!("AS2Org: {} entries", as_count)),
-                    Err(e) => messages.push(format!("AS2Org: failed - {}", e)),
-                }
-
                 // AS2Rel
                 match db.update_as2rel() {
                     Ok(count) => messages.push(format!("AS2Rel: {} entries", count)),
@@ -427,6 +378,7 @@ impl WsMethod for DatabaseRefreshHandler {
                             .map(|e| Pfx2asDbRecord {
                                 prefix: e.prefix,
                                 origin_asn: e.asn,
+                                validation: "unknown".to_string(),
                             })
                             .collect();
                         let count = records.len();
@@ -485,16 +437,16 @@ mod tests {
         assert_eq!(params.source, "rpki");
         assert!(params.force.is_none());
 
-        let json = r#"{"source": "as2org", "force": true}"#;
+        let json = r#"{"source": "as2rel", "force": true}"#;
         let params: DatabaseRefreshParams = serde_json::from_str(json).unwrap();
-        assert_eq!(params.source, "as2org");
+        assert_eq!(params.source, "as2rel");
         assert_eq!(params.force, Some(true));
     }
 
     #[test]
     fn test_database_refresh_params_validation() {
         // Valid sources
-        for source in &["rpki", "as2org", "as2rel", "pfx2as", "all"] {
+        for source in &["rpki", "as2rel", "pfx2as", "all"] {
             let params = DatabaseRefreshParams {
                 source: source.to_string(),
                 force: None,
@@ -517,18 +469,12 @@ mod tests {
                 path: "/path/to/monocle.db".to_string(),
                 exists: true,
                 size_bytes: Some(1024),
-                as2org_count: 100,
                 as2rel_count: 200,
                 rpki_roa_count: 300,
                 pfx2as_count: 400,
             },
             sources: SourcesInfo {
                 rpki: SourceInfo {
-                    state: "ready".to_string(),
-                    last_updated: Some("2024-01-01T00:00:00Z".to_string()),
-                    next_refresh_after: None,
-                },
-                as2org: SourceInfo {
                     state: "ready".to_string(),
                     last_updated: Some("2024-01-01T00:00:00Z".to_string()),
                     next_refresh_after: None,
@@ -551,7 +497,7 @@ mod tests {
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"exists\":true"));
-        assert!(json.contains("\"as2org_count\":100"));
+        assert!(json.contains("\"as2rel_count\":200"));
         assert!(json.contains("\"state\":\"ready\""));
     }
 
@@ -559,13 +505,13 @@ mod tests {
     fn test_database_refresh_response_serialization() {
         let response = DatabaseRefreshResponse {
             refreshed: true,
-            source: "as2org".to_string(),
+            source: "as2rel".to_string(),
             message: "Successfully refreshed".to_string(),
             count: Some(100),
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"refreshed\":true"));
-        assert!(json.contains("\"source\":\"as2org\""));
+        assert!(json.contains("\"source\":\"as2rel\""));
         assert!(json.contains("\"count\":100"));
 
         // Without count

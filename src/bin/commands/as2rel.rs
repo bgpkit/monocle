@@ -31,7 +31,7 @@ pub struct As2relArgs {
     #[clap(long)]
     pub sort_by_asn: bool,
 
-    /// Show organization name for ASN2 (from as2org database)
+    /// Show organization name for ASN2 (from asinfo database)
     #[clap(long)]
     pub show_name: bool,
 

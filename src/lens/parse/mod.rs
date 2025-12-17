@@ -424,7 +424,7 @@ impl ParseLens {
             messages_processed += 1;
 
             // Report progress every PARSE_PROGRESS_INTERVAL messages
-            if messages_processed % PARSE_PROGRESS_INTERVAL == 0 {
+            if messages_processed.is_multiple_of(PARSE_PROGRESS_INTERVAL) {
                 if let Some(ref cb) = callback {
                     let elapsed = start_time.elapsed().as_secs_f64();
                     let rate = if elapsed > 0.0 {
@@ -531,7 +531,7 @@ impl ParseLens {
             messages_processed += 1;
 
             // Report progress every PARSE_PROGRESS_INTERVAL messages
-            if messages_processed % PARSE_PROGRESS_INTERVAL == 0 {
+            if messages_processed.is_multiple_of(PARSE_PROGRESS_INTERVAL) {
                 if let Some(ref cb) = progress_callback {
                     let elapsed = start_time.elapsed().as_secs_f64();
                     let rate = if elapsed > 0.0 {

@@ -37,6 +37,13 @@ pub struct Pfx2asDbRecord {
     pub prefix: String,
     /// Origin ASN
     pub origin_asn: u32,
+    /// RPKI validation status: "valid", "invalid", or "unknown"
+    #[serde(default = "default_validation")]
+    pub validation: String,
+}
+
+fn default_validation() -> String {
+    "unknown".to_string()
 }
 
 /// Pfx2as query result with match information
@@ -75,7 +82,8 @@ impl Pfx2asSchemaDefinitions {
             prefix_end BLOB NOT NULL,
             prefix_length INTEGER NOT NULL,
             origin_asn INTEGER NOT NULL,
-            prefix_str TEXT NOT NULL
+            prefix_str TEXT NOT NULL,
+            validation TEXT NOT NULL DEFAULT 'unknown'
         );
     "#;
 
@@ -96,6 +104,7 @@ impl Pfx2asSchemaDefinitions {
         "CREATE INDEX IF NOT EXISTS idx_pfx2as_origin_asn ON pfx2as(origin_asn)",
         "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_length ON pfx2as(prefix_length)",
         "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_str ON pfx2as(prefix_str)",
+        "CREATE INDEX IF NOT EXISTS idx_pfx2as_validation ON pfx2as(validation)",
     ];
 }
 
@@ -120,10 +129,39 @@ impl<'a> Pfx2asRepository<'a> {
             .execute(Pfx2asSchemaDefinitions::PFX2AS_META_TABLE, [])
             .map_err(|e| anyhow!("Failed to create pfx2as_meta table: {}", e))?;
 
+        // Migration: Add validation column if it doesn't exist (for existing databases)
+        self.migrate_add_validation_column()?;
+
         for index_sql in Pfx2asSchemaDefinitions::PFX2AS_INDEXES {
             self.conn
                 .execute(index_sql, [])
                 .map_err(|e| anyhow!("Failed to create Pfx2as index: {}", e))?;
+        }
+
+        Ok(())
+    }
+
+    /// Migration: Add validation column to existing pfx2as tables
+    fn migrate_add_validation_column(&self) -> Result<()> {
+        // Check if validation column exists
+        let has_validation: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('pfx2as') WHERE name = 'validation'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !has_validation {
+            // Add the validation column with default value
+            self.conn
+                .execute(
+                    "ALTER TABLE pfx2as ADD COLUMN validation TEXT NOT NULL DEFAULT 'unknown'",
+                    [],
+                )
+                .map_err(|e| anyhow!("Failed to add validation column: {}", e))?;
+            info!("Migrated pfx2as table: added validation column");
         }
 
         Ok(())
@@ -176,8 +214,7 @@ impl<'a> Pfx2asRepository<'a> {
             [],
             |row| {
                 let timestamp: i64 = row.get(0)?;
-                let updated_at = DateTime::from_timestamp(timestamp, 0)
-                    .unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
+                let updated_at = DateTime::from_timestamp(timestamp, 0).unwrap_or_default();
                 Ok(Pfx2asCacheDbMetadata {
                     updated_at,
                     source: row.get(1)?,
@@ -213,31 +250,39 @@ impl<'a> Pfx2asRepository<'a> {
     }
 
     /// Store Pfx2as records
+    ///
+    /// This method clears and reinserts all data within a single transaction,
+    /// ensuring the data remains accessible by APIs during the refresh.
     pub fn store(&self, records: &[Pfx2asDbRecord], source: &str) -> Result<()> {
         // Ensure schema exists
         self.initialize_schema()?;
-
-        // Clear existing data
-        self.clear()?;
 
         // Optimize for batch insert performance
         self.conn
             .execute("PRAGMA synchronous = OFF", [])
             .map_err(|e| anyhow!("Failed to set synchronous mode: {}", e))?;
         self.conn
-            .query_row("PRAGMA journal_mode = MEMORY", [], |_| Ok(()))
+            .query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
             .map_err(|e| anyhow!("Failed to set journal mode: {}", e))?;
         self.conn
             .execute("PRAGMA cache_size = -64000", [])
             .map_err(|e| anyhow!("Failed to set cache size: {}", e))?; // 64MB cache
 
-        // Begin transaction for batch insert
-        self.conn.execute("BEGIN TRANSACTION", [])?;
+        // Begin transaction - all changes are atomic, data remains accessible until commit
+        self.conn.execute("BEGIN IMMEDIATE TRANSACTION", [])?;
+
+        // Clear existing data within the transaction
+        self.conn
+            .execute("DELETE FROM pfx2as", [])
+            .map_err(|e| anyhow!("Failed to clear pfx2as table: {}", e))?;
+        self.conn
+            .execute("DELETE FROM pfx2as_meta", [])
+            .map_err(|e| anyhow!("Failed to clear pfx2as_meta table: {}", e))?;
 
         // Insert records
         let mut stmt = self.conn.prepare(
-            "INSERT INTO pfx2as (prefix_start, prefix_end, prefix_length, origin_asn, prefix_str)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO pfx2as (prefix_start, prefix_end, prefix_length, origin_asn, prefix_str, validation)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
 
         let mut inserted = 0usize;
@@ -251,6 +296,7 @@ impl<'a> Pfx2asRepository<'a> {
                     prefix_len,
                     record.origin_asn,
                     record.prefix,
+                    record.validation,
                 ])?;
                 unique_prefixes.insert(record.prefix.clone());
                 inserted += 1;
@@ -295,7 +341,7 @@ impl<'a> Pfx2asRepository<'a> {
         };
 
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT prefix_str, origin_asn FROM pfx2as{}",
+            "SELECT prefix_str, origin_asn, validation FROM pfx2as{}",
             limit_clause
         ))?;
 
@@ -303,6 +349,7 @@ impl<'a> Pfx2asRepository<'a> {
             Ok(Pfx2asDbRecord {
                 prefix: row.get(0)?,
                 origin_asn: row.get(1)?,
+                validation: row.get(2)?,
             })
         })?;
 
@@ -320,14 +367,15 @@ impl<'a> Pfx2asRepository<'a> {
             return Ok(Vec::new());
         }
 
-        let mut stmt = self
-            .conn
-            .prepare("SELECT prefix_str, origin_asn FROM pfx2as WHERE origin_asn = ?1")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT prefix_str, origin_asn, validation FROM pfx2as WHERE origin_asn = ?1",
+        )?;
 
         let rows = stmt.query_map([asn], |row| {
             Ok(Pfx2asDbRecord {
                 prefix: row.get(0)?,
                 origin_asn: row.get(1)?,
+                validation: row.get(2)?,
             })
         })?;
 
@@ -533,6 +581,109 @@ impl<'a> Pfx2asRepository<'a> {
 
         Ok(count as u64)
     }
+
+    /// Get validation statistics (count by validation status)
+    pub fn validation_stats(&self) -> Result<ValidationStats> {
+        if !self.tables_exist() {
+            return Ok(ValidationStats::default());
+        }
+
+        let mut stats = ValidationStats::default();
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT validation, COUNT(*) FROM pfx2as GROUP BY validation")?;
+
+        let rows = stmt.query_map([], |row| {
+            let validation: String = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            Ok((validation, count as u64))
+        })?;
+
+        for row in rows {
+            let (validation, count) = row?;
+            match validation.as_str() {
+                "valid" => stats.valid = count,
+                "invalid" => stats.invalid = count,
+                _ => stats.unknown = count,
+            }
+        }
+
+        stats.total = stats.valid + stats.invalid + stats.unknown;
+        Ok(stats)
+    }
+
+    /// Get records filtered by validation status
+    pub fn get_by_validation(
+        &self,
+        validation: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<Pfx2asDbRecord>> {
+        if !self.tables_exist() {
+            return Ok(Vec::new());
+        }
+
+        let limit_clause = match limit {
+            Some(n) => format!(" LIMIT {}", n),
+            None => String::new(),
+        };
+
+        let sql = format!(
+            "SELECT prefix_str, origin_asn, validation FROM pfx2as WHERE validation = ?1 ORDER BY prefix_str{}",
+            limit_clause
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([validation], |row| {
+            Ok(Pfx2asDbRecord {
+                prefix: row.get(0)?,
+                origin_asn: row.get(1)?,
+                validation: row.get(2)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
+    }
+}
+
+/// Validation statistics for pfx2as data
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ValidationStats {
+    pub total: u64,
+    pub valid: u64,
+    pub invalid: u64,
+    pub unknown: u64,
+}
+
+impl ValidationStats {
+    pub fn valid_percent(&self) -> f64 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.valid as f64 / self.total as f64) * 100.0
+        }
+    }
+
+    pub fn invalid_percent(&self) -> f64 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.invalid as f64 / self.total as f64) * 100.0
+        }
+    }
+
+    pub fn unknown_percent(&self) -> f64 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.unknown as f64 / self.total as f64) * 100.0
+        }
+    }
 }
 
 // =============================================================================
@@ -595,14 +746,17 @@ mod tests {
             Pfx2asDbRecord {
                 prefix: "1.1.1.0/24".to_string(),
                 origin_asn: 13335,
+                validation: "valid".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "8.8.8.0/24".to_string(),
                 origin_asn: 15169,
+                validation: "valid".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "1.1.1.0/24".to_string(),
                 origin_asn: 13336, // Same prefix, different ASN
+                validation: "invalid".to_string(),
             },
         ];
 
@@ -627,14 +781,17 @@ mod tests {
             Pfx2asDbRecord {
                 prefix: "1.0.0.0/8".to_string(),
                 origin_asn: 1000,
+                validation: "unknown".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "1.1.0.0/16".to_string(),
                 origin_asn: 1100,
+                validation: "unknown".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "1.1.1.0/24".to_string(),
                 origin_asn: 13335,
+                validation: "valid".to_string(),
             },
         ];
 
@@ -665,14 +822,17 @@ mod tests {
             Pfx2asDbRecord {
                 prefix: "1.0.0.0/8".to_string(),
                 origin_asn: 1000,
+                validation: "unknown".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "1.1.0.0/16".to_string(),
                 origin_asn: 1100,
+                validation: "unknown".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "1.1.1.0/24".to_string(),
                 origin_asn: 13335,
+                validation: "valid".to_string(),
             },
         ];
 
@@ -697,18 +857,22 @@ mod tests {
             Pfx2asDbRecord {
                 prefix: "1.0.0.0/8".to_string(),
                 origin_asn: 1000,
+                validation: "unknown".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "1.1.0.0/16".to_string(),
                 origin_asn: 1100,
+                validation: "unknown".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "1.1.1.0/24".to_string(),
                 origin_asn: 13335,
+                validation: "valid".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "2.0.0.0/8".to_string(),
                 origin_asn: 2000,
+                validation: "invalid".to_string(),
             },
         ];
 
@@ -734,10 +898,12 @@ mod tests {
             Pfx2asDbRecord {
                 prefix: "1.1.1.0/24".to_string(),
                 origin_asn: 13335,
+                validation: "valid".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "8.8.8.0/24".to_string(),
                 origin_asn: 15169,
+                validation: "valid".to_string(),
             },
         ];
 
@@ -761,6 +927,7 @@ mod tests {
         let records = vec![Pfx2asDbRecord {
             prefix: "1.1.1.0/24".to_string(),
             origin_asn: 13335,
+            validation: "valid".to_string(),
         }];
 
         repo.store(&records, "test").unwrap();
@@ -781,10 +948,12 @@ mod tests {
             Pfx2asDbRecord {
                 prefix: "2001:db8::/32".to_string(),
                 origin_asn: 65000,
+                validation: "unknown".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "2001:db8:1::/48".to_string(),
                 origin_asn: 65001,
+                validation: "unknown".to_string(),
             },
         ];
 
@@ -808,6 +977,7 @@ mod tests {
         let records = vec![Pfx2asDbRecord {
             prefix: "1.1.1.0/24".to_string(),
             origin_asn: 13335,
+            validation: "valid".to_string(),
         }];
 
         repo.store(&records, "test").unwrap();
@@ -826,14 +996,17 @@ mod tests {
             Pfx2asDbRecord {
                 prefix: "1.1.1.0/24".to_string(),
                 origin_asn: 13335,
+                validation: "valid".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "104.16.0.0/12".to_string(),
                 origin_asn: 13335,
+                validation: "valid".to_string(),
             },
             Pfx2asDbRecord {
                 prefix: "8.8.8.0/24".to_string(),
                 origin_asn: 15169,
+                validation: "valid".to_string(),
             },
         ];
 

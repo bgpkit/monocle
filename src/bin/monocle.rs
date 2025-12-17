@@ -13,14 +13,12 @@ mod commands;
 use commands::as2rel::As2relArgs;
 use commands::config::ConfigArgs;
 use commands::country::CountryArgs;
-use commands::database::DatabaseArgs;
+use commands::inspect::InspectArgs;
 use commands::ip::IpArgs;
 use commands::parse::ParseArgs;
-use commands::pfx2as::Pfx2asArgs;
 use commands::rpki::RpkiCommands;
 use commands::search::SearchArgs;
 use commands::time::TimeArgs;
-use commands::whois::WhoisArgs;
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -59,8 +57,8 @@ enum Commands {
     /// Note: This requires building with the `server` feature enabled.
     Server(ServerArgs),
 
-    /// ASN and organization lookup utility.
-    Whois(WhoisArgs),
+    /// Unified AS and prefix information lookup
+    Inspect(InspectArgs),
 
     /// Country name and code lookup utilities
     Country(CountryArgs),
@@ -77,17 +75,11 @@ enum Commands {
     /// IP information lookup
     Ip(IpArgs),
 
-    /// Bulk prefix-to-AS mapping lookup with the pre-generated data file.
-    Pfx2as(Pfx2asArgs),
-
     /// AS-level relationship lookup between ASNs.
     As2rel(As2relArgs),
 
-    /// Show monocle configuration and data paths.
+    /// Show monocle configuration, data paths, and database management.
     Config(ConfigArgs),
-
-    /// Database management commands (refresh, backup, status, clear).
-    Database(DatabaseArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -183,8 +175,13 @@ fn main() {
                 }
 
                 // Start server (blocks current thread until shutdown)
-                let rt = tokio::runtime::Runtime::new()
-                    .expect("failed to create tokio runtime for server");
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        eprintln!("Failed to create tokio runtime for server: {e}");
+                        std::process::exit(1);
+                    }
+                };
                 if let Err(e) = rt.block_on(monocle::server::start_server(
                     router,
                     context,
@@ -193,7 +190,6 @@ fn main() {
                     eprintln!("Server failed: {e}");
                     std::process::exit(1);
                 }
-                return;
             }
 
             #[cfg(not(feature = "cli"))]
@@ -204,16 +200,14 @@ fn main() {
             }
         }
 
-        Commands::Whois(args) => commands::whois::run(&config, args, output_format),
+        Commands::Inspect(args) => commands::inspect::run(&config, args, output_format),
         Commands::Time(args) => commands::time::run(args, output_format),
         Commands::Country(args) => commands::country::run(args, output_format),
         Commands::Rpki { commands } => {
             commands::rpki::run(commands, output_format, &config.data_dir)
         }
         Commands::Ip(args) => commands::ip::run(args, output_format),
-        Commands::Pfx2as(args) => commands::pfx2as::run(&config, args, output_format),
         Commands::As2rel(args) => commands::as2rel::run(&config, args, output_format),
         Commands::Config(args) => commands::config::run(&config, args, output_format),
-        Commands::Database(args) => commands::database::run(&config, args, output_format),
     }
 }
