@@ -5,7 +5,6 @@
 
 use crate::lens::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
 use serde::{Deserialize, Serialize};
-use tabled::Tabled;
 
 /// Sort order for search results
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,15 +29,16 @@ pub enum As2relOutputFormat {
 }
 
 /// Search result for AS relationships
-#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "display", derive(tabled::Tabled))]
 pub struct As2relSearchResult {
     pub asn1: u32,
     pub asn2: u32,
-    #[tabled(skip)]
+    #[cfg_attr(feature = "display", tabled(skip))]
     pub asn2_name: Option<String>,
     /// Percentage of peers that see the connection (formatted string)
     pub connected: String,
-    #[tabled(skip)]
+    #[cfg_attr(feature = "display", tabled(skip))]
     pub connected_pct: f32,
     /// Percentage that see peer relationship
     pub peer: String,
@@ -49,7 +49,8 @@ pub struct As2relSearchResult {
 }
 
 /// Search result with name displayed (for table output)
-#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "display", derive(tabled::Tabled))]
 pub struct As2relSearchResultWithName {
     pub asn1: u32,
     pub asn2: u32,

@@ -3,13 +3,29 @@
 //! This module provides time parsing and formatting functionality for BGP-related
 //! timestamps. It supports Unix timestamps, RFC3339 strings, and human-readable
 //! date formats.
+//!
+//! # Feature Requirements
+//!
+//! This module requires the `lens-core` feature.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use monocle::lens::time::{TimeLens, TimeParseArgs};
+//!
+//! let lens = TimeLens::new();
+//! let args = TimeParseArgs::new(vec!["1697043600".to_string()]);
+//! let results = lens.parse(&args)?;
+//!
+//! for t in &results {
+//!     println!("{} -> {}", t.unix, t.rfc3339);
+//! }
+//! ```
 
 use anyhow::anyhow;
 use chrono::{DateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use serde::{Deserialize, Deserializer, Serialize};
-use tabled::settings::Style;
-use tabled::{Table, Tabled};
 
 /// Deserialize a string or vec of strings into a Vec<String>
 /// This allows query parameters to accept either `times=value` or `times=v1&times=v2`
@@ -77,7 +93,8 @@ where
 // =============================================================================
 
 /// Represents a parsed BGP time with multiple format representations
-#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "display", derive(tabled::Tabled))]
 pub struct TimeBgpTime {
     /// Unix timestamp in seconds
     pub unix: i64,
@@ -163,8 +180,13 @@ impl TimeParseArgs {
 /// let args = TimeParseArgs::new(vec!["1697043600".to_string()]);
 /// let results = lens.parse(&args)?;
 ///
-/// // Format for display
-/// let output = lens.format_results(&results, &TimeOutputFormat::Table);
+/// // Access results directly
+/// for t in &results {
+///     println!("Unix: {}, RFC3339: {}, Human: {}", t.unix, t.rfc3339, t.human);
+/// }
+///
+/// // Or format for display (requires "display" feature for Table format)
+/// let output = lens.format_results(&results, &TimeOutputFormat::Json);
 /// println!("{}", output);
 /// ```
 pub struct TimeLens;
@@ -253,9 +275,24 @@ impl TimeLens {
     }
 
     /// Format results based on output format
+    ///
+    /// Note: Table format requires the `display` feature. Without it, Table format
+    /// will fall back to JSON output.
     pub fn format_results(&self, results: &[TimeBgpTime], format: &TimeOutputFormat) -> String {
         match format {
-            TimeOutputFormat::Table => Table::new(results).with(Style::rounded()).to_string(),
+            TimeOutputFormat::Table => {
+                #[cfg(feature = "display")]
+                {
+                    use tabled::settings::Style;
+                    use tabled::Table;
+                    Table::new(results).with(Style::rounded()).to_string()
+                }
+                #[cfg(not(feature = "display"))]
+                {
+                    // Fall back to JSON when display feature is not enabled
+                    serde_json::to_string_pretty(results).unwrap_or_default()
+                }
+            }
             TimeOutputFormat::Rfc3339 => results
                 .iter()
                 .map(|t| t.rfc3339.clone())
@@ -267,6 +304,17 @@ impl TimeLens {
                 .collect::<Vec<_>>()
                 .join("\n"),
             TimeOutputFormat::Json => serde_json::to_string_pretty(results).unwrap_or_default(),
+        }
+    }
+
+    /// Format results as JSON
+    ///
+    /// This is a convenience method that always works regardless of features.
+    pub fn format_json(&self, results: &[TimeBgpTime], pretty: bool) -> String {
+        if pretty {
+            serde_json::to_string_pretty(results).unwrap_or_default()
+        } else {
+            serde_json::to_string(results).unwrap_or_default()
         }
     }
 }
@@ -364,5 +412,21 @@ mod tests {
         // Test JSON format
         let output = lens.format_results(&[bgp_time], &TimeOutputFormat::Json);
         assert!(output.contains("1697043600"));
+    }
+
+    #[test]
+    fn test_format_json() {
+        let lens = TimeLens::new();
+        let bgp_time = TimeBgpTime {
+            unix: 1697043600,
+            rfc3339: "2023-10-11T15:00:00+00:00".to_string(),
+            human: "about 1 year ago".to_string(),
+        };
+
+        let compact = lens.format_json(&[bgp_time.clone()], false);
+        assert!(!compact.contains('\n') || compact.matches('\n').count() == 0);
+
+        let pretty = lens.format_json(&[bgp_time], true);
+        assert!(pretty.contains('\n'));
     }
 }

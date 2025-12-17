@@ -2,13 +2,31 @@
 //!
 //! This module provides country name and code lookup functionality
 //! using data from bgpkit-commons.
+//!
+//! # Feature Requirements
+//!
+//! This module requires the `lens-bgpkit` feature.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use monocle::lens::country::{CountryLens, CountryLookupArgs};
+//!
+//! let lens = CountryLens::new();
+//!
+//! // Look up by country code
+//! let args = CountryLookupArgs::new("US");
+//! let results = lens.search(&args)?;
+//!
+//! for country in &results {
+//!     println!("{}: {}", country.code, country.name);
+//! }
+//! ```
 
 use anyhow::{anyhow, Result};
 use bgpkit_commons::BgpkitCommons;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
-use tabled::settings::Style;
-use tabled::{Table, Tabled};
 
 /// Global country data cache
 static COUNTRY_DATA: OnceLock<CountryData> = OnceLock::new();
@@ -46,7 +64,8 @@ impl CountryData {
 // =============================================================================
 
 /// A country entry with code and name
-#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "display", derive(tabled::Tabled))]
 pub struct CountryEntry {
     /// ISO 3166-1 alpha-2 country code
     pub code: String,
@@ -152,8 +171,8 @@ impl CountryLookupArgs {
 /// let args = CountryLookupArgs::new("US");
 /// let results = lens.search(&args)?;
 ///
-/// // Format for display
-/// let output = lens.format_results(&results, &CountryOutputFormat::Table);
+/// // Format for display (requires "display" feature for Table format)
+/// let output = lens.format_results(&results, &CountryOutputFormat::Json);
 /// println!("{}", output);
 /// ```
 pub struct CountryLens {
@@ -241,6 +260,9 @@ impl CountryLens {
     }
 
     /// Format results based on output format
+    ///
+    /// Note: Table and Markdown formats require the `display` feature.
+    /// Without it, they will fall back to Simple format.
     pub fn format_results(&self, results: &[CountryEntry], format: &CountryOutputFormat) -> String {
         if results.is_empty() {
             return match format {
@@ -250,9 +272,31 @@ impl CountryLens {
         }
 
         match format {
-            CountryOutputFormat::Table => Table::new(results).with(Style::rounded()).to_string(),
+            CountryOutputFormat::Table => {
+                #[cfg(feature = "display")]
+                {
+                    use tabled::settings::Style;
+                    use tabled::Table;
+                    Table::new(results).with(Style::rounded()).to_string()
+                }
+                #[cfg(not(feature = "display"))]
+                {
+                    // Fall back to Simple format
+                    self.format_results(results, &CountryOutputFormat::Simple)
+                }
+            }
             CountryOutputFormat::Markdown => {
-                Table::new(results).with(Style::markdown()).to_string()
+                #[cfg(feature = "display")]
+                {
+                    use tabled::settings::Style;
+                    use tabled::Table;
+                    Table::new(results).with(Style::markdown()).to_string()
+                }
+                #[cfg(not(feature = "display"))]
+                {
+                    // Fall back to Simple format
+                    self.format_results(results, &CountryOutputFormat::Simple)
+                }
             }
             CountryOutputFormat::Json => serde_json::to_string_pretty(results).unwrap_or_default(),
             CountryOutputFormat::Simple => results
@@ -260,6 +304,17 @@ impl CountryLens {
                 .map(|e| format!("{}: {}", e.code, e.name))
                 .collect::<Vec<_>>()
                 .join("\n"),
+        }
+    }
+
+    /// Format results as JSON
+    ///
+    /// This is a convenience method that always works regardless of features.
+    pub fn format_json(&self, results: &[CountryEntry], pretty: bool) -> String {
+        if pretty {
+            serde_json::to_string_pretty(results).unwrap_or_default()
+        } else {
+            serde_json::to_string(results).unwrap_or_default()
         }
     }
 }
@@ -390,6 +445,21 @@ mod tests {
 
         let output = lens.format_results(&[], &CountryOutputFormat::Json);
         assert_eq!(output, "[]");
+    }
+
+    #[test]
+    fn test_format_json() {
+        let lens = CountryLens::new();
+        let results = vec![CountryEntry {
+            code: "US".to_string(),
+            name: "United States".to_string(),
+        }];
+
+        let compact = lens.format_json(&results, false);
+        assert!(compact.contains("US"));
+
+        let pretty = lens.format_json(&results, true);
+        assert!(pretty.contains('\n'));
     }
 
     #[test]

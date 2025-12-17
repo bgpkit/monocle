@@ -18,8 +18,6 @@ pub use crate::lens::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
 use crate::database::{MonocleDatabase, BGPKIT_AS2REL_URL};
 use anyhow::Result;
 use serde_json::json;
-use tabled::settings::Style;
-use tabled::Table;
 
 /// AS2Rel lens for querying AS-level relationships
 ///
@@ -176,33 +174,93 @@ impl<'a> As2relLens<'a> {
                 serde_json::to_string_pretty(&output).unwrap_or_default()
             }
             As2relOutputFormat::Pretty => {
-                if show_name {
-                    let results_with_name: Vec<_> = results
-                        .iter()
-                        .cloned()
-                        .map(|r| r.with_name(truncate_names))
-                        .collect();
-                    Table::new(&results_with_name)
-                        .with(Style::rounded())
-                        .to_string()
-                } else {
-                    Table::new(results).with(Style::rounded()).to_string()
+                #[cfg(feature = "display")]
+                {
+                    use tabled::settings::Style;
+                    use tabled::Table;
+                    if show_name {
+                        let results_with_name: Vec<_> = results
+                            .iter()
+                            .cloned()
+                            .map(|r| r.with_name(truncate_names))
+                            .collect();
+                        Table::new(&results_with_name)
+                            .with(Style::rounded())
+                            .to_string()
+                    } else {
+                        Table::new(results).with(Style::rounded()).to_string()
+                    }
+                }
+                #[cfg(not(feature = "display"))]
+                {
+                    // Fall back to JSON when display feature is not enabled
+                    self.format_results(
+                        results,
+                        &As2relOutputFormat::Json,
+                        show_name,
+                        truncate_names,
+                    )
                 }
             }
             As2relOutputFormat::Markdown => {
-                if show_name {
-                    let results_with_name: Vec<_> = results
-                        .iter()
-                        .cloned()
-                        .map(|r| r.with_name(truncate_names))
-                        .collect();
-                    Table::new(&results_with_name)
-                        .with(Style::markdown())
-                        .to_string()
-                } else {
-                    Table::new(results).with(Style::markdown()).to_string()
+                #[cfg(feature = "display")]
+                {
+                    use tabled::settings::Style;
+                    use tabled::Table;
+                    if show_name {
+                        let results_with_name: Vec<_> = results
+                            .iter()
+                            .cloned()
+                            .map(|r| r.with_name(truncate_names))
+                            .collect();
+                        Table::new(&results_with_name)
+                            .with(Style::markdown())
+                            .to_string()
+                    } else {
+                        Table::new(results).with(Style::markdown()).to_string()
+                    }
+                }
+                #[cfg(not(feature = "display"))]
+                {
+                    // Fall back to JSON when display feature is not enabled
+                    self.format_results(
+                        results,
+                        &As2relOutputFormat::Json,
+                        show_name,
+                        truncate_names,
+                    )
                 }
             }
+        }
+    }
+
+    /// Format results as JSON
+    ///
+    /// This is a convenience method that always works regardless of features.
+    pub fn format_json(&self, results: &[As2relSearchResult], pretty: bool) -> String {
+        let max_peers = self.get_max_peers_count();
+        let json_results: Vec<_> = results
+            .iter()
+            .map(|r| {
+                json!({
+                    "asn1": r.asn1,
+                    "asn2": r.asn2,
+                    "asn2_name": r.asn2_name.as_deref().unwrap_or(""),
+                    "connected": &r.connected,
+                    "peer": &r.peer,
+                    "as1_upstream": &r.as1_upstream,
+                    "as2_upstream": &r.as2_upstream,
+                })
+            })
+            .collect();
+        let output = json!({
+            "max_peers_count": max_peers,
+            "results": json_results,
+        });
+        if pretty {
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        } else {
+            serde_json::to_string(&output).unwrap_or_default()
         }
     }
 }

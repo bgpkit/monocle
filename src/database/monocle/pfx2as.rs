@@ -24,14 +24,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
-use tabled::Tabled;
 use tracing::info;
 
 /// Default TTL for Pfx2as cache (24 hours)
 pub const DEFAULT_PFX2AS_CACHE_TTL: Duration = Duration::hours(24);
 
 /// Pfx2as record for database storage
-#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "display", derive(tabled::Tabled))]
 pub struct Pfx2asDbRecord {
     /// IP prefix string (e.g., "1.1.1.0/24")
     pub prefix: String,

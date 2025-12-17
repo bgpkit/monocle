@@ -7,177 +7,174 @@
 //! from public sources. It can be used as both a command-line application and
 //! a library.
 //!
+//! # Feature Flags
+//!
+//! Monocle uses a layered feature system to minimize dependencies based on your needs:
+//!
+//! | Feature | Description | Key Dependencies |
+//! |---------|-------------|------------------|
+//! | `database` | SQLite database operations only | `rusqlite` |
+//! | `lens-core` | Standalone lenses (TimeLens, OutputFormat) | `chrono-humanize`, `dateparser` |
+//! | `lens-bgpkit` | BGP-related lenses (Parse, Search, RPKI, Country) | `bgpkit-*`, `rayon` |
+//! | `lens-full` | All lenses including InspectLens | All above |
+//! | `display` | Table formatting with `tabled` | `tabled` |
+//! | `cli` | Full CLI binary with server support | All above + `clap`, `axum` |
+//!
+//! ## Choosing Features
+//!
+//! ```toml
+//! # Minimal - just database operations
+//! monocle = { version = "0.9", default-features = false, features = ["database"] }
+//!
+//! # Standalone utilities (time parsing, output formatting)
+//! monocle = { version = "0.9", default-features = false, features = ["lens-core"] }
+//!
+//! # BGP operations without CLI overhead
+//! monocle = { version = "0.9", default-features = false, features = ["lens-bgpkit"] }
+//!
+//! # Full lens functionality with display support
+//! monocle = { version = "0.9", default-features = false, features = ["lens-full", "display"] }
+//!
+//! # Default (CLI binary)
+//! monocle = "0.9"
+//! ```
+//!
 //! # Architecture
 //!
 //! The library is organized into the following modules:
 //!
-//! - **[`database`]**: All database functionality
+//! - **[`database`]**: All database functionality (always available)
 //!   - `core`: SQLite connection management and schema definitions
 //!   - `session`: One-time storage (e.g., search results)
 //!   - `monocle`: Main monocle database (ASInfo, AS2Rel) and file caches
 //!
-//! - **[`lens`]**: High-level business logic (reusable across CLI, API, GUI)
-//!   - `as2rel`: AS-level relationships lens
-//!   - `country`: Country code/name lookup lens
-//!   - `ip`: IP information lookup lens
-//!   - `parse`: MRT file parsing lens
-//!   - `pfx2as`: Prefix-to-ASN mapping lens
-//!   - `rpki`: RPKI validation and data lens
-//!   - `search`: BGP message search lens
-//!   - `time`: Time parsing and formatting lens
+//! - **[`lens`]**: High-level business logic (feature-gated)
+//!   - `time`: Time parsing and formatting (requires `lens-core`)
+//!   - `country`: Country code/name lookup (requires `lens-bgpkit`)
+//!   - `ip`: IP information lookup (requires `lens-bgpkit`)
+//!   - `parse`: MRT file parsing (requires `lens-bgpkit`)
+//!   - `search`: BGP message search (requires `lens-bgpkit`)
+//!   - `rpki`: RPKI validation and data (requires `lens-bgpkit`)
+//!   - `pfx2as`: Prefix-to-ASN mapping (requires `lens-bgpkit`)
+//!   - `as2rel`: AS-level relationships (requires `lens-bgpkit`)
+//!   - `inspect`: Unified AS/prefix lookup (requires `lens-full`)
 //!
-//! - **[`config`]**: Configuration management and shared types
-//!   - `MonocleConfig`: Main configuration struct
-//!   - `DataSource`: Available data sources for refresh operations
-//!   - Database info types for status reporting
+//! - **[`config`]**: Configuration management
 //!
-//! # Database Strategy
+//! # Quick Start Examples
 //!
-//! Monocle uses SQLite for ASInfo and AS2Rel data storage. For data requiring
-//! INET operations (prefix matching, containment queries), file-based JSON
-//! caching is used since SQLite doesn't natively support these operations.
-//!
-//! # Features
-//!
-//! Monocle supports the following Cargo features:
-//!
-//! - **`cli`** (default): Enables CLI support including clap derives for argument
-//!   structs, progress bars, and table formatting. Required for building the binary.
-//!
-//! - **`full`**: Enables all features (currently same as `cli`).
-//!
-//! ## Feature Usage
-//!
-//! ```toml
-//! # Minimal library (no CLI dependencies)
-//! monocle = { version = "0.9", default-features = false }
-//!
-//! # Library with CLI argument structs (for building CLI tools)
-//! monocle = { version = "0.9", features = ["cli"] }
-//!
-//! # Full build (default, same as just "monocle")
-//! monocle = { version = "0.9" }
-//! ```
-//!
-//! # Quick Start
+//! ## Database Operations (feature = "database")
 //!
 //! ```rust,ignore
 //! use monocle::database::MonocleDatabase;
-//! use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 //!
-//! // Open the monocle database
+//! // Open or create database
 //! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 //!
-//! // Create a lens and query
-//! let lens = InspectLens::new(&db);
-//!
-//! // Ensure data is available
-//! lens.ensure_data_available()?;
-//!
-//! // Query ASN information
-//! let options = InspectQueryOptions::default();
-//! let results = lens.query(&["13335".to_string()], &options)?;
-//!
-//! // Format output
-//! let output = lens.format_json(&results, true);
-//! ```
-//!
-//! # Example: Using Lenses
-//!
-//! All functionality is accessed through lens structs. Each lens module exports:
-//! - A lens struct (the main entry point)
-//! - Args structs (input parameters)
-//! - Output types (return values and format enums)
-//!
-//! ```rust,ignore
-//! use monocle::lens::time::{TimeLens, TimeParseArgs, TimeOutputFormat};
-//! use monocle::lens::rpki::{RpkiLens, RpkiValidationArgs, RpkiListArgs};
-//! use monocle::lens::ip::{IpLens, IpLookupArgs};
-//!
-//! // Time parsing - all operations go through TimeLens
-//! let time_lens = TimeLens::new();
-//! let args = TimeParseArgs::new(vec!["2023-10-11T00:00:00Z".to_string()]);
-//! let results = time_lens.parse(&args)?;
-//! let output = time_lens.format_results(&results, &TimeOutputFormat::Table);
-//!
-//! // RPKI validation - all operations go through RpkiLens
-//! let rpki_lens = RpkiLens::new();
-//! let args = RpkiValidationArgs::new(13335, "1.1.1.0/24");
-//! let (validity, covering_roas) = rpki_lens.validate(&args)?;
-//!
-//! // List ROAs for an ASN
-//! let args = RpkiListArgs::for_asn(13335);
-//! let roas = rpki_lens.list_roas(&args)?;
-//!
-//! // IP lookup - all operations go through IpLens
-//! let ip_lens = IpLens::new();
-//! let args = IpLookupArgs::new("1.1.1.1".parse().unwrap());
-//! let info = ip_lens.lookup(&args)?;
-//! ```
-//!
-//! # Example: Using File Caches
-//!
-//! For RPKI and Pfx2as data that require prefix operations:
-//!
-//! ```rust,ignore
-//! use monocle::database::{RpkiFileCache, Pfx2asFileCache, DEFAULT_RPKI_TTL};
-//!
-//! // RPKI cache
-//! let rpki_cache = RpkiFileCache::new("~/.monocle")?;
-//! if !rpki_cache.is_fresh("cloudflare", None, DEFAULT_RPKI_TTL) {
-//!     // Load and cache new data
-//!     rpki_cache.store("cloudflare", None, roas, aspas)?;
+//! // Check if AS2Rel data needs update
+//! if db.needs_as2rel_update() {
+//!     let count = db.update_as2rel()?;
+//!     println!("Loaded {} relationships", count);
 //! }
 //!
-//! // Pfx2as cache
-//! let pfx2as_cache = Pfx2asFileCache::new("~/.monocle")?;
-//! let data = pfx2as_cache.load("source")?;
+//! // Query relationships
+//! let rels = db.as2rel().search_asn(13335)?;
+//! for rel in rels {
+//!     println!("AS{} <-> AS{}", rel.asn1, rel.asn2);
+//! }
 //! ```
 //!
-//! # Progress Tracking
+//! ## Time Parsing (feature = "lens-core")
 //!
-//! For long-running operations like parsing and searching, monocle provides
-//! progress tracking through callbacks. This is useful for building responsive
-//! GUI applications or showing progress bars in CLI tools.
+//! ```rust,ignore
+//! use monocle::lens::time::{TimeLens, TimeParseArgs};
+//!
+//! let lens = TimeLens::new();
+//! let args = TimeParseArgs::new(vec![
+//!     "1697043600".to_string(),          // Unix timestamp
+//!     "2023-10-11T00:00:00Z".to_string(), // RFC3339
+//! ]);
+//!
+//! let results = lens.parse(&args)?;
+//! for t in &results {
+//!     println!("{} -> {}", t.unix, t.rfc3339);
+//! }
+//! ```
+//!
+//! ## RPKI Validation (feature = "lens-bgpkit")
+//!
+//! ```rust,ignore
+//! use monocle::database::MonocleDatabase;
+//! use monocle::lens::rpki::RpkiLens;
+//!
+//! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+//! let lens = RpkiLens::new(&db);
+//!
+//! // Ensure cache is populated
+//! if lens.needs_refresh()? {
+//!     lens.refresh()?;
+//! }
+//!
+//! // Validate a prefix-ASN pair
+//! let result = lens.validate("1.1.1.0/24", 13335)?;
+//! println!("{}: {}", result.state, result.reason);
+//! ```
+//!
+//! ## MRT Parsing with Progress (feature = "lens-bgpkit")
 //!
 //! ```rust,ignore
 //! use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
 //! use std::sync::Arc;
 //!
 //! let lens = ParseLens::new();
-//! let filters = ParseFilters::default();
+//! let filters = ParseFilters {
+//!     origin_asn: Some(13335),
+//!     ..Default::default()
+//! };
 //!
-//! // Define a progress callback
 //! let callback = Arc::new(|progress: ParseProgress| {
-//!     match progress {
-//!         ParseProgress::Started { file_path } => {
-//!             println!("Started parsing: {}", file_path);
-//!         }
-//!         ParseProgress::Update { messages_processed, .. } => {
-//!             println!("Processed {} messages", messages_processed);
-//!         }
-//!         ParseProgress::Completed { total_messages, duration_secs } => {
-//!             println!("Completed: {} messages in {:.2}s", total_messages, duration_secs);
-//!         }
+//!     if let ParseProgress::Completed { total_messages, .. } = progress {
+//!         println!("Parsed {} messages", total_messages);
 //!     }
 //! });
 //!
-//! // Parse with progress tracking
 //! let elems = lens.parse_with_progress(&filters, "path/to/file.mrt", Some(callback))?;
-//! for elem in elems {
-//!     // Process each BGP element
-//! }
+//! ```
+//!
+//! ## Unified Inspection (feature = "lens-full")
+//!
+//! ```rust,ignore
+//! use monocle::database::MonocleDatabase;
+//! use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
+//!
+//! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+//! let lens = InspectLens::new(&db);
+//!
+//! // Auto-refresh data if needed
+//! lens.ensure_data_available()?;
+//!
+//! // Query by ASN, prefix, or name (auto-detected)
+//! let options = InspectQueryOptions::default();
+//! let results = lens.query(&["13335".to_string()], &options)?;
+//!
+//! // Get JSON output
+//! let json = lens.format_json(&results, true);
+//! println!("{}", json);
 //! ```
 
 pub mod config;
 pub mod database;
+
+// Lens module - feature gated
+#[cfg(any(feature = "lens-core", feature = "lens-bgpkit", feature = "lens-full"))]
 pub mod lens;
 
+// Server module - requires CLI feature
 #[cfg(feature = "cli")]
 pub mod server;
 
 // =============================================================================
-// Configuration
+// Configuration (always available)
 // =============================================================================
 
 pub use config::MonocleConfig;
@@ -189,24 +186,57 @@ pub use config::{
 };
 
 // =============================================================================
-// Database Module - Re-export commonly used types
+// Database Module - Re-export commonly used types (always available)
 // =============================================================================
 
 // Primary database type (SQLite)
 pub use database::MonocleDatabase;
 
+// Core database types
+pub use database::{DatabaseConn, SchemaDefinitions, SchemaManager, SchemaStatus, SCHEMA_VERSION};
+
+// AS2Rel repository
+pub use database::{
+    AggregatedRelationship, As2relEntry, As2relMeta, As2relRecord, As2relRepository,
+    AsConnectivitySummary, ConnectivityEntry, ConnectivityGroup, BGPKIT_AS2REL_URL,
+};
+
+// ASInfo repository
+pub use database::{
+    AsinfoAs2orgRecord, AsinfoCoreRecord, AsinfoFullRecord, AsinfoHegemonyRecord, AsinfoMetadata,
+    AsinfoPeeringdbRecord, AsinfoPopulationRecord, AsinfoRepository, AsinfoSchemaDefinitions,
+    AsinfoStoreCounts, JsonlRecord, ASINFO_DATA_URL, DEFAULT_ASINFO_TTL,
+};
+
+// RPKI repository
+pub use database::{
+    RpkiAspaRecord, RpkiCacheMetadata, RpkiRepository, RpkiRoaRecord, RpkiValidationResult,
+    RpkiValidationState, DEFAULT_RPKI_CACHE_TTL,
+};
+
+// Pfx2as repository
+pub use database::{
+    Pfx2asCacheDbMetadata, Pfx2asDbRecord, Pfx2asQueryResult, Pfx2asRepository,
+    Pfx2asSchemaDefinitions, ValidationStats, DEFAULT_PFX2AS_CACHE_TTL,
+};
+
+// Session types
+#[cfg(feature = "lens-bgpkit")]
+pub use database::MsgStore;
+
 // File-based cache for RPKI
 pub use database::RpkiFileCache;
 
 // =============================================================================
-// Common Types
+// Lens Module - Feature-gated exports
 // =============================================================================
 
-// Unified output format for all commands
+// Output format utilities (lens-core)
+#[cfg(any(feature = "lens-core", feature = "lens-bgpkit", feature = "lens-full"))]
 pub use lens::utils::OutputFormat;
 
 // =============================================================================
-// Server Module (WebSocket API) - requires "server" feature
+// Server Module (WebSocket API) - requires "cli" feature
 // =============================================================================
 
 #[cfg(feature = "cli")]

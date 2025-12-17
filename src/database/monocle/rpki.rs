@@ -21,7 +21,6 @@ use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use tabled::Tabled;
 use tracing::info;
 
 /// Default TTL for RPKI cache (24 hours)
@@ -50,7 +49,8 @@ impl std::fmt::Display for RpkiValidationState {
 }
 
 /// Detailed validation result
-#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "display", derive(tabled::Tabled))]
 pub struct RpkiValidationResult {
     pub prefix: String,
     pub asn: u32,
@@ -59,7 +59,8 @@ pub struct RpkiValidationResult {
 }
 
 /// ROA record for database storage
-#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "display", derive(tabled::Tabled))]
 pub struct RpkiRoaRecord {
     pub prefix: String,
     pub max_length: u8,

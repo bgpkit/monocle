@@ -14,7 +14,7 @@
 //! │   ├── connection  # SQLite DatabaseConn wrapper
 //! │   └── schema      # SQLite schema definitions and management
 //! │
-//! ├── session/        # One-time storage
+//! ├── session/        # One-time storage (requires lens-bgpkit feature)
 //! │   └── msg_store   # BGP message search results (SQLite)
 //! │
 //! └── monocle/        # Persistent storage
@@ -29,6 +29,11 @@
 //! For data requiring INET operations (prefix matching, containment queries),
 //! file-based JSON caching is used since SQLite doesn't natively support these.
 //!
+//! # Feature Requirements
+//!
+//! - Core database types are always available
+//! - `MsgStore` requires the `lens-bgpkit` feature (depends on bgpkit_parser)
+//!
 //! # Usage
 //!
 //! ## Monocle Database (SQLite)
@@ -42,12 +47,12 @@
 //! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 //!
 //! // Bootstrap data if needed
-//! if db.needs_as2org_bootstrap() {
-//!     db.bootstrap_as2org()?;
+//! if db.needs_asinfo_bootstrap() {
+//!     db.bootstrap_asinfo()?;
 //! }
 //!
 //! // Query data
-//! let results = db.as2org().search_by_name("cloudflare")?;
+//! let results = db.asinfo().search_by_name("cloudflare")?;
 //! ```
 //!
 //! ## File-based Caching (RPKI and Pfx2as)
@@ -55,7 +60,7 @@
 //! For RPKI and Pfx2as data that require prefix operations:
 //!
 //! ```rust,ignore
-//! use monocle::database::{RpkiFileCache, Pfx2asFileCache};
+//! use monocle::database::{RpkiFileCache, DEFAULT_RPKI_TTL};
 //!
 //! // RPKI cache
 //! let rpki_cache = RpkiFileCache::new("~/.monocle")?;
@@ -63,15 +68,11 @@
 //!     // Load and cache new data
 //!     rpki_cache.store("cloudflare", None, roas, aspas)?;
 //! }
-//!
-//! // Pfx2as cache
-//! let pfx2as_cache = Pfx2asFileCache::new("~/.monocle")?;
-//! let data = pfx2as_cache.load("source")?;
 //! ```
 //!
 //! ## Session Database (SQLite - for exports)
 //!
-//! For one-time operations like storing search results:
+//! For one-time operations like storing search results (requires `lens-bgpkit` feature):
 //!
 //! ```rust,ignore
 //! use monocle::database::MsgStore;
@@ -123,6 +124,8 @@ pub use monocle::{
 };
 
 // Session types (SQLite-based for search result exports)
+// Requires lens-bgpkit feature because MsgStore depends on bgpkit_parser::BgpElem
+#[cfg(feature = "lens-bgpkit")]
 pub use session::MsgStore;
 
 // =============================================================================
@@ -131,12 +134,20 @@ pub use session::MsgStore;
 
 // RPKI file cache
 pub use monocle::{
-    AspaRecord, RoaRecord, RpkiCacheData, RpkiCacheMeta, RpkiFileCache,
-    DEFAULT_RPKI_HISTORICAL_TTL, DEFAULT_RPKI_TTL,
+    // Cache utilities
+    cache_size,
+    clear_all_caches,
+    ensure_cache_dirs,
+    // RPKI cache
+    AspaRecord,
+    RoaRecord,
+    RpkiCacheData,
+    RpkiCacheMeta,
+    RpkiFileCache,
+    // TTL defaults
+    DEFAULT_RPKI_HISTORICAL_TTL,
+    DEFAULT_RPKI_TTL,
 };
-
-// Cache utilities
-pub use monocle::{cache_size, clear_all_caches, ensure_cache_dirs};
 
 // =============================================================================
 // Helper function
