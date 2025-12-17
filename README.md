@@ -15,25 +15,22 @@ See through all Border Gateway Protocol (BGP) data with a monocle.
   - [Using `cargo`](#using-cargo)
   - [Using `homebrew` on macOS](#using-homebrew-on-macos)
   - [Using `cargo-binstall`](#using-cargo-binstall)
+- [Library Usage](#library-usage)
 - [Usage](#usage)
   - [`monocle parse`](#monocle-parse)
     - [Output Format](#output-format)
   - [`monocle search`](#monocle-search)
-  - [`monocle broker`](#monocle-broker)
   - [`monocle time`](#monocle-time)
-  - [`monocle whois`](#monocle-whois)
+  - [`monocle inspect`](#monocle-inspect)
   - [`monocle country`](#monocle-country)
   - [`monocle as2rel`](#monocle-as2rel)
   - [`monocle rpki`](#monocle-rpki)
-    - [`monocle rpki check`](#monocle-rpki-check)
-    - [`monocle rpki list`](#monocle-rpki-list)
-    - [`monocle rpki summary`](#monocle-rpki-summary)
+    - [`monocle rpki validate`](#monocle-rpki-validate)
     - [`monocle rpki roas`](#monocle-rpki-roas)
     - [`monocle rpki aspas`](#monocle-rpki-aspas)
-  - [`monocle radar`](#monocle-radar)
-    - [`monocle radar stats`: routing statistics](#monocle-radar-stats-routing-statistics)
-    - [`monocle radar pfx2asn`: prefix-to-ASN mapping](#monocle-radar-pfx2asn-prefix-to-asn-mapping)
   - [`monocle ip`](#monocle-ip)
+  - [`monocle config`](#monocle-config)
+  - [`monocle server`](#monocle-server)
 
 ## Install
 
@@ -46,7 +43,7 @@ cargo install monocle
 ### Using `homebrew` on macOS
 
 ```bash
-brew install monocle
+brew install bgpkit/tap/monocle
 ```
 
 ### Using [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)
@@ -63,17 +60,147 @@ Then install `monocle` using `cargo binstall`
 cargo binstall monocle
 ```
 
+## Library Usage
+
+Monocle can also be used as a library in your Rust projects. Add it to your `Cargo.toml`:
+
+```toml
+[dependencies]
+# Full library with CLI argument support (default)
+monocle = "0.10"
+
+# Minimal database access only
+monocle = { version = "0.10", default-features = false, features = ["database"] }
+
+# BGP operations without CLI overhead
+monocle = { version = "0.10", default-features = false, features = ["lens-bgpkit"] }
+
+# Full functionality without CLI
+monocle = { version = "0.10", default-features = false, features = ["lens-full"] }
+```
+
+### Feature Tiers
+
+Monocle's features are organized in tiers for minimal dependency footprint:
+
+| Feature | Description | Key Dependencies |
+|---------|-------------|------------------|
+| `database` | SQLite operations only | rusqlite, oneio, ipnet, chrono |
+| `lens-core` | Standalone lenses (TimeLens) | chrono-humanize, dateparser |
+| `lens-bgpkit` | BGP-related lenses | bgpkit-*, rayon, tabled |
+| `lens-full` | All lenses including InspectLens | All above |
+| `cli` (default) | Full CLI binary with server | axum, tokio, tower-http |
+
+### Architecture
+
+The library is organized into the following core modules:
+
+- **`database`**: All database functionality
+  - `core`: Connection management and schema definitions
+  - `session`: One-time storage for search results
+  - `monocle`: Main monocle database with ASInfo, AS2Rel, RPKI, and Pfx2as caching
+
+- **`lens`**: High-level business logic (reusable across CLI, API, GUI)
+  - `time`: Time parsing and formatting lens (lens-core)
+  - `country`: Country code/name lookup lens (lens-bgpkit)
+  - `ip`: IP information lookup lens (lens-bgpkit)
+  - `parse`: MRT file parsing lens with progress tracking (lens-bgpkit)
+  - `search`: BGP message search lens with progress tracking (lens-bgpkit)
+  - `rpki`: RPKI validation and data lens (lens-bgpkit)
+  - `pfx2as`: Prefix-to-AS mapping types (lens-bgpkit)
+  - `as2rel`: AS-level relationships lens (lens-bgpkit)
+  - `inspect`: Unified AS/prefix inspection lens (lens-full)
+
+- **`server`**: WebSocket API server (cli feature)
+
+For detailed architecture documentation, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+### Example: Using Lenses
+
+```rust
+use monocle::database::MonocleDatabase;
+use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
+
+fn main() -> anyhow::Result<()> {
+    // Open the monocle database
+    let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+    
+    // Create a lens
+    let lens = InspectLens::new(&db);
+    
+    // Query AS information
+    let options = InspectQueryOptions::default();
+    let results = lens.query_asn(13335, &options)?;
+    
+    println!("AS{}: {}", results.asn, results.name.unwrap_or_default());
+    
+    Ok(())
+}
+```
+
+### Example: Parse MRT Files with Progress
+
+```rust
+use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
+use std::sync::Arc;
+
+fn main() -> anyhow::Result<()> {
+    let lens = ParseLens::new();
+    let filters = ParseFilters::default();
+    
+    // Define a progress callback
+    let callback = Arc::new(|progress: ParseProgress| {
+        match progress {
+            ParseProgress::Started { file_path } => {
+                eprintln!("Started parsing: {}", file_path);
+            }
+            ParseProgress::Update { messages_processed, rate, .. } => {
+                eprintln!("Processed {} messages ({:.0} msg/s)", 
+                    messages_processed, rate.unwrap_or(0.0));
+            }
+            ParseProgress::Completed { total_messages, duration_secs, .. } => {
+                eprintln!("Completed: {} messages in {:.2}s", total_messages, duration_secs);
+            }
+        }
+    });
+    
+    // Parse with progress tracking
+    let elems = lens.parse_with_progress(
+        &filters, 
+        "path/to/file.mrt", 
+        Some(callback)
+    )?;
+    
+    for elem in elems {
+        println!("{:?}", elem);
+    }
+    
+    Ok(())
+}
+```
+
 ## Usage
 
 Subcommands:
 
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
-- `broker`: query BGPKIT Broker for available MRT metadata
-- `whois`: search AS and organization information by ASN or name
+- `server`: start a WebSocket server for programmatic access
+- `inspect`: unified AS and prefix information lookup (replaces `whois` and `pfx2as`)
 - `country`: utility to look up country name and code
 - `time`: utility to convert time between unix timestamp and RFC3339 string
-- `rpki`: check RPKI validation for given ASNs or prefixes
+- `rpki`: RPKI validation and ROA/ASPA listing
+- `ip`: IP information lookup
+- `as2rel`: AS-level relationship lookup between ASNs
+- `config`: configuration display and database management (refresh, backup, sources)
+
+### Global Options
+
+All commands support the following global options:
+
+- `--format <FORMAT>`: Output format (table, markdown, json, json-pretty, json-line, psv)
+- `--json`: Shortcut for `--format json-pretty`
+- `--debug`: Print debug information
 
 Top-level help menu:
 
@@ -87,15 +214,21 @@ Usage: monocle [OPTIONS] <COMMAND>
 Commands:
   parse    Parse individual MRT files given a file path, local or remote
   search   Search BGP messages from all available public MRT files
-  whois    ASN and organization lookup utility
-  country  ASN and organization lookup utility
+  server   Start the WebSocket server (ws://<address>:<port>/ws, health: http://<address>:<port>/health)
+  inspect  Unified AS and prefix information lookup
+  country  Country name and code lookup utilities
   time     Time conversion utilities
   rpki     RPKI utilities
+  ip       IP information lookup
+  as2rel   AS-level relationship lookup between ASNs
+  config   Show monocle configuration, data paths, and database management
   help     Print this message or the help of the given subcommand(s)
 
 Options:
   -c, --config <CONFIG>  configuration file path, by default $HOME/.monocle.toml is used
       --debug            Print debug information
+      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json             Output as JSON objects (shortcut for --format json-pretty)
   -h, --help             Print help
   -V, --version          Print version
 ```
@@ -105,7 +238,7 @@ Options:
 Parsing a single MRT file given a local path or a remote URL.
 
 ```text
-➜  monocle git:(main) ✗ monocle parse --help
+➜  monocle parse --help
 Parse individual MRT files given a file path, local or remote
 
 Usage: monocle parse [OPTIONS] <FILE>
@@ -114,9 +247,9 @@ Arguments:
   <FILE>  File path to a MRT file, local or remote
 
 Options:
-      --json                     Output as JSON objects
       --debug                    Print debug information
-      --pretty                   Pretty-print JSON output
+      --format <FORMAT>          Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json                     Output as JSON objects (shortcut for --format json-pretty)
   -M, --mrt-path <MRT_PATH>      MRT output file path
   -o, --origin-asn <ORIGIN_ASN>  Filter by origin AS Number
   -p, --prefix <PREFIX>          Filter by network prefix
@@ -127,608 +260,421 @@ Options:
   -m, --elem-type <ELEM_TYPE>    Filter by elem type: announce (a) or withdraw (w)
   -t, --start-ts <START_TS>      Filter by start unix timestamp inclusive
   -T, --end-ts <END_TS>          Filter by end unix timestamp inclusive
-  -a, --as-path <AS_PATH>        Filter by AS path regex string
   -h, --help                     Print help
-  -V, --version                  Print version
+```
+
+Example: parse a remote MRT file and show only announcements for a specific prefix:
+
+```text
+➜  monocle parse https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz \
+    -p 1.1.1.0/24 -m a | head -5
+┌──────────┬─────────────────────┬───────────────────────────┬──────────┬────────────┬───────────────────────────────────────────┬────────┬─────────────┬───────────────────────────┬────────────┬─────┬─────────────┬────────┬──────────┬─────────┬──────────────────┬─────────┬────────────┬───────────┐
+│ type     │ timestamp           │ peer_ip                   │ peer_asn │ prefix     │ as_path                                   │ origin │ origin_asns │ next_hop                  │ local_pref │ med │ communities │ atomic │ aggr_asn │ aggr_ip │ only_to_customer │ unknown │ deprecated │ collector │
+├──────────┼─────────────────────┼───────────────────────────┼──────────┼────────────┼───────────────────────────────────────────┼────────┼─────────────┼───────────────────────────┼────────────┼─────┼─────────────┼────────┼──────────┼─────────┼──────────────────┼─────────┼────────────┼───────────┤
+│ announce │ 2024-01-01 00:00:44 │ 2001:7f8:4::9d85:1        │ 40325    │ 1.1.1.0/24 │ 40325 13335                               │ IGP    │ 13335       │ 2001:7f8:4::9d85:1        │            │     │             │ false  │          │         │                  │         │            │           │
+│ announce │ 2024-01-01 00:00:50 │ 2001:7f8:4::3:2e8b:1      │ 208571   │ 1.1.1.0/24 │ 208571 6939 13335                         │ IGP    │ 13335       │ 2001:7f8:4::3:2e8b:1      │            │     │             │ false  │          │         │                  │         │            │           │
 ```
 
 #### Output Format
 
-**Default (pipe-separated) format:**
+The output contains the following fields:
 
-```text
-A|1704067200|45.61.0.85|22652|154.88.8.0/24|22652 6939 60171 328608|IGP|45.61.0.85|0|0|0:2906 0:12989|false|||
-W|1704067200|2a00:1ca8:2a::e0|202365|2406:840:fe40::/48|||||||false|||
-```
+| Field | Description |
+|-------|-------------|
+| `type` | Message type: `announce` or `withdraw` |
+| `timestamp` | Message timestamp in UTC |
+| `peer_ip` | IP address of the BGP peer |
+| `peer_asn` | ASN of the BGP peer |
+| `prefix` | Network prefix being announced/withdrawn |
+| `as_path` | AS path (space-separated) |
+| `origin` | Origin type: IGP, EGP, or INCOMPLETE |
+| `origin_asns` | Origin AS number(s) |
+| `next_hop` | Next hop IP address |
+| `local_pref` | Local preference value |
+| `med` | Multi-exit discriminator |
+| `communities` | BGP communities |
+| `atomic` | Atomic aggregate flag |
+| `aggr_asn` | Aggregator ASN |
+| `aggr_ip` | Aggregator IP |
+| `only_to_customer` | OTC attribute (RFC 9234) |
+| `unknown` | Unknown attributes |
+| `deprecated` | Deprecated attributes |
+| `collector` | Collector name (for search results) |
 
-The pipe-separated fields are:
-1. **type** - Message type: `A` (announce) or `W` (withdraw)
-2. **timestamp** - Unix timestamp of the message
-3. **peer_ip** - IP address of the BGP peer
-4. **peer_asn** - ASN of the BGP peer
-5. **prefix** - The announced/withdrawn IP prefix
-6. **as_path** - AS path (space-separated), empty for withdrawals
-7. **origin** - Origin type: `IGP`, `EGP`, or `INCOMPLETE`, empty for withdrawals
-8. **next_hop** - Next hop IP address, empty for withdrawals
-9. **local_pref** - Local preference value
-10. **med** - Multi-Exit Discriminator value
-11. **communities** - BGP communities (space-separated `asn:value` format)
-12. **atomic** - Atomic aggregate flag (`true`/`false`)
-13. **aggr_asn** - Aggregator ASN (if present)
-14. **aggr_ip** - Aggregator IP (if present)
-15. **collector** - Collector ID (when available)
-
-**JSON format** (`--json`):
+JSON output example:
 
 ```json
 {
-  "type": "ANNOUNCE",
-  "timestamp": 1704067200.0,
-  "peer_ip": "45.61.0.85",
-  "peer_asn": 22652,
-  "prefix": "154.88.8.0/24",
-  "as_path": [22652, 6939, 60171, 328608],
+  "type": "announce",
+  "timestamp": "2024-01-01T00:00:44Z",
+  "peer_ip": "2001:7f8:4::9d85:1",
+  "peer_asn": 40325,
+  "prefix": "1.1.1.0/24",
+  "as_path": "40325 13335",
   "origin": "IGP",
-  "origin_asns": [328608],
-  "next_hop": "45.61.0.85",
-  "local_pref": 0,
-  "med": 0,
-  "communities": [{"Custom": [0, 2906]}, {"Custom": [0, 12989]}],
+  "origin_asns": [13335],
+  "next_hop": "2001:7f8:4::9d85:1",
+  "local_pref": null,
+  "med": null,
+  "communities": [],
   "atomic": false,
   "aggr_asn": null,
   "aggr_ip": null,
   "only_to_customer": null,
   "unknown": null,
   "deprecated": null,
-  "collector": ""
+  "collector": null
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | `ANNOUNCE` or `WITHDRAW` |
-| `timestamp` | float | Unix timestamp with sub-second precision |
-| `peer_ip` | string | IP address of the BGP session peer |
-| `peer_asn` | integer | ASN of the BGP session peer |
-| `prefix` | string | The IP prefix being announced or withdrawn |
-| `as_path` | array | List of ASNs in the path (null for withdrawals) |
-| `origin` | string | Origin type: `IGP`, `EGP`, or `INCOMPLETE` (null for withdrawals) |
-| `origin_asns` | array | Origin ASN(s) extracted from AS path (null for withdrawals) |
-| `next_hop` | string | Next hop IP address (null for withdrawals) |
-| `local_pref` | integer | LOCAL_PREF attribute value (null for withdrawals) |
-| `med` | integer | MED (Multi-Exit Discriminator) value (null for withdrawals) |
-| `communities` | array | BGP communities as objects (null if none) |
-| `atomic` | boolean | ATOMIC_AGGREGATE flag |
-| `aggr_asn` | integer | Aggregator ASN (null if not present) |
-| `aggr_ip` | string | Aggregator IP address (null if not present) |
-| `only_to_customer` | integer | OTC attribute for route leak prevention (null if not present) |
-| `unknown` | object | Unknown/unrecognized attributes (null if none) |
-| `deprecated` | object | Deprecated attributes (null if none) |
-| `collector` | string | Collector ID (populated in search results) |
-
-**Community types in JSON:**
-- `{"Custom": [asn, value]}` - Standard community (ASN:value)
-- `{"NoExport": null}` - Well-known NO_EXPORT
-- `{"NoPeer": null}` - Well-known NO_PEER  
-- `{"NoAdvertise": null}` - Well-known NO_ADVERTISE
-- Large and extended communities are also supported
-
 ### `monocle search`
 
-Search for BGP messages across publicly available BGP route collectors and parse relevant
-MRT files in parallel. More filters can be used to search for messages that match your criteria.
+Search for BGP messages from all available public MRT files using [BGPKIT Broker](https://github.com/bgpkit/bgpkit-broker).
 
 ```text
-➜  monocle git:(main) ✗ monocle search --help
+➜  monocle search --help
 Search BGP messages from all available public MRT files
 
-Usage: monocle search [OPTIONS]
+Usage: monocle search [OPTIONS] --start-ts <START_TS> --end-ts <END_TS>
 
 Options:
-      --dry-run                    Dry-run, do not download or parse
-      --debug                      Print debug information
-      --json                       Output as JSON objects
-      --pretty                     Pretty-print JSON output
-      --sqlite-path <SQLITE_PATH>  SQLite output file path
-  -M, --mrt-path <MRT_PATH>        MRT output file path
-      --sqlite-reset               SQLite reset database content if exists
-  -t, --start-ts <START_TS>        Filter by start unix timestamp inclusive
-  -T, --end-ts <END_TS>            Filter by end unix timestamp inclusive
-  -d, --duration <DURATION>        
-  -c, --collector <COLLECTOR>      Filter by collector, e.g. rrc00 or route-views2
-  -P, --project <PROJECT>          Filter by route collection project, i.e. riperis or routeviews
-  -o, --origin-asn <ORIGIN_ASN>    Filter by origin AS Number
-  -p, --prefix <PREFIX>            Filter by network prefix
-  -s, --include-super              Include super-prefix when filtering
-  -S, --include-sub                Include sub-prefix when filtering
-  -j, --peer-ip <PEER_IP>          Filter by peer IP address
-  -J, --peer-asn <PEER_ASN>        Filter by peer ASN
-  -m, --elem-type <ELEM_TYPE>      Filter by elem type: announce (a) or withdraw (w)
-  -a, --as-path <AS_PATH>          Filter by AS path regex string
-  -h, --help                       Print help
-  -V, --version                    Print version
+      --debug                        Print debug information
+      --format <FORMAT>              Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json                         Output as JSON objects (shortcut for --format json-pretty)
+  -t, --start-ts <START_TS>          Start timestamp (RFC3339 or Unix)
+  -T, --end-ts <END_TS>              End timestamp (RFC3339 or Unix)
+  -c, --collector <COLLECTOR>        Filter by collector name
+      --project <PROJECT>            Filter by project (riperis, routeviews)
+  -d, --dump-type <DUMP_TYPE>        Dump type: updates or rib [default: updates]
+  -o, --origin-asn <ORIGIN_ASN>      Filter by origin AS Number
+  -p, --prefix <PREFIX>              Filter by network prefix
+  -s, --include-super                Include super-prefix when filtering
+  -S, --include-sub                  Include sub-prefix when filtering
+  -j, --peer-ip <PEER_IP>            Filter by peer IP address
+  -J, --peer-asn <PEER_ASN>          Filter by peer ASN
+  -m, --elem-type <ELEM_TYPE>        Filter by elem type: announce (a) or withdraw (w)
+      --as-path <AS_PATH>            Filter by AS path regex
+      --broker-files                 Show broker file list only (don't parse)
+  -h, --help                         Print help
 ```
 
-### `monocle broker`
-
-Query BGPKIT Broker for the metadata of available MRT files. This subcommand returns file listings
-that match your filters and time window. By default, results are printed as a table; use `--json` to
-print JSON.
-
-Usage:
+Example: search for BGP announcements for a prefix during a specific time window:
 
 ```text
-monocle broker \
-  --start-ts <START_TS> \
-  --end-ts <END_TS> \
-  [--collector <COLLECTOR>] \
-  [--project <PROJECT>] \
-  [--data-type <DATA_TYPE>] \
-  [--page <PAGE>] \
-  [--page-size <PAGE_SIZE>] \
-  [--json]
+➜  monocle search -t 2024-01-01T00:00:00Z -T 2024-01-01T00:01:00Z \
+    -c rrc00 -p 1.1.1.0/24 -m a
 ```
 
-Notes:
+Use `--broker-files` to see the list of MRT files that would be queried without actually parsing them:
 
-- <START_TS> and <END_TS> accept either RFC3339 time strings (e.g., 2024-01-01T00:00:00Z)
-  or Unix timestamps in seconds. The same flexible time parsing is used by the `search` subcommand.
-- If `--page` is specified (1-based), monocle queries only that single page using Broker's
-  `query_single_page()`.
-- If `--page` is NOT specified, monocle uses Broker's `query()` and returns at most 10 pages worth
-  of results (calculated as `page-size * 10`). Use `--page` and `--page-size` to manually iterate
-  if you need more than 10 pages.
-- `--page-size` defaults to `1000` if not provided.
-- `--data-type` can be `updates` or `rib` (case-insensitive behavior depends on Broker),
-  or omitted to retrieve both.
-
-Examples:
-
-- List RIPE RIS rrc00 updates during the first hour of 2024 (table output):
-
-```bash
-monocle broker \
-  --start-ts 2024-01-01T00:00:00Z \
-  --end-ts 2024-01-01T01:00:00Z \
-  --collector rrc00 \
-  --project riperis \
-  --data-type updates
-```
-
-- Fetch page 2 with a custom page size (manual iteration):
-
-```bash
-monocle broker \
-  --start-ts 2024-01-01T00:00:00Z \
-  --end-ts 2024-01-01T02:00:00Z \
-  --page 2 \
-  --page-size 500
-```
-
-- Output as JSON:
-
-```bash
-monocle broker \
-  --start-ts 1704067200 \
-  --end-ts 1704070800 \
-  --project routeviews \
-  --json
+```text
+➜  monocle search -t 2024-01-01T00:00:00Z -T 2024-01-01T01:00:00Z \
+    -c rrc00 --broker-files
 ```
 
 ### `monocle time`
 
-Convert between UNIX timestamp and RFC3339 time strings.
-We use the [`dateparser`][dateparser] crate for parsing time
-strings.
-
-[dateparser]:https://github.com/waltzofpearls/dateparser
+Parse and convert time strings between various formats.
 
 ```text
-➜  ~ monocle time --help              
+➜  monocle time --help
 Time conversion utilities
 
-USAGE:
-    monocle time [TIME]
-
-ARGS:
-    <TIME>    Time stamp or time string to convert
-
-OPTIONS:
-    -s, --simple   Simple output, only print the converted time
-    -h, --help       Print help information
-    -V, --version    Print version information
-```
-
-Example runs:
-
-```text
-➜  monocle time
-╭────────────┬───────────────────────────┬───────╮
-│ unix       │ rfc3339                   │ human │
-├────────────┼───────────────────────────┼───────┤
-│ 1659135226 │ 2022-07-29T22:53:46+00:00 │ now   │
-╰────────────┴───────────────────────────┴───────╯
-
-➜  monocle time 2022-01-01T00:00:00Z
-╭────────────┬───────────────────────────┬──────────────╮
-│ unix       │ rfc3339                   │ human        │
-├────────────┼───────────────────────────┼──────────────┤
-│ 1640995200 │ 2022-01-01T00:00:00+00:00 │ 6 months ago │
-╰────────────┴───────────────────────────┴──────────────╯
-
-➜  monocle time 2022-01-01T00:00:00 
-Input time must be either Unix timestamp or time string compliant with RFC3339
-```
-
-### `monocle whois`
-
-Search AS/organization-level information with ASN or organization name.
-
-Data source:
-
-- The CAIDA AS Organizations Dataset, http://www.caida.org/data/as-organizations
-- Please also cite the data source above if you use this tool for your public work.
-
-```text
-➜  ~ monocle whois --help
-ASN and organization lookup utility
-
-Usage: monocle whois [OPTIONS] [QUERY]...
+Usage: monocle time [OPTIONS] [TIMES]...
 
 Arguments:
-  [QUERY]...  Search query, an ASN (e.g. "400644") or a name (e.g. "bgpkit")
+  [TIMES]...  Time strings to parse (Unix timestamp, RFC3339, or human-readable)
 
 Options:
-  -n, --name-only     Search AS and Org name only
-  -a, --asn-only      Search by ASN only
-  -C, --country-only  Search by country only
-  -u, --update        Refresh local as2org database
-  -p, --pretty        Output to pretty table, default markdown table
-  -F, --full-table    Display full table (with ord_id, org_size)
-  -P, --psv           Export to pipe-separated values
-  -f, --full-country  Show full country names instead of 2-letter code
-  -h, --help          Print help
-  -V, --version       Print version
+      --debug            Print debug information
+      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json             Output as JSON objects (shortcut for --format json-pretty)
+  -h, --help             Print help
 ```
 
-Example queries:
+Examples:
 
 ```text
-➜  ~ monocle whois 400644
-| asn    | as_name    | org_name   | org_country |
-|--------|------------|------------|-------------|
-| 400644 | BGPKIT-LLC | BGPKIT LLC | US          |
+➜  monocle time 1704067200
+┌────────────┬──────────────────────┬─────────────────────────────────────┐
+│ unix       │ rfc3339              │ human                               │
+├────────────┼──────────────────────┼─────────────────────────────────────┤
+│ 1704067200 │ 2024-01-01T00:00:00Z │ Mon, Jan 1, 2024 at 12:00:00 AM UTC │
+└────────────┴──────────────────────┴─────────────────────────────────────┘
 
-➜  ~ monocle whois bgpkit
-| asn    | as_name    | org_name   | org_country |
-|--------|------------|------------|-------------|
-| 400644 | BGPKIT-LLC | BGPKIT LLC | US          |
+➜  monocle time "2024-01-01T00:00:00Z"
+┌────────────┬──────────────────────┬─────────────────────────────────────┐
+│ unix       │ rfc3339              │ human                               │
+├────────────┼──────────────────────┼─────────────────────────────────────┤
+│ 1704067200 │ 2024-01-01T00:00:00Z │ Mon, Jan 1, 2024 at 12:00:00 AM UTC │
+└────────────┴──────────────────────┴─────────────────────────────────────┘
+
+➜  monocle time "yesterday" "last week"
 ```
 
-You can specify multiple queries:
+### `monocle inspect`
+
+Unified AS and prefix information lookup. Replaces the former `whois` and `pfx2as` commands.
 
 ```text
-➜  monocle whois 13335 bgpkit               
-| asn    | as_name       | org_name         | org_country |
-|--------|---------------|------------------|-------------|
-| 13335  | CLOUDFLARENET | Cloudflare, Inc. | US          |
-| 400644 | BGPKIT-LLC    | BGPKIT LLC       | US          |
+➜  monocle inspect --help
+Unified AS and prefix information lookup
+
+Usage: monocle inspect [OPTIONS] [QUERY]...
+
+Arguments:
+  [QUERY]...  One or more queries: ASN (13335, AS13335), prefix (1.1.1.0/24), IP (1.1.1.1), or name (cloudflare)
+
+Options:
+  -a, --asn                Force treat queries as ASNs
+      --debug              Print debug information
+  -p, --prefix             Force treat queries as prefixes
+      --format <FORMAT>    Output format: table (default), markdown, json, json-pretty, json-line, psv
+  -n, --name               Force treat queries as name search
+  -c, --country <COUNTRY>  Search by country code (e.g., US, DE)
+      --json               Output as JSON objects (shortcut for --format json-pretty)
+      --show <SECTION>     Select data sections to display (can be repeated). Available: basic (default), prefixes, connectivity, rpki, all
+      --full               Show all data sections with no limits
+      --full-roas          Show all RPKI ROAs (default: top 10)
+      --full-prefixes      Show all prefixes (default: top 10)
+      --full-connectivity  Show all neighbors (default: top 5 per category)
+      --limit <N>          Limit search results (default: 20)
+  -u, --update             Force refresh the asinfo database
+  -h, --help               Print help
 ```
 
-Use `--pretty` to output the table with a pretty rounded corner
+Examples:
 
 ```text
-➜  monocle whois 13335 bgpkit --pretty
-╭────────┬───────────────┬──────────────────┬─────────────╮
-│ asn    │ as_name       │ org_name         │ org_country │
-├────────┼───────────────┼──────────────────┼─────────────┤
-│ 13335  │ CLOUDFLARENET │ Cloudflare, Inc. │ US          │
-│ 400644 │ BGPKIT-LLC    │ BGPKIT LLC       │ US          │
-╰────────┴───────────────┴──────────────────┴─────────────╯
+# Look up AS by number
+➜  monocle inspect 13335
+┌───────┬────────────────────┬─────────┐
+│ asn   │ name               │ country │
+├───────┼────────────────────┼─────────┤
+│ 13335 │ CLOUDFLARENET      │ US      │
+└───────┴────────────────────┴─────────┘
+
+# Search by name
+➜  monocle inspect cloudflare
+┌───────┬────────────────────────────┬─────────┐
+│ asn   │ name                       │ country │
+├───────┼────────────────────────────┼─────────┤
+│ 13335 │ CLOUDFLARENET              │ US      │
+│ 14789 │ CLOUDFLARE-CN              │ CN      │
+│ ...   │ ...                        │ ...     │
+└───────┴────────────────────────────┴─────────┘
+
+# Look up prefix (replaces pfx2as)
+➜  monocle inspect 1.1.1.0/24
+┌────────────┬───────┬────────────────────┐
+│ prefix     │ asn   │ name               │
+├────────────┼───────┼────────────────────┤
+│ 1.1.1.0/24 │ 13335 │ CLOUDFLARENET      │
+└────────────┴───────┴────────────────────┘
+
+# Show all sections for an AS
+➜  monocle inspect 13335 --show all
 ```
 
 ### `monocle country`
 
-Country name and code lookup utilities.
+Look up country names and codes.
 
 ```text
-➜  ~ monocle country --help              
+➜  monocle country --help
 Country name and code lookup utilities
 
-Usage: monocle country <QUERY>
+Usage: monocle country [OPTIONS] <QUERY>
 
 Arguments:
-  <QUERY>  Search query, e.g. "US" or "United States"
+  <QUERY>  Country code (2-letter) or name to search
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
-
+      --debug            Print debug information
+      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json             Output as JSON objects (shortcut for --format json-pretty)
+  -h, --help             Print help
 ```
 
-Example runs:
+Examples:
 
 ```text
-➜  monocle country US    
-╭──────┬──────────────────────────╮
-│ code │ name                     │
-├──────┼──────────────────────────┤
-│ US   │ United States of America │
-╰──────┴──────────────────────────╯
+➜  monocle country US
+┌──────┬───────────────┐
+│ code │ name          │
+├──────┼───────────────┤
+│ US   │ United States │
+└──────┴───────────────┘
 
-➜  monocle country united
-╭──────┬──────────────────────────────────────────────────────╮
-│ code │ name                                                 │
-├──────┼──────────────────────────────────────────────────────┤
-│ TZ   │ Tanzania, United Republic of                         │
-│ GB   │ United Kingdom of Great Britain and Northern Ireland │
-│ AE   │ United Arab Emirates                                 │
-│ US   │ United States of America                             │
-│ UM   │ United States Minor Outlying Islands                 │
-╰──────┴──────────────────────────────────────────────────────╯
-
-➜  monocle country "United States" 
-╭──────┬──────────────────────────────────────╮
-│ code │ name                                 │
-├──────┼──────────────────────────────────────┤
-│ UM   │ United States Minor Outlying Islands │
-│ US   │ United States of America             │
-╰──────┴──────────────────────────────────────╯
+➜  monocle country germany
+┌──────┬─────────┐
+│ code │ name    │
+├──────┼─────────┤
+│ DE   │ Germany │
+└──────┴─────────┘
 ```
 
 ### `monocle as2rel`
 
-Query AS-level relationships between Autonomous Systems using BGPKIT's AS relationship data.
-
-Data source: [BGPKIT AS2Rel](https://data.bgpkit.com/as2rel/)
+Look up AS-level relationships between ASNs using BGPKIT's AS relationship data.
 
 ```text
 ➜  monocle as2rel --help
 AS-level relationship lookup between ASNs
 
-Usage: monocle as2rel [OPTIONS] <ASNS>...
+Usage: monocle as2rel [OPTIONS] <ASN1> [ASN2]
 
 Arguments:
-  <ASNS>...  One or two ASNs to query relationships for
+  <ASN1>  First ASN to look up
+  [ASN2]  Second ASN (optional, shows all relationships for ASN1 if omitted)
 
 Options:
-  -u, --update                     Force update the local as2rel database
-      --update-with <UPDATE_WITH>  Update with a custom data file (local path or URL)
-  -p, --pretty                     Output to pretty table, default markdown table
-      --no-explain                 Hide the explanation text
-      --sort-by-asn                Sort by ASN2 ascending instead of connected percentage descending
-      --show-name                  Show organization name for ASN2 (from as2org database)
-      --json                       Output as JSON objects
-  -h, --help                       Print help
+      --debug            Print debug information
+      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json             Output as JSON objects (shortcut for --format json-pretty)
+      --update           Force update the local database
+      --no-explain       Hide the explanation text in table output
+      --sort-by-asn      Sort results by ASN2 ascending (default: sort by connected % descending)
+      --show-name        Show organization name for ASN2 (truncated to 20 chars)
+      --show-full-name   Show full organization name without truncation
+  -h, --help             Print help
 ```
 
-Query relationship between two ASNs (e.g., Hurricane Electric and Cloudflare):
+Output columns:
+- `asn1` / `asn2`: The two ASNs being compared
+- `connected`: Percentage of peers that see any connection between the ASNs
+- `peer`: Percentage seeing pure peering relationship
+- `as1_upstream`: Percentage seeing ASN1 as upstream of ASN2
+- `as2_upstream`: Percentage seeing ASN2 as upstream of ASN1
+
+Examples:
 
 ```text
-➜  monocle as2rel 6939 13335
+➜  monocle as2rel 13335 174
+┌───────┬──────┬───────────┬───────┬─────────────┬─────────────┐
+│ asn1  │ asn2 │ connected │ peer  │ as1_upstream│ as2_upstream│
+├───────┼──────┼───────────┼───────┼─────────────┼─────────────┤
+│ 13335 │ 174  │ 95.2%     │ 85.1% │ 2.3%        │ 7.8%        │
+└───────┴──────┴───────────┴───────┴─────────────┴─────────────┘
 
-Relationship data from BGPKIT (data.bgpkit.com/as2rel).
-Last updated: 2025-12-09T21:26:36+00:00 (2 hours ago)
-
-Column explanation:
-- asn1, asn2: The AS pair being queried
-- connected: Percentage of route collectors (1831 max) that see any connection between asn1 and asn2
-- peer: Percentage seeing pure peering only (connected - as1_upstream - as2_upstream)
-- as1_upstream: Percentage of route collectors that see asn1 as an upstream of asn2
-- as2_upstream: Percentage of route collectors that see asn2 as an upstream of asn1
-
-Percentages are calculated as: (count / max_peers_count) * 100%
-where max_peers_count = 1831 (the maximum peers_count observed in the dataset).
-
-| asn1 | asn2  | connected | peer | as1_upstream | as2_upstream |
-|------|-------|-----------|------|--------------|--------------|
-| 6939 | 13335 | 26.2%     | 1.3% | 24.9%        |              |
+➜  monocle as2rel 13335 --show-name | head -10
 ```
 
-Query all relationships for a single ASN (sorted by connected % by default):
+### `monocle rpki`
 
-```text
-➜  monocle as2rel --no-explain 400644
-| asn1   | asn2  | connected | peer  | as1_upstream | as2_upstream |
-|--------|-------|-----------|-------|--------------|--------------|
-| 400644 | 20473 | 78.0%     | 12.1% |              | 65.9%        |
-```
-
-Show organization names for ASN2:
-
-```text
-➜  monocle as2rel --no-explain --show-name 400644
-| asn1   | asn2  | asn2_name            | connected | peer  | as1_upstream | as2_upstream |
-|--------|-------|----------------------|-----------|-------|--------------|--------------|
-| 400644 | 20473 | The Constant Comp... | 78.0%     | 12.1% |              | 65.9%        |
-```
-
-JSON output:
-
-```text
-➜  monocle --json as2rel 6939 13335
-{
-  "max_peers_count": 1831,
-  "results": [
-    {
-      "as1_upstream": "24.9%",
-      "as2_upstream": "",
-      "asn1": 6939,
-      "asn2": 13335,
-      "connected": "26.2%",
-      "peer": "1.3%"
-    }
-  ]
-}
-```
-
-### `monocle rpki`:
-
-RPKI utilities for checking validity, listing ROAs/ASPAs, and querying historical RPKI data.
+RPKI utilities for validation and listing ROAs/ASPAs.
 
 Data sources:
-- Real-time validation: [Cloudflare RPKI validator](https://rpki.cloudflare.com)
+- Current data: [Cloudflare's rpki.json](https://rpki.cloudflare.com/rpki.json) (cached locally in SQLite)
 - Historical data: [RIPE NCC RPKI archives](https://ftp.ripe.net/rpki/) and [RPKIviews](https://rpkiviews.org/)
 
 ```text
 ➜  monocle rpki --help
 RPKI utilities
 
-Usage: monocle rpki <COMMAND>
+Usage: monocle rpki [OPTIONS] <COMMAND>
 
 Commands:
-  check    validate a prefix-asn pair with a RPKI validator (Cloudflare)
-  list     list ROAs by ASN or prefix (Cloudflare real-time)
-  summary  summarize RPKI status for a list of given ASNs (Cloudflare)
-  roas     list ROAs from RPKI data (current or historical via bgpkit-commons)
-  aspas    list ASPAs from RPKI data (current or historical via bgpkit-commons)
-  help     Print this message or the help of the given subcommand(s)
-```
-
-#### `monocle rpki check`
-
-Check RPKI validity for a given prefix-ASN pair using Cloudflare's RPKI validator.
-
-```text
-➜  monocle rpki check --help
-validate a prefix-asn pair with a RPKI validator (Cloudflare)
-
-Usage: monocle rpki check [OPTIONS] --asn <ASN> --prefix <PREFIX>
+  validate  validate a prefix-asn pair using cached RPKI data
+  roas      list ROAs from RPKI data (current or historical via bgpkit-commons)
+  aspas     list ASPAs from RPKI data (current or historical via bgpkit-commons)
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
-  -a, --asn <ASN>        
-  -p, --prefix <PREFIX>  
       --debug            Print debug information
-      --json             Output as JSON objects
+      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json             Output as JSON objects (shortcut for --format json-pretty)
   -h, --help             Print help
-  -V, --version          Print version
 ```
+
+#### `monocle rpki validate`
+
+Validate a prefix-ASN pair against cached RPKI data. Implements RFC 6811 validation logic:
+- **Valid**: Covering ROA exists with matching ASN and prefix length ≤ max_length
+- **Invalid**: Covering ROA exists but ASN doesn't match or prefix length exceeds max_length
+- **NotFound**: No covering ROA exists for the prefix
 
 ```text
-➜  monocle rpki check --asn 400644 --prefix 2620:AA:A000::/48 
-RPKI validation result:
-| asn    | prefix            | validity |
-|--------|-------------------|----------|
-| 400644 | 2620:aa:a000::/48 | valid    |
+➜  monocle rpki validate --help
+validate a prefix-asn pair using cached RPKI data
 
-Covering prefixes:
-| asn    | prefix            | max_length |
-|--------|-------------------|------------|
-| 400644 | 2620:aa:a000::/48 | 48         |
+Usage: monocle rpki validate [OPTIONS] <RESOURCES>...
 
-➜  monocle rpki check --asn 400644 --prefix 2620:AA:A000::/49 
-RPKI validation result:
-| asn    | prefix            | validity |
-|--------|-------------------|----------|
-| 400644 | 2620:aa:a000::/49 | invalid  |
+Arguments:
+  <RESOURCES>...  Two resources: one prefix and one ASN (order does not matter)
 
-Covering prefixes:
-| asn    | prefix            | max_length |
-|--------|-------------------|------------|
-| 400644 | 2620:aa:a000::/48 | 48         |
+Options:
+  -r, --refresh  Force refresh the RPKI cache before validation
+  -h, --help     Print help
 ```
 
-JSON output:
+Examples:
 
 ```text
-➜  monocle rpki check --asn 400644 --prefix 2620:AA:A000::/48 --json
-{"covering_roas":[{"asn":400644,"max_length":48,"prefix":"2620:aa:a000::/48"}],"validation":{"asn":400644,"prefix":"2620:aa:a000::/48","validity":"Valid"}}
+➜  monocle rpki validate 1.1.1.0/24 13335
+┌────────────┬───────┬────────┬───────────────────────────────────┐
+│ prefix     │ asn   │ status │ reason                            │
+├────────────┼───────┼────────┼───────────────────────────────────┤
+│ 1.1.1.0/24 │ 13335 │ Valid  │ Covered by ROA: 1.1.1.0/24-24     │
+└────────────┴───────┴────────┴───────────────────────────────────┘
+
+➜  monocle rpki validate 1.1.1.0/24 12345
+┌────────────┬───────┬─────────┬────────────────────────────────────────────┐
+│ prefix     │ asn   │ status  │ reason                                     │
+├────────────┼───────┼─────────┼────────────────────────────────────────────┤
+│ 1.1.1.0/24 │ 12345 │ Invalid │ ASN mismatch: ROA allows 13335, got 12345  │
+└────────────┴───────┴─────────┴────────────────────────────────────────────┘
 ```
-
-#### `monocle rpki list`
-
-List signed ROAs for a given ASN or prefix.
-
-```text
-➜ monocle rpki list 13335
-| asn   | prefix              | max_length |
-|-------|---------------------|------------|
-| 13335 | 197.234.240.0/22    | 22         |
-| 13335 | 197.234.240.0/24    | 24         |
-| 13335 | 197.234.241.0/24    | 24         |
-| 13335 | 197.234.242.0/24    | 24         |
-| 13335 | 197.234.243.0/24    | 24         |
-| 13335 | 2c0f:f248::/32      | 32         |
-| 13335 | 210.17.44.0/24      | 24         |
-| 13335 | 103.22.200.0/23     | 23         |
-...
-```
-
-```text
-➜ monocle rpki list 1.1.1.0/24
-| asn   | prefix     | max_length |
-|-------|------------|------------|
-| 13335 | 1.1.1.0/24 | 24         |
-```
-
-#### `monocle rpki summary`
-
-Summarize RPKI status for a list of given ASNs.
-
-```text
-➜ monocle rpki summary 701 13335 15169 400644                 
-| asn    | signed | routed_valid | routed_invalid | routed_unknown |
-|--------|--------|--------------|----------------|----------------|
-| 701    | 956    | 890          | 35             | 361            |
-| 13335  | 1184   | 1000         | 4              | 221            |
-| 15169  | 1372   | 989          | 0              | 5              |
-| 400644 | 1      | 0            | 0              | 0              |
-```
-
-**NOTE**: due to Cloudflare API's current limitation, the maximum number of entries per `routed_` category is `1000`.
 
 #### `monocle rpki roas`
 
-List ROAs from RPKI data. Supports both current (Cloudflare) and historical (RIPE NCC, RPKIviews) data sources.
+List ROAs from RPKI data. Supports both current (cached from Cloudflare) and historical data.
 
 ```text
 ➜  monocle rpki roas --help
 list ROAs from RPKI data (current or historical via bgpkit-commons)
 
-Usage: monocle rpki roas [OPTIONS]
+Usage: monocle rpki roas [OPTIONS] [RESOURCES]...
+
+Arguments:
+  [RESOURCES]...  Filter by resources (prefixes or ASNs, auto-detected)
 
 Options:
-      --origin <ORIGIN>        Filter by origin ASN
-      --prefix <PREFIX>        Filter by prefix
       --date <DATE>            Load historical data for this date (YYYY-MM-DD)
-      --source <SOURCE>        Historical data source: ripe, rpkiviews (default: ripe)
-      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle (default: soborost)
-      --debug                  Print debug information
-      --json                   Output as JSON objects
+      --source <SOURCE>        Historical data source: ripe, rpkiviews [default: ripe]
+      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle [default: soborost]
+  -r, --refresh                Force refresh the RPKI cache (only applies to current data)
   -h, --help                   Print help
-  -V, --version                Print version
 ```
 
-List ROAs for a specific origin ASN from historical data:
+Examples:
 
 ```text
-➜  monocle rpki roas --origin 400644 --date 2024-01-04
-Found 1 ROAs (historical data from 2024-01-04)
-| prefix            | max_length | origin_asn | ta   |
-|-------------------|------------|------------|------|
-| 2620:aa:a000::/48 | 48         | 400644     | ARIN |
-```
+# List ROAs for an ASN (current data)
+➜  monocle rpki roas 13335
+┌───────┬─────────────────────┬────────────┐
+│ asn   │ prefix              │ max_length │
+├───────┼─────────────────────┼────────────┤
+│ 13335 │ 1.0.0.0/24          │ 24         │
+│ 13335 │ 1.1.1.0/24          │ 24         │
+│ ...   │ ...                 │ ...        │
+└───────┴─────────────────────┴────────────┘
 
-List ROAs from RPKIviews historical data:
+# List ROAs for a prefix
+➜  monocle rpki roas 1.1.1.0/24
+┌───────┬────────────┬────────────┐
+│ asn   │ prefix     │ max_length │
+├───────┼────────────┼────────────┤
+│ 13335 │ 1.1.1.0/24 │ 24         │
+└───────┴────────────┴────────────┘
 
-```text
-➜  monocle rpki roas --origin 400644 --date 2024-01-04 --source rpkiviews
-Found 1 ROAs (historical data from 2024-01-04)
-| prefix            | max_length | origin_asn | ta   |
-|-------------------|------------|------------|------|
-| 2620:aa:a000::/48 | 48         | 400644     | ARIN |
-```
-
-JSON output:
-
-```text
-➜  monocle rpki roas --origin 400644 --date 2024-01-04 --json
-[{"prefix":"2620:aa:a000::/48","max_length":48,"origin_asn":400644,"ta":"ARIN"}]
+# Historical data from a specific date
+➜  monocle rpki roas 13335 --date 2024-01-01 --source ripe
 ```
 
 #### `monocle rpki aspas`
 
-List ASPAs (AS Provider Authorizations) from RPKI data. Supports both current and historical data sources.
+List ASPAs (Autonomous System Provider Authorizations) from RPKI data.
 
 ```text
 ➜  monocle rpki aspas --help
@@ -740,237 +686,171 @@ Options:
       --customer <CUSTOMER>    Filter by customer ASN
       --provider <PROVIDER>    Filter by provider ASN
       --date <DATE>            Load historical data for this date (YYYY-MM-DD)
-      --source <SOURCE>        Historical data source: ripe, rpkiviews (default: ripe)
-      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle (default: soborost)
-      --debug                  Print debug information
-      --json                   Output as JSON objects
+      --source <SOURCE>        Historical data source: ripe, rpkiviews [default: ripe]
+      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle [default: soborost]
+  -r, --refresh                Force refresh the RPKI cache (only applies to current data)
   -h, --help                   Print help
-  -V, --version                Print version
 ```
 
-List ASPAs for a specific customer ASN:
+Examples:
 
 ```text
-➜  monocle rpki aspas --customer 15562 --date 2024-01-04
-Found 1 ASPAs (historical data from 2024-01-04)
-| customer_asn | providers                 |
-|--------------|---------------------------|
-| 15562        | 2914, 8283, 51088, 206238 |
-```
+# List all ASPAs
+➜  monocle rpki aspas | head -10
 
-List all ASPAs that have a specific provider:
+# Filter by customer ASN
+➜  monocle rpki aspas --customer 13335
 
-```text
-➜  monocle rpki aspas --provider 6939 --date 2024-01-04
-Found 27 ASPAs (historical data from 2024-01-04)
-| customer_asn | providers |
-|--------------|-----------|
-| 7480         | 6939      |
-| 40544        | 6939      |
-| 47272        | 6939      |
-| 47311        | 6939      |
-...
-```
-
-JSON output (providers as array):
-
-```text
-➜  monocle rpki aspas --customer 15562 --date 2024-01-04 --json
-[{"customer_asn":15562,"providers":[2914,8283,51088,206238]}]
-```
-
-### `monocle radar`:
-
-Lookup BGP information using [Cloudflare Radar](https://radar.cloudflare.com/) API
-using [`radar-rs`](https://github.com/bgpkit/radar-rs) crate.
-
-Using this command requires setting up the `CF_API_TOKEN` environment variable. See
-the [Cloudflare Radar API getting started guide](https://developers.cloudflare.com/radar/get-started/first-request/) for
-detailed steps on getting an API token.
-
-#### `monocle radar stats`: routing statistics
-
-Global routing overview:
-
-```text
-➜  monocle radar stats   
-┌─────────────┬─────────┬──────────┬─────────────────┬───────────────┬─────────────────┐
-│ scope       │ origins │ prefixes │ rpki_valid      │ rpki_invalid  │ rpki_unknown    │
-├─────────────┼─────────┼──────────┼─────────────────┼───────────────┼─────────────────┤
-│ global      │ 81769   │ 1204488  │ 551831 (45.38%) │ 15652 (1.29%) │ 648462 (53.33%) │
-├─────────────┼─────────┼──────────┼─────────────────┼───────────────┼─────────────────┤
-│ global ipv4 │ 74990   │ 1001973  │ 448170 (44.35%) │ 11879 (1.18%) │ 550540 (54.48%) │
-├─────────────┼─────────┼──────────┼─────────────────┼───────────────┼─────────────────┤
-│ global ipv6 │ 31971   │ 202515   │ 103661 (50.48%) │ 3773 (1.84%)  │ 97922 (47.68%)  │
-└─────────────┴─────────┴──────────┴─────────────────┴───────────────┴─────────────────┘
-```
-
-Country-level routing overview:
-
-```text
-➜  monocle radar stats us
-┌─────────┬─────────┬──────────┬────────────────┬──────────────┬─────────────────┐
-│ scope   │ origins │ prefixes │ rpki_valid     │ rpki_invalid │ rpki_unknown    │
-├─────────┼─────────┼──────────┼────────────────┼──────────────┼─────────────────┤
-│ us      │ 18151   │ 304200   │ 97102 (31.39%) │ 2466 (0.80%) │ 209820 (67.82%) │
-├─────────┼─────────┼──────────┼────────────────┼──────────────┼─────────────────┤
-│ us ipv4 │ 17867   │ 262022   │ 73846 (27.81%) │ 1042 (0.39%) │ 190689 (71.80%) │
-├─────────┼─────────┼──────────┼────────────────┼──────────────┼─────────────────┤
-│ us ipv6 │ 4218    │ 42178    │ 23256 (53.08%) │ 1424 (3.25%) │ 19131 (43.67%)  │
-└─────────┴─────────┴──────────┴────────────────┴──────────────┴─────────────────┘
-
-Data generated at 2023-07-24T16:00:00 UTC.
-```
-
-AS-level routing overview:
-
-```text
-➜  monocle git:(main) ✗ monocle radar stats 174
-┌────────────┬─────────┬──────────┬─────────────┬──────────────┬───────────────┐
-│ scope      │ origins │ prefixes │ rpki_valid  │ rpki_invalid │ rpki_unknown  │
-├────────────┼─────────┼──────────┼─────────────┼──────────────┼───────────────┤
-│ as174      │ 1       │ 4425     │ 216 (4.88%) │ 15 (0.34%)   │ 4194 (94.78%) │
-├────────────┼─────────┼──────────┼─────────────┼──────────────┼───────────────┤
-│ as174 ipv4 │ 1       │ 3684     │ 201 (5.46%) │ 9 (0.24%)    │ 3474 (94.30%) │
-├────────────┼─────────┼──────────┼─────────────┼──────────────┼───────────────┤
-│ as174 ipv6 │ 1       │ 741      │ 15 (2.02%)  │ 6 (0.81%)    │ 720 (97.17%)  │
-└────────────┴─────────┴──────────┴─────────────┴──────────────┴───────────────┘
-
-Data generated at 2023-07-24T16:00:00 UTC.
-```
-
-#### `monocle radar pfx2asn`: prefix-to-ASN mapping
-
-Lookup prefix origin for a given prefix (using Cloudflare `1.1.1.0/24` as an example):
-
-```text
-➜  monocle radar pfx2as 1.1.1.0/24
-┌────────────┬─────────┬───────┬───────────────┐
-│ prefix     │ origin  │ rpki  │ visibility    │
-├────────────┼─────────┼───────┼───────────────┤
-│ 1.1.1.0/24 │ as13335 │ valid │ high (98.78%) │
-└────────────┴─────────┴───────┴───────────────┘
-```
-
-Lookup prefixes originated by a given AS (using BGPKIT AS400644 as an example):
-
-```text
-➜  monocle radar pfx2as 400644    
-┌───────────────────┬──────────┬───────┬───────────────┐
-│ prefix            │ origin   │ rpki  │ visibility    │
-├───────────────────┼──────────┼───────┼───────────────┤
-│ 2620:aa:a000::/48 │ as400644 │ valid │ high (93.90%) │
-└───────────────────┴──────────┴───────┴───────────────┘
-
-Data generated at 2023-07-24T16:00:00 UTC.
-```
-
-Lookup RPKI invalid (with flag `--rpki-status invalid`) prefixes originated by a given AS:
-
-```text
-➜  monocle radar pfx2as 174 --rpki-status invalid
-┌─────────────────────┬────────┬─────────┬──────────────┐
-│ prefix              │ origin │ rpki    │ visibility   │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 2606:d640::/40      │ as174  │ invalid │ low (7.32%)  │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 194.76.218.0/24     │ as174  │ invalid │ mid (29.27%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 154.81.223.0/24     │ as174  │ invalid │ mid (31.71%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 178.171.100.0/24    │ as174  │ invalid │ low (10.98%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 212.69.135.0/24     │ as174  │ invalid │ low (10.98%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 2602:fd92:900::/40  │ as174  │ invalid │ mid (23.17%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 2606:d640:a000::/36 │ as174  │ invalid │ mid (23.17%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 2606:d640:11::/48   │ as174  │ invalid │ mid (23.17%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 172.83.86.0/23      │ as174  │ invalid │ low (13.41%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 2606:d640:100::/40  │ as174  │ invalid │ low (7.32%)  │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 154.93.28.0/24      │ as174  │ invalid │ mid (31.71%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 2606:d640:200::/40  │ as174  │ invalid │ low (7.32%)  │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 173.0.3.0/24        │ as174  │ invalid │ mid (31.71%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 138.34.56.0/22      │ as174  │ invalid │ mid (31.71%) │
-├─────────────────────┼────────┼─────────┼──────────────┤
-│ 67.159.59.0/24      │ as174  │ invalid │ mid (31.71%) │
-└─────────────────────┴────────┴─────────┴──────────────┘
-
-Data generated at 2023-07-24T16:00:00 UTC.
+# Filter by provider ASN
+➜  monocle rpki aspas --provider 174
 ```
 
 ### `monocle ip`
 
-Retrieve information for the current IP of the machine or any specified IP address.
-The information includes location,
-network (ASN, network name) and the covering IP prefix of the given IP address.
-
-Get information for the machine's public IP address:
+Look up information about IP addresses.
 
 ```text
-➜  ~ monocle ip
-+----------+--------------------------+
-| ip       | 104.48.0.0               |
-+----------+--------------------------+
-| location | US                       |
-+----------+---------+----------------+
-| network  | asn     | 7018           |
-|          +---------+----------------+
-|          | country | US             |
-|          +---------+----------------+
-|          | name    | AT&T US - 7018 |
-|          +---------+----------------+
-|          | prefix  | 104.48.0.0/12  |
-|          +---------+----------------+
-|          | rpki    | valid          |
-+----------+---------+----------------+
+➜  monocle ip --help
+IP information lookup
+
+Usage: monocle ip [OPTIONS] [IP]
+
+Arguments:
+  [IP]  IP address to look up (omit to get your public IP)
+
+Options:
+      --debug            Print debug information
+      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json             Output as JSON objects (shortcut for --format json-pretty)
+  -h, --help             Print help
 ```
 
-Look up IP and network information for a given IP:
+Examples:
 
 ```text
-➜  ~ monocle ip 1.1.1.1
-+----------+----------------------+
-| ip       | 1.1.1.1              |
-+----------+----------------------+
-| location | US                   |
-+----------+---------+------------+
-| network  | asn     | 13335      |
-|          +---------+------------+
-|          | country | US         |
-|          +---------+------------+
-|          | name    | Cloudflare |
-|          +---------+------------+
-|          | prefix  | 1.1.1.0/24 |
-|          +---------+------------+
-|          | rpki    | valid      |
-+----------+---------+------------+
+# Look up a specific IP
+➜  monocle ip 1.1.1.1
+┌─────────────┬─────────────────────────────────────────────────┐
+│ Field       │ Value                                           │
+├─────────────┼─────────────────────────────────────────────────┤
+│ ip          │ 1.1.1.1                                         │
+│ asn         │ 13335                                           │
+│ as_name     │ CLOUDFLARENET                                   │
+│ country     │ AU                                              │
+│ ...         │ ...                                             │
+└─────────────┴─────────────────────────────────────────────────┘
+
+# Get your public IP info
+➜  monocle ip
 ```
 
-Displaying the information in JSON format:
+### `monocle config`
+
+Show monocle configuration, data paths, and manage the database.
 
 ```text
-➜  ~ monocle ip 1.1.1.1 --json
-{
-  "ip": "1.1.1.1",
-  "location": "US",
-  "network": {
-    "asn": 13335,
-    "country": "US",
-    "name": "Cloudflare",
-    "prefix": "1.1.1.0/24",
-    "rpki": "valid"
-  }
-}
+➜  monocle config --help
+Show monocle configuration, data paths, and database management
+
+Usage: monocle config [OPTIONS] [COMMAND]
+
+Commands:
+  db-refresh  Refresh data source(s)
+  db-backup   Backup the database to a destination
+  db-sources  List available data sources and their status
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+      --debug            Print debug information
+      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json             Output as JSON objects (shortcut for --format json-pretty)
+  -v, --verbose          Show detailed information about all data files
+  -h, --help             Print help
+```
+
+Examples:
+
+```text
+# Show configuration and database status
+➜  monocle config
+Configuration:
+  Config file: ~/.monocle.toml (not found, using defaults)
+  Data directory: ~/.monocle
+
+SQLite Database: ~/.monocle/monocle-data.sqlite3
+  Size: 45.2 MB
+  ASInfo: 120415 ASes
+  AS2Rel: 1234567 relationships
+  RPKI: 784188 ROAs, 388 ASPAs (updated 2 hours ago)
+  Pfx2as: 1000000 prefixes
+
+# Refresh all data sources
+➜  monocle config db-refresh --all
+
+# Refresh a specific source
+➜  monocle config db-refresh asinfo
+➜  monocle config db-refresh rpki
+
+# Backup the database
+➜  monocle config db-backup ~/monocle-backup.sqlite3
+
+# List available data sources
+➜  monocle config db-sources
+```
+
+### `monocle server`
+
+Start a WebSocket server for programmatic access to monocle functionality.
+
+```text
+➜  monocle server --help
+Start the WebSocket server
+
+Usage: monocle server [OPTIONS]
+
+Options:
+  -a, --address <ADDRESS>  Bind address [default: 127.0.0.1]
+  -p, --port <PORT>        Bind port [default: 8080]
+  -h, --help               Print help
+```
+
+**Endpoints:**
+- WebSocket: `ws://<address>:<port>/ws`
+- Health check: `http://<address>:<port>/health`
+
+**Features:**
+- JSON-RPC style request/response protocol
+- Streaming support with progress reporting for parse/search operations
+- Operation cancellation via `op_id`
+- DB-first policy: queries read from local SQLite cache
+
+**Available methods:**
+- `system.info`, `system.methods` - Server introspection
+- `time.parse` - Time string parsing
+- `ip.lookup`, `ip.public` - IP information lookup
+- `rpki.validate`, `rpki.roas`, `rpki.aspas` - RPKI operations
+- `as2rel.search`, `as2rel.relationship`, `as2rel.update` - AS relationships
+- `pfx2as.lookup` - Prefix-to-ASN mapping
+- `country.lookup` - Country code/name lookup
+- `inspect.query`, `inspect.refresh` - Unified AS/prefix inspection
+- `parse.start`, `parse.cancel` - MRT file parsing (streaming)
+- `search.start`, `search.cancel` - BGP message search (streaming)
+- `database.status`, `database.refresh` - Database management
+
+For detailed protocol specification, see [`src/server/README.md`](src/server/README.md).
+
+Example:
+
+```text
+➜  monocle server
+Starting WebSocket server on 127.0.0.1:8080
+  WebSocket: ws://127.0.0.1:8080/ws
+  Health: http://127.0.0.1:8080/health
+
+➜  monocle server --address 0.0.0.0 --port 3000
+Starting WebSocket server on 0.0.0.0:3000
 ```
 
 ## Built with ❤️ by BGPKIT Team
 
-<a href="https://bgpkit.com"><img src="https://bgpkit.com/Original%20Logo%20Cropped.png" alt="https://bgpkit.com/favicon.ico" width="200"/></a>
+<a href="https://bgpkit.com"><img src="https://bgpkit.com/Original%20Logo%20Cropped.png" alt="https://bgpkit.com/logo.png" width="200"/></a>

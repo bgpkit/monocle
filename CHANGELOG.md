@@ -4,73 +4,195 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-### Breaking Changes
+This is a major release with significant architectural changes, new commands, and breaking changes.
 
-* **RPKI commands refactored**: Removed `rpki read-roa` and `rpki read-aspa` commands
-  * These commands relied on the outdated `rpki` crate for parsing individual ROA/ASPA files
-  * Replaced with new `rpki roas` and `rpki aspas` commands that use `bgpkit-commons` for data access
+### New Commands
 
-### New Features
+#### `monocle inspect` - Unified AS/Prefix Information Lookup
 
-* **New `rpki roas` command**: List ROAs from RPKI data (current or historical)
-  * `--origin <ASN>`: Filter by origin ASN
-  * `--prefix <PREFIX>`: Filter by prefix
-  * `--date <YYYY-MM-DD>`: Load historical data for a specific date
-  * `--source <ripe|rpkiviews>`: Select historical data source (default: ripe)
-  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector (default: soborost)
-  * Supports JSON output with `--json` flag
+Query AS and prefix information from multiple data sources in a single command:
+* `monocle inspect 13335`: Look up AS information
+* `monocle inspect 1.1.1.0/24`: Look up prefix information
+* `monocle inspect cloudflare`: Search by name
+* `monocle inspect --country US`: Search by country
 
-* **New `rpki aspas` command**: List ASPAs from RPKI data (current or historical)
-  * `--customer <ASN>`: Filter by customer ASN
-  * `--provider <ASN>`: Filter by provider ASN
-  * `--date <YYYY-MM-DD>`: Load historical data for a specific date
-  * `--source <ripe|rpkiviews>`: Select historical data source (default: ripe)
-  * `--collector <soborost|massars|attn|kerfuffle>`: Select RPKIviews collector (default: soborost)
-  * Results grouped by customer ASN with providers as comma-separated list (table) or array (JSON)
-  * Supports JSON output with `--json` flag
+**Features:**
+* Auto-detects query type (ASN, prefix, IP address, or name)
+* Combines data from multiple sources: ASInfo, AS2Rel, RPKI, Pfx2as
+* Section selection with `--show` flag (basic, prefixes, connectivity, rpki, all)
+* Display limits with `--full`, `--full-roas`, `--full-prefixes`, `--full-connectivity`
 
-* **New `as2rel` command**: AS-level relationship lookup between ASNs
-  * Query relationships for one or two ASNs from BGPKIT's AS relationship data
-  * Data source: `https://data.bgpkit.com/as2rel/as2rel-latest.json.bz2`
-  * Output columns:
-    - `connected`: Percentage of route collectors that see any connection between asn1 and asn2
-    - `peer`: Percentage seeing pure peering only (connected - as1_upstream - as2_upstream)
-    - `as1_upstream`: Percentage of route collectors that see asn1 as an upstream of asn2
-    - `as2_upstream`: Percentage of route collectors that see asn2 as an upstream of asn1
-  * Percentages calculated as `count / max_peers_count * 100%`
-  * Displays last update time with human-readable relative time (e.g., "2 days ago")
-  * Local SQLite caching with automatic updates when data is older than 7 days
-  * `--update`: Force update the local database
-  * `--update-with <PATH>`: Update with a custom data file (local path or URL)
-  * `--pretty`: Output to pretty table (default: markdown table)
-  * `--no-explain`: Hide the explanation text in table output
-  * `--sort-by-asn`: Sort results by ASN2 ascending (default: sort by connected % descending)
-  * `--show-name`: Show organization name for ASN2 from local as2org database (truncated to 20 chars)
-  * Supports JSON output with `--json` flag
+**Replaces:**
+* `monocle whois` command (now aliased to `inspect`)
+* `monocle pfx2as` command (prefix lookup merged into inspect)
 
-* **JSON output support**: All RPKI commands now support `--json` flag for JSON output
-  * `rpki check`: Returns validation result and covering ROAs as JSON
-  * `rpki list`: Returns ROAs as JSON array
-  * `rpki summary`: Returns summary as JSON array
-  * `rpki roas`: Returns ROAs as JSON array
-  * `rpki aspas`: Returns ASPAs as JSON array with providers as numeric array
+#### `monocle server` - WebSocket API Server
+
+Start a WebSocket server for programmatic access to monocle functionality:
+* `monocle server`: Start server on default address (127.0.0.1:8080)
+* `monocle server --address 0.0.0.0 --port 3000`: Custom bind address and port
+* WebSocket endpoint: `ws://<address>:<port>/ws`
+* Health check endpoint: `http://<address>:<port>/health`
+
+**Features:**
+* JSON-RPC style request/response protocol with streaming support
+* Operation cancellation via `op_id` for long-running tasks
+* Progress reporting for parse and search operations
+* DB-first policy: queries read from local SQLite cache
+
+**Available methods:**
+* `system.info`, `system.methods` - Server introspection
+* `time.parse` - Time string parsing
+* `ip.lookup`, `ip.public` - IP information lookup
+* `rpki.validate`, `rpki.roas`, `rpki.aspas` - RPKI operations
+* `as2org.search`, `as2org.bootstrap` - AS-to-Organization mappings
+* `as2rel.search`, `as2rel.relationship`, `as2rel.update` - AS relationships
+* `pfx2as.lookup` - Prefix-to-ASN mapping
+* `country.lookup` - Country code/name lookup
+* `parse.start`, `parse.cancel` - MRT file parsing (streaming)
+* `search.start`, `search.cancel` - BGP message search (streaming)
+* `database.status`, `database.refresh` - Database management
+* `inspect.query`, `inspect.refresh` - Unified AS/prefix inspection
+
+#### `monocle config` - Consolidated Configuration and Database Management
+
+Configuration and database management consolidated into a single command:
+* `monocle config`: Show configuration, data paths, and database status
+* `monocle config db-refresh <source>`: Refresh a specific data source (asinfo, as2rel, rpki, pfx2as)
+* `monocle config db-refresh --all`: Refresh all data sources at once
+* `monocle config db-backup <dest>`: Backup the SQLite database to a destination path
+* `monocle config db-sources`: List available data sources with their status and last update time
+* `--verbose` flag lists all files in the data directory with sizes and modification times
+
+#### `monocle as2rel` - AS Relationship Lookup
+
+Query AS-level relationships between ASNs from BGPKIT's AS relationship data:
+* Query relationships for one or two ASNs
+* Output columns: connected, peer, as1_upstream, as2_upstream percentages
+* Local SQLite caching with automatic updates when data is older than 7 days
+* `--show-name` / `--show-full-name`: Show organization name for ASN2
+* `--sort-by-asn`: Sort results by ASN2 ascending (default: sort by connected % descending)
+
+### ASInfo - Unified AS Information
+
+* **Replaced as2org with asinfo module**: Unified AS information from multiple sources
+  * Uses `bgpkit-commons` asinfo module for comprehensive AS data
+  * Supports name search, ASN lookup, and country filtering
+  * Data stored in SQLite for fast local queries
+
+### Pfx2as Improvements
+
+* **Pfx2as data now stored in SQLite**: Prefix-to-ASN mappings cached locally for fast queries
+  * IP prefixes stored as 16-byte start/end address pairs for efficient range lookups
+  * Supports multiple query modes: exact, longest prefix match, covering (supernets), covered (subnets)
+  * Cache expires after 24 hours and automatically refreshes
+  * Use `config db-refresh pfx2as` or WebSocket `database.refresh` with `source: "pfx2as"` to populate
+  * Removed file-based cache (now SQLite only)
+
+### RPKI Improvements
+
+* **RPKI data now stored in SQLite**: ROAs and ASPAs cached locally for fast queries
+  * IP prefixes stored as 16-byte start/end address pairs for efficient range lookups
+  * Cache expires after 24 hours and automatically refreshes
+  * Use `--refresh` / `-r` flag to force a cache refresh
+* **Local RPKI validation**: Implements RFC 6811 validation logic locally instead of calling external API
+* **Renamed `check` to `validate`**: Now takes two positional arguments (prefix and ASN) in any order
+* **Updated `roas` subcommand**: Now accepts multiple positional resource arguments (auto-detected)
+* **Added `aspas` subcommand**: Current data now uses SQLite cache
+
+### Progress Tracking (Library Feature)
+
+* **Parse operations**: `ParseLens` supports callback-based progress reporting
+  * `ParseProgress` enum with `Started`, `Update`, and `Completed` variants
+  * New methods: `parse_with_progress()` and `parse_with_handler()`
+* **Search operations**: `SearchLens` supports callback-based progress reporting
+  * `SearchProgress` enum with file-level progress tracking
+  * New methods: `search_with_progress()` and `search_and_collect()`
+* **Thread-safe callbacks**: `Arc<dyn Fn(...) + Send + Sync>` for parallel processing
+* **JSON-serializable**: All progress types derive `Serialize`/`Deserialize`
+
+### Unified Output Format
+
+* **Global `--format` option**: All commands support unified output formats
+  * `table` (default): Pretty table with rounded borders
+  * `markdown` / `md`: Markdown table format
+  * `json`: Compact JSON (single line)
+  * `json-pretty`: Pretty-printed JSON (same as `--json` flag)
+  * `json-line` / `jsonl` / `ndjson`: JSON Lines format
+  * `psv`: Pipe-separated values with header row
+* **All informational messages go to stderr**: Enables clean piping of data
+* **Removed per-command format flags**: `--pretty`, `--psv` flags removed in favor of `--format`
+
+### Feature Flag Reorganization
+
+Library users can now use monocle with minimal dependencies:
+
+* **`database`**: SQLite operations only (rusqlite, oneio, ipnet, chrono)
+* **`lens-core`**: Standalone lenses like TimeLens (adds chrono-humanize, dateparser)
+* **`lens-bgpkit`**: BGP-related lenses (adds bgpkit-*, rayon, tabled)
+* **`lens-full`**: All lenses including InspectLens
+* **`display`**: Table formatting with tabled (included in lens-bgpkit)
+* **`cli`**: Full CLI binary with server support (default)
+
+Usage examples:
+```toml
+# Minimal database access
+monocle = { version = "0.10", default-features = false, features = ["database"] }
+
+# BGP operations without CLI overhead
+monocle = { version = "0.10", default-features = false, features = ["lens-bgpkit"] }
+
+# Full functionality
+monocle = { version = "0.10", default-features = false, features = ["lens-full"] }
+```
 
 ### Improvements
 
-* **as2org data source**: Replaced custom CAIDA as2org file parsing with `bgpkit-commons` asinfo module
-  * SQLite caching is preserved for fast repeated queries
-  * `whois --update` now reloads data from `bgpkit-commons`
-  * Maintains backward compatibility with existing search behavior
+* **Name truncation in tables**: Long names truncated to 20 characters (use `--show-full-name` to disable)
+* **Unified AS information**: New asinfo module replaces as2org with data from bgpkit-commons
+* **Broken pipe handling**: Graceful exit when output is piped to commands like `head` (Unix)
+* **Database performance**: Batch insert operations use optimized SQLite settings
+* **Table formatting**: ASPA table output wraps long provider lists at 60 characters
 
-* **Table formatting**: ASPA table output now wraps long provider lists at 60 characters for better readability
+### Bug Fixes
+
+* Fixed AS2Rel data loading (incorrect serde attribute)
+* Fixed AS2Rel duplicate rows and percentage calculation
+* Optimized AS2Rel queries with SQL JOINs
+* Handle SIGPIPE gracefully to prevent panics when piping output
+
+### Documentation
+
+* Moved `WEBSOCKET_DESIGN.md` to `src/server/README.md` for better organization
+* Updated all documentation references to point to new location
+
+### Breaking Changes
+
+* **Removed `broker` command**: Use `search --broker-files` instead
+* **Removed `radar` command**: Access Cloudflare Radar directly via their API
+* **Removed `rpki list` and `rpki summary` commands**: Use `rpki roas` instead
+* **Renamed `rpki check` to `rpki validate`**
+* **Renamed `whois` to `inspect`**: Unified AS/prefix lookup command
+* **Library API refactoring**: All public functions now accessed through lens structs
+* **Default output format**: Changed from markdown to table (pretty borders)
 
 ### Code Improvements
 
-* Refactored CLI command modules: moved CLI argument definitions from main file to individual command submodules for better code organization and maintainability
+* **Lens-based architecture**: All functionality accessed through lens structs
+* **InspectLens**: New unified lens for AS/prefix information lookup
+* Refactored CLI command modules for better code organization
+* Added `lens/utils.rs` with `OutputFormat` enum and `truncate_name` helper
+* Added comprehensive examples organized by feature tier:
+  * `examples/standalone/`: time_parsing.rs, output_formats.rs
+  * `examples/database/`: database_basics.rs, as2rel_queries.rs
+  * `examples/bgpkit/`: country_lookup.rs, rpki_validation.rs, mrt_parsing.rs, bgp_search.rs
+  * `examples/full/`: inspect_unified.rs, progress_callbacks.rs
 
 ### Dependencies
 
-* Added `bgpkit-commons` v0.10 with features: `asinfo`, `rpki`, `countries`
+* Added `bgpkit-commons` with features: `asinfo`, `rpki`, `countries`
+* Added server dependencies: axum, tokio, tower-http, futures (under `cli` feature)
+* Added `libc` for SIGPIPE handling on Unix
 * Removed `rpki` crate dependency
 
 ## v0.9.1 - 2025-11-05

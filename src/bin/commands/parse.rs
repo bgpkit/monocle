@@ -2,15 +2,16 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use bgpkit_parser::encoder::MrtUpdatesEncoder;
+use bgpkit_parser::BgpElem;
 use clap::Args;
 
-use monocle::{MrtParserFilters, ParseFilters};
-
-use crate::elem_to_string;
+use monocle::lens::parse::{ParseFilters, ParseLens};
+use monocle::lens::utils::OutputFormat;
+use serde_json::json;
 
 /// Arguments for the Parse command
 #[derive(Args)]
-pub struct ParseArgs {
+pub(crate) struct ParseArgs {
     /// File path to an MRT file, local or remote.
     #[clap(name = "FILE")]
     pub file_path: PathBuf,
@@ -28,7 +29,7 @@ pub struct ParseArgs {
     pub filters: ParseFilters,
 }
 
-pub fn run(args: ParseArgs, json: bool) {
+pub fn run(args: ParseArgs, output_format: OutputFormat) {
     let ParseArgs {
         file_path,
         pretty,
@@ -36,7 +37,9 @@ pub fn run(args: ParseArgs, json: bool) {
         filters,
     } = args;
 
-    if let Err(e) = filters.validate() {
+    let lens = ParseLens::new();
+
+    if let Err(e) = lens.validate_filters(&filters) {
         eprintln!("ERROR: {e}");
         return;
     }
@@ -48,7 +51,7 @@ pub fn run(args: ParseArgs, json: bool) {
             std::process::exit(1);
         }
     };
-    let parser = match filters.to_parser(file_path) {
+    let parser = match lens.create_parser(&filters, file_path) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Failed to create parser for {}: {}", file_path, e);
@@ -61,14 +64,8 @@ pub fn run(args: ParseArgs, json: bool) {
     match mrt_path {
         None => {
             for elem in parser {
-                // output to stdout
-                let output_str = match elem_to_string(&elem, json, pretty, "") {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("Failed to format element: {}", e);
-                        continue;
-                    }
-                };
+                // output to stdout based on format
+                let output_str = format_elem(&elem, output_format, pretty);
                 if let Err(e) = writeln!(stdout, "{}", &output_str) {
                     if e.kind() != std::io::ErrorKind::BrokenPipe {
                         eprintln!("ERROR: {e}");
@@ -85,7 +82,7 @@ pub fn run(args: ParseArgs, json: bool) {
                     std::process::exit(1);
                 }
             };
-            println!("processing. filtered messages output to {}...", &path);
+            eprintln!("processing. filtered messages output to {}...", &path);
             let mut encoder = MrtUpdatesEncoder::new();
             let mut writer = match oneio::get_writer(&path) {
                 Ok(w) => w,
@@ -103,7 +100,29 @@ pub fn run(args: ParseArgs, json: bool) {
                 eprintln!("Failed to write MRT data: {}", e);
             }
             drop(writer);
-            println!("done. total of {} message wrote", total_count);
+            eprintln!("done. total of {} message wrote", total_count);
+        }
+    }
+}
+
+fn format_elem(elem: &BgpElem, output_format: OutputFormat, pretty: bool) -> String {
+    match output_format {
+        OutputFormat::Json => {
+            serde_json::to_string(&json!(elem)).unwrap_or_else(|_| elem.to_string())
+        }
+        OutputFormat::JsonPretty => {
+            if pretty {
+                serde_json::to_string_pretty(&json!(elem)).unwrap_or_else(|_| elem.to_string())
+            } else {
+                serde_json::to_string(&json!(elem)).unwrap_or_else(|_| elem.to_string())
+            }
+        }
+        OutputFormat::JsonLine => {
+            serde_json::to_string(&json!(elem)).unwrap_or_else(|_| elem.to_string())
+        }
+        _ => {
+            // Table, Markdown, Psv all use the default string format for streaming data
+            elem.to_string()
         }
     }
 }

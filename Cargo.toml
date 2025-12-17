@@ -15,35 +15,217 @@ keywords = ["bgp", "bgpkit", "mrt"]
 [[bin]]
 name = "monocle"
 path = "src/bin/monocle.rs"
+required-features = ["cli"]
+
+# Existing examples (require lens-bgpkit)
+[[example]]
+name = "search_bgp_messages"
+path = "examples/search_bgp_messages.rs"
+required-features = ["lens-bgpkit"]
+
+[[example]]
+name = "ws_client_all"
+path = "examples/ws_client_all.rs"
+required-features = ["cli"]
+
+# =============================================================================
+# Examples organized by feature requirements
+# =============================================================================
+
+# Standalone examples - minimal dependencies (no database, no bgpkit-*)
+[[example]]
+name = "time_parsing"
+path = "examples/standalone/time_parsing.rs"
+required-features = ["lens-core"]
+
+[[example]]
+name = "output_formats"
+path = "examples/standalone/output_formats.rs"
+required-features = ["lens-core"]
+
+# Database examples - SQLite operations only
+[[example]]
+name = "database_basics"
+path = "examples/database/database_basics.rs"
+required-features = ["database"]
+
+[[example]]
+name = "as2rel_queries"
+path = "examples/database/as2rel_queries.rs"
+required-features = ["database"]
+
+# BGPKIT examples - requires bgpkit-* crates
+[[example]]
+name = "country_lookup"
+path = "examples/bgpkit/country_lookup.rs"
+required-features = ["lens-bgpkit"]
+
+[[example]]
+name = "rpki_validation"
+path = "examples/bgpkit/rpki_validation.rs"
+required-features = ["lens-bgpkit"]
+
+[[example]]
+name = "mrt_parsing"
+path = "examples/bgpkit/mrt_parsing.rs"
+required-features = ["lens-bgpkit"]
+
+[[example]]
+name = "bgp_search"
+path = "examples/bgpkit/bgp_search.rs"
+required-features = ["lens-bgpkit"]
+
+# Full examples - all features
+[[example]]
+name = "inspect_unified"
+path = "examples/full/inspect_unified.rs"
+required-features = ["lens-full"]
+
+[[example]]
+name = "progress_callbacks"
+path = "examples/full/progress_callbacks.rs"
+required-features = ["lens-full"]
+
+[features]
+default = ["cli"]
+
+# =============================================================================
+# Core feature tiers (layered dependencies)
+# =============================================================================
+
+# Database layer - SQLite operations only
+# Minimal dependencies for just database access
+# Note: oneio is needed for loading data from URLs in the database layer
+database = ["dep:oneio", "dep:ipnet"]
+
+# Core lens layer - standalone lenses that don't need bgpkit-*
+# Includes: TimeLens, OutputFormat utilities
+# Note: includes database feature for common usage patterns
+lens-core = [
+    "database",
+    "dep:chrono-humanize",
+    "dep:dateparser",
+    "dep:humantime",
+]
+
+# BGPKIT lens layer - lenses requiring bgpkit-* crates
+# Includes: CountryLens, ParseLens, SearchLens, IpLens, RpkiLens (commons), Pfx2asLens
+# Note: includes display for table formatting (tabled is lightweight)
+lens-bgpkit = [
+    "lens-core",
+    "database",
+    "display",
+    "dep:bgpkit-broker",
+    "dep:bgpkit-parser",
+    "dep:bgpkit-commons",
+    "dep:itertools",
+    "dep:radar-rs",
+    "dep:rayon",
+    "dep:ureq",
+]
+
+# Full lens layer - all lenses including InspectLens
+lens-full = [
+    "lens-bgpkit",
+]
+
+# Display support - tabled integration for pretty output
+display = ["dep:tabled", "dep:json_to_table"]
+
+# =============================================================================
+# CLI and server features
+# =============================================================================
+
+# CLI support (clap derives, terminal output, progress bars) + WebSocket server
+cli = [
+    "lens-full",
+    "display",
+    "dep:clap",
+    "dep:indicatif",
+    "dep:tracing-subscriber",
+    "dep:libc",
+    # server deps
+    "dep:axum",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:futures",
+    "dep:uuid",
+    "dep:async-trait",
+    "dep:tower-http",
+]
+
+# Full build with all features (alias for cli)
+full = ["cli"]
 
 [dependencies]
+# =============================================================================
+# Core dependencies (always included)
+# =============================================================================
 anyhow = "1.0"
-bgpkit-broker = "0.10.1"
-bgpkit-parser = { version = "0.13.0", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 config = { version = "0.15", features = ["toml"] }
-chrono = "0.4"
-chrono-humanize = "0.2"
-clap = { version = "4.1", features = ["derive"] }
-dateparser = "0.2"
 dirs = "6"
 dotenvy = "0.15"
-humantime = "2.1"
-indicatif = "0.18.0" # progress bar
-ipnet = { version = "2.10", features = ["json"] }
-ipnet-trie = "0.3.0"
-itertools = "0.14"
-json_to_table = "0.12.0"
-oneio = { version = "0.20.0", default-features = false, features = ["https", "gz", "bz", "json"] }
-radar-rs = "0.1.0"
-rayon = "1.8"
-bgpkit-commons = { version = "0.10", features = ["asinfo", "rpki", "countries"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tabled = "0.20"
 tracing = "0.1"
-tracing-subscriber = "0.3"
-ureq = { version = "3.1", features = ["json"] }
+
+# =============================================================================
+# Database dependencies (optional but commonly needed)
+# =============================================================================
+ipnet = { version = "2.10", features = ["json"], optional = true }
+oneio = { version = "0.20.0", default-features = false, features = ["https", "gz", "bz", "json"], optional = true }
+
+# =============================================================================
+# Lens-core dependencies (optional)
+# =============================================================================
+chrono-humanize = { version = "0.2", optional = true }
+dateparser = { version = "0.2", optional = true }
+humantime = { version = "2.1", optional = true }
+
+# =============================================================================
+# Lens-bgpkit dependencies (optional)
+# =============================================================================
+bgpkit-broker = { version = "0.10.1", optional = true }
+bgpkit-parser = { version = "0.13.0", features = ["serde"], optional = true }
+bgpkit-commons = { version = "0.10", features = ["asinfo", "rpki", "countries"], optional = true }
+itertools = { version = "0.14", optional = true }
+radar-rs = { version = "0.1.0", optional = true }
+rayon = { version = "1.8", optional = true }
+ureq = { version = "3.1", features = ["json"], optional = true }
+
+# =============================================================================
+# Display dependencies (optional)
+# =============================================================================
+tabled = { version = "0.20", optional = true }
+json_to_table = { version = "0.12.0", optional = true }
+
+# =============================================================================
+# CLI-only dependencies (optional)
+# =============================================================================
+clap = { version = "4.1", features = ["derive"], optional = true }
+libc = { version = "0.2", optional = true }
+indicatif = { version = "0.18.0", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
+
+# =============================================================================
+# WebSocket server dependencies (optional, included in cli)
+# =============================================================================
+axum = { version = "0.7", features = ["ws"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+tokio-util = { version = "0.7", optional = true }
+futures = { version = "0.3", optional = true }
+uuid = { version = "1.0", features = ["v4"], optional = true }
+async-trait = { version = "0.1", optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+futures-util = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio-tungstenite = "0.24"
+tungstenite = "0.24"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"

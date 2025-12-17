@@ -9,11 +9,12 @@ use std::time::Duration;
 use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
 use clap::Args;
-use monocle::{MrtParserFilters, MsgStore, SearchFilters};
+use monocle::database::MsgStore;
+use monocle::lens::search::SearchFilters;
+use monocle::lens::utils::OutputFormat;
 use rayon::prelude::*;
+use serde_json::json;
 use tracing::{info, warn};
-
-use crate::commands::elem_to_string;
 
 /// Arguments for the Search command
 #[derive(Args)]
@@ -21,10 +22,6 @@ pub struct SearchArgs {
     /// Dry-run, do not download or parse.
     #[clap(long)]
     pub dry_run: bool,
-
-    /// Pretty-print JSON output
-    #[clap(long)]
-    pub pretty: bool,
 
     /// SQLite output file path
     #[clap(long)]
@@ -37,6 +34,10 @@ pub struct SearchArgs {
     /// SQLite reset database content if exists
     #[clap(long)]
     pub sqlite_reset: bool,
+
+    /// Output matching broker files (URLs) and exit without searching
+    #[clap(long)]
+    pub broker_files: bool,
 
     /// Filter by AS path regex string
     #[clap(flatten)]
@@ -103,13 +104,13 @@ impl FailedItem {
     }
 }
 
-pub fn run(args: SearchArgs, json: bool) {
+pub fn run(args: SearchArgs, output_format: OutputFormat) {
     let SearchArgs {
         dry_run,
-        pretty,
         sqlite_path,
         mrt_path,
         sqlite_reset,
+        broker_files,
         filters,
     } = args;
 
@@ -122,7 +123,7 @@ pub fn run(args: SearchArgs, json: bool) {
     let sqlite_db = sqlite_path.and_then(|p| {
         p.to_str().map(|s| {
             sqlite_path_str = s.to_string();
-            match MsgStore::new(&Some(sqlite_path_str.clone()), sqlite_reset) {
+            match MsgStore::new_from_option(&Some(sqlite_path_str.clone()), sqlite_reset) {
                 Ok(store) => store,
                 Err(e) => {
                     eprintln!("Failed to create SQLite store: {}", e);
@@ -143,6 +144,42 @@ pub fn run(args: SearchArgs, json: bool) {
         }
     };
 
+    if broker_files {
+        // Output all matching broker files and exit without searching
+        let items = match base_broker.query() {
+            Ok(items) => items,
+            Err(e) => {
+                eprintln!("Failed to query broker: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        match output_format {
+            OutputFormat::Json => match serde_json::to_string(&items) {
+                Ok(json_str) => println!("{}", json_str),
+                Err(e) => eprintln!("error serializing: {}", e),
+            },
+            OutputFormat::JsonPretty => match serde_json::to_string_pretty(&items) {
+                Ok(json_str) => println!("{}", json_str),
+                Err(e) => eprintln!("error serializing: {}", e),
+            },
+            OutputFormat::JsonLine => {
+                for item in &items {
+                    match serde_json::to_string(item) {
+                        Ok(json_str) => println!("{}", json_str),
+                        Err(e) => eprintln!("error serializing: {}", e),
+                    }
+                }
+            }
+            _ => {
+                for item in &items {
+                    println!("{}", item.url);
+                }
+            }
+        }
+        return;
+    }
+
     if dry_run {
         // For dry run, get first page to show what would be processed
         let items = match base_broker.clone().page(1).query_single_page() {
@@ -154,11 +191,30 @@ pub fn run(args: SearchArgs, json: bool) {
         };
 
         let total_size: i64 = items.iter().map(|x| x.rough_size).sum();
-        println!(
-            "First page: {} files, {} bytes (will process all pages with ~1000 files each)",
-            items.len(),
-            total_size
-        );
+        if output_format.is_json() {
+            let dry_run_info = serde_json::json!({
+                "dry_run": true,
+                "first_page_files": items.len(),
+                "first_page_bytes": total_size,
+                "note": "will process all pages with ~1000 files each"
+            });
+            match output_format {
+                OutputFormat::JsonPretty => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&dry_run_info).unwrap_or_default()
+                ),
+                _ => println!(
+                    "{}",
+                    serde_json::to_string(&dry_run_info).unwrap_or_default()
+                ),
+            }
+        } else {
+            eprintln!(
+                "First page: {} files, {} bytes (will process all pages with ~1000 files each)",
+                items.len(),
+                total_size
+            );
+        }
         return;
     }
 
@@ -190,14 +246,7 @@ pub fn run(args: SearchArgs, json: bool) {
                     total_msg_count += 1;
 
                     if display_stdout {
-                        let output_str =
-                            match elem_to_string(&elem, json, pretty, collector.as_str()) {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    eprintln!("Failed to format element: {}", e);
-                                    continue;
-                                }
-                            };
+                        let output_str = format_elem(&elem, output_format, collector.as_str());
                         println!("{output_str}");
                         continue;
                     }
@@ -246,7 +295,7 @@ pub fn run(args: SearchArgs, json: bool) {
         drop(mrt_writer);
 
         if !display_stdout {
-            println!("found {total_msg_count} messages, written into file {sqlite_path_str}");
+            eprintln!("found {total_msg_count} messages, written into file {sqlite_path_str}");
         }
     });
 
@@ -594,6 +643,29 @@ pub fn run(args: SearchArgs, json: bool) {
     // wait for the output thread to stop
     if let Err(e) = writer_thread.join() {
         eprintln!("Writer thread failed: {:?}", e);
+    }
+
+    fn format_elem(elem: &BgpElem, output_format: OutputFormat, collector: &str) -> String {
+        match output_format {
+            OutputFormat::Json | OutputFormat::JsonLine => {
+                let mut val = json!(elem);
+                if let Some(obj) = val.as_object_mut() {
+                    obj.insert("collector".to_string(), collector.into());
+                }
+                serde_json::to_string(&val).unwrap_or_else(|_| elem.to_string())
+            }
+            OutputFormat::JsonPretty => {
+                let mut val = json!(elem);
+                if let Some(obj) = val.as_object_mut() {
+                    obj.insert("collector".to_string(), collector.into());
+                }
+                serde_json::to_string_pretty(&val).unwrap_or_else(|_| elem.to_string())
+            }
+            _ => {
+                // For table/markdown/psv, use default string format with collector
+                format!("{}|{}", elem, collector)
+            }
+        }
     }
     if let Err(e) = progress_thread.join() {
         eprintln!("Progress thread failed: {:?}", e);
