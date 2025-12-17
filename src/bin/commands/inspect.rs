@@ -287,7 +287,11 @@ fn output_results(
             let config = config.with_markdown(true);
             println!("{}", lens.format_table(result, &config));
         }
-        OutputFormat::Table | OutputFormat::Psv => {
+        OutputFormat::Psv => {
+            eprintln!("PSV format is not supported for inspect command. Use --format json or --format table.");
+            std::process::exit(1);
+        }
+        OutputFormat::Table => {
             println!("{}", lens.format_table(result, &config));
         }
     }

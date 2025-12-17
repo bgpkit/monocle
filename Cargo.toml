@@ -28,6 +28,7 @@ cli = [
     "dep:indicatif",
     "dep:json_to_table",
     "dep:tracing-subscriber",
+    "dep:libc",
 
     # server deps merged into cli
     "dep:axum",
@@ -78,6 +79,7 @@ tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
 
 # CLI-only dependencies (optional)
 clap = { version = "4.1", features = ["derive"], optional = true }
+libc = { version = "0.2", optional = true }
 indicatif = { version = "0.18.0", optional = true }
 json_to_table = { version = "0.12.0", optional = true }
 tracing-subscriber = { version = "0.3", optional = true }

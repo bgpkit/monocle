@@ -114,6 +114,15 @@ struct ServerArgs {
 }
 
 fn main() {
+    // Reset SIGPIPE signal handling to default behavior (terminate on broken pipe)
+    // This prevents panics when output is piped to commands like `head`
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
+    }
+
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
 

@@ -151,8 +151,8 @@ fn run_status(config: &MonocleConfig, verbose: bool, output_format: OutputFormat
             Ok(json) => println!("{}", json),
             Err(e) => eprintln!("Error serializing config info: {}", e),
         },
-        _ => {
-            // Table, Markdown, and PSV all use the same human-readable format
+        OutputFormat::Table | OutputFormat::Markdown | OutputFormat::Psv => {
+            // All non-JSON formats use the same human-readable format
             print_config_table(&config_info, verbose);
         }
     }

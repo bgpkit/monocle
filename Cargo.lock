@@ -1825,6 +1825,7 @@ dependencies = [
  "ipnet",
  "itertools 0.14.0",
  "json_to_table",
+ "libc",
  "oneio",
  "radar-rs",
  "rayon",
