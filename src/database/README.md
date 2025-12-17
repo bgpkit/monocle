@@ -14,27 +14,24 @@ database/
 │   └── msg_store       # BGP message storage for search results (SQLite)
 │
 └── monocle/            # Main monocle database (SQLite)
-    ├── as2org          # AS-to-Organization mappings
+    ├── asinfo          # Unified AS information (from bgpkit-commons)
     ├── as2rel          # AS-level relationships
-    ├── rpki            # RPKI ROA/ASPA data stored in SQLite
-    └── file_cache      # File-based caches (e.g., pfx2as)
+    ├── rpki            # RPKI ROA/ASPA data (blob-based prefix storage)
+    └── pfx2as          # Prefix-to-ASN mappings (blob-based prefix storage)
 ```
 
 ## Database Backend Strategy
 
 Monocle uses **SQLite** as its primary persistence layer:
-- AS2Org mappings (AS-to-Organization)
+- ASInfo mappings (unified AS information from bgpkit-commons)
 - AS2Rel relationships (AS-level relationships)
 - RPKI ROA/ASPA data (cached locally for fast queries and offline validation)
+- Pfx2as prefix-to-ASN mappings (cached locally for fast lookups)
 - Search result exports / session stores
 
-For datasets that are better handled as **file-based caches** (large read-mostly blobs or data loaded into in-memory structures),
-Monocle uses JSON caches under the data directory:
-- Pfx2as prefix mappings
-
-Why not “INET types” in SQLite?
-- SQLite doesn't have native INET/cidr operators. For RPKI, Monocle stores prefixes as normalized start/end ranges (16-byte values),
-  enabling efficient range lookups directly in SQLite instead of relying on file caches.
+**Blob-based prefix storage**: Both RPKI and Pfx2as store IP prefixes as 16-byte start/end address pairs (BLOBs).
+IPv4 addresses are converted to IPv6-mapped format for uniform storage. This enables efficient range lookups
+directly in SQLite without native INET/cidr operators.
 
 ## Module Overview
 
@@ -59,12 +56,10 @@ The main persistent database for monocle data.
 
 #### SQLite Repositories
 - `MonocleDatabase` - Main database interface
-- `As2orgRepository` - AS-to-Organization queries
+- `AsinfoRepository` - Unified AS information queries (from bgpkit-commons)
 - `As2relRepository` - AS-level relationship queries
-
-#### Repositories and Caches
-- `RpkiRepository` - RPKI ROA/ASPA tables + local validation using SQLite
-- `Pfx2asFileCache` - Prefix-to-AS mappings cache with TTL support (file-based)
+- `RpkiRepository` - RPKI ROA/ASPA tables + local validation (blob-based prefix storage)
+- `Pfx2asRepository` - Prefix-to-ASN mappings (blob-based prefix storage)
 
 ## Usage Examples
 
@@ -92,16 +87,16 @@ use monocle::database::MonocleDatabase;
 // Open the monocle database
 let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 
-// Bootstrap AS2Org data if needed
-if db.needs_as2org_bootstrap() {
-    let (as_count, org_count) = db.bootstrap_as2org()?;
-    println!("Loaded {} ASes, {} orgs", as_count, org_count);
+// Bootstrap ASInfo data if needed
+if db.needs_asinfo_bootstrap() {
+    let count = db.bootstrap_asinfo()?;
+    println!("Loaded {} ASes", count);
 }
 
 // Search for AS information
-let results = db.as2org().search_by_name("cloudflare")?;
+let results = db.asinfo().search_by_name("cloudflare")?;
 for r in results {
-    println!("AS{}: {} ({})", r.asn, r.as_name, r.org_name);
+    println!("AS{}: {}", r.asn, r.name);
 }
 
 // Update AS2Rel data
@@ -139,27 +134,34 @@ let result = rpki.validate_detailed(13335, "1.1.1.0/24")?;
 println!("{} {} -> {} ({})", result.prefix, result.asn, result.state, result.reason);
 ```
 
-### Pfx2as File Cache
+### Pfx2as Repository (SQLite)
 
 ```rust
-use monocle::database::{Pfx2asFileCache, Pfx2asRecord, DEFAULT_PFX2AS_TTL};
+use monocle::database::{MonocleDatabase, DEFAULT_PFX2AS_CACHE_TTL};
 
-let cache = Pfx2asFileCache::new("~/.monocle")?;
+let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let pfx2as = db.pfx2as();
 
-// Store prefix-to-AS mappings
-let records = vec![
-    Pfx2asRecord {
-        prefix: "1.0.0.0/24".to_string(),
-        origin_asns: vec![13335],
-    },
-];
-cache.store("bgpkit", records)?;
-
-// Load and build prefix map for lookups
-let prefix_map = cache.build_prefix_map("bgpkit")?;
-if let Some(asns) = prefix_map.get("1.0.0.0/24") {
-    println!("Origin ASNs: {:?}", asns);
+// Check if refresh is needed
+if pfx2as.needs_refresh(DEFAULT_PFX2AS_CACHE_TTL)? {
+    // Refresh via CLI: monocle config db-refresh pfx2as
+    // Or via WebSocket: database.refresh with source: "pfx2as"
 }
+
+// Exact prefix match
+let results = pfx2as.lookup_exact("1.1.1.0/24")?;
+
+// Longest prefix match (most specific covering prefix)
+let results = pfx2as.lookup_longest("1.1.1.1")?;
+
+// Find all supernets (prefixes that cover the query)
+let results = pfx2as.lookup_covering("1.1.1.0/24")?;
+
+// Find all subnets (prefixes covered by the query)
+let results = pfx2as.lookup_covered("1.0.0.0/8")?;
+
+// Get all prefixes for an ASN
+let results = pfx2as.get_prefixes_by_asn(13335)?;
 ```
 
 ## Schema Definitions
@@ -173,26 +175,14 @@ CREATE TABLE monocle_meta (
 )
 ```
 
-### AS2Org Tables
+### ASInfo Table
 ```sql
-CREATE TABLE as2org_as (
+CREATE TABLE asinfo (
     asn INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
-    org_id TEXT NOT NULL,
+    country TEXT,
     source TEXT NOT NULL
 )
-
-CREATE TABLE as2org_org (
-    org_id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    country TEXT NOT NULL,
-    source TEXT NOT NULL
-)
-
--- Views for convenient queries
-CREATE VIEW as2org_both AS ...
-CREATE VIEW as2org_count AS ...
-CREATE VIEW as2org_all AS ...
 ```
 
 ### AS2Rel Tables
@@ -214,60 +204,43 @@ CREATE TABLE as2rel (
 )
 ```
 
-## File Cache Format
+### Pfx2as Table (Blob-based prefix storage)
+```sql
+CREATE TABLE pfx2as (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prefix TEXT NOT NULL,
+    prefix_len INTEGER NOT NULL,
+    prefix_start BLOB NOT NULL,  -- 16-byte start address
+    prefix_end BLOB NOT NULL,    -- 16-byte end address
+    asn INTEGER NOT NULL
+)
 
-Monocle uses file-based caches for some datasets that are convenient to store as JSON blobs and/or load into in-memory data structures.
-
-### RPKI Cache (Historical / Auxiliary)
-
-Current RPKI data is stored in SQLite (see `monocle/rpki` repository). The JSON cache format below is used for **historical snapshots** and/or auxiliary workflows.
-
-Files are stored at: `{data_dir}/cache/rpki/rpki_{source}_{date}.json`
-
-```json
-{
-  "meta": {
-    "source": "cloudflare",
-    "data_date": null,
-    "cached_at": "2024-01-15T12:00:00Z",
-    "roa_count": 500000,
-    "aspa_count": 1000
-  },
-  "roas": [
-    {
-      "prefix": "1.0.0.0/24",
-      "max_length": 24,
-      "origin_asn": 13335,
-      "ta": "ARIN"
-    }
-  ],
-  "aspas": [
-    {
-      "customer_asn": 65001,
-      "provider_asns": [13335, 15169]
-    }
-  ]
-}
+CREATE INDEX idx_pfx2as_range ON pfx2as(prefix_start, prefix_end);
+CREATE INDEX idx_pfx2as_asn ON pfx2as(asn);
+CREATE INDEX idx_pfx2as_prefix ON pfx2as(prefix);
 ```
 
-### Pfx2as Cache
+### RPKI Tables (Blob-based prefix storage)
+```sql
+CREATE TABLE rpki_roas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prefix TEXT NOT NULL,
+    prefix_len INTEGER NOT NULL,
+    prefix_start BLOB NOT NULL,  -- 16-byte start address
+    prefix_end BLOB NOT NULL,    -- 16-byte end address
+    max_length INTEGER NOT NULL,
+    origin_asn INTEGER NOT NULL,
+    ta TEXT NOT NULL
+)
 
-Files are stored at: `{data_dir}/cache/pfx2as/pfx2as_{source}.json`
+CREATE TABLE rpki_aspas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_asn INTEGER NOT NULL,
+    provider_asn INTEGER NOT NULL
+)
 
-```json
-{
-  "meta": {
-    "source": "https://data.bgpkit.com/pfx2as/pfx2as-latest.json.bz2",
-    "cached_at": "2024-01-15T12:00:00Z",
-    "record_count": 1000000
-  },
-  "records": [
-    {
-      "prefix": "1.0.0.0/24",
-      "origin_asns": [13335]
-    }
-  ]
-}
+CREATE INDEX idx_rpki_roas_range ON rpki_roas(prefix_start, prefix_end);
+CREATE INDEX idx_rpki_roas_asn ON rpki_roas(origin_asn);
 ```
 
 ## Cache TTL Configuration
@@ -276,9 +249,10 @@ Default TTL values:
 
 | Cache Type | Default TTL | Constant |
 |------------|-------------|----------|
-| RPKI (current, SQLite) | 24 hours | `DEFAULT_RPKI_CACHE_TTL` |
-| RPKI (historical, file cache) | 7 days | `DEFAULT_RPKI_HISTORICAL_TTL` |
-| Pfx2as (file cache) | 24 hours | `DEFAULT_PFX2AS_TTL` |
+| ASInfo | 7 days | `DEFAULT_ASINFO_TTL` |
+| AS2Rel | 7 days | `DEFAULT_AS2REL_TTL` |
+| RPKI (SQLite) | 24 hours | `DEFAULT_RPKI_CACHE_TTL` |
+| Pfx2as (SQLite) | 24 hours | `DEFAULT_PFX2AS_CACHE_TTL` |
 
 ## Testing
 
@@ -287,9 +261,10 @@ Default TTL values:
 cargo test database::
 
 # Run specific module tests
-cargo test as2org
+cargo test asinfo
 cargo test as2rel
-cargo test file_cache
+cargo test rpki
+cargo test pfx2as
 ```
 
 In-memory databases are useful for testing:
@@ -302,14 +277,14 @@ fn test_my_feature() {
 }
 ```
 
-For file cache tests, use `tempfile`:
+For temporary directory tests, use `tempfile`:
 
 ```rust
 #[test]
-fn test_cache() {
+fn test_with_temp_db() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let cache = Pfx2asFileCache::new(temp_dir.path().to_str().unwrap()).unwrap();
-    // Test with temporary cache directory
+    let db = MonocleDatabase::open_in_dir(temp_dir.path().to_str().unwrap()).unwrap();
+    // Test with temporary database
 }
 ```
 
@@ -317,3 +292,5 @@ fn test_cache() {
 
 - [Architecture Overview](../../ARCHITECTURE.md) - System architecture
 - [Lens Module](../lens/README.md) - Lens patterns and conventions
+- [DEVELOPMENT.md](../../DEVELOPMENT.md) - Contributor guide
+- [Server README](../server/README.md) - WebSocket API (database.status, database.refresh)

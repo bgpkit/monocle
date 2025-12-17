@@ -1,8 +1,9 @@
 # Lens Module
 
-The `lens` module is Monocle’s **use‑case layer**. Each lens exposes a cohesive set of operations (search, parse, RPKI lookup, etc.) through a stable, programmatic API that can be reused by:
+The `lens` module is Monocle's **use‑case layer**. Each lens exposes a cohesive set of operations (search, parse, RPKI lookup, etc.) through a stable, programmatic API that can be reused by:
 
 - the `monocle` CLI,
+- the WebSocket server (`monocle server`),
 - GUI frontends (planned: GPUI),
 - other Rust applications embedding Monocle as a library.
 
@@ -14,34 +15,59 @@ A lens is responsible for **domain logic**, **input normalization/validation**, 
 
 ```
 lens/
-├── mod.rs              # Lens module exports
+├── mod.rs              # Lens module exports (feature-gated)
 ├── README.md           # This document
 ├── utils.rs            # OutputFormat + formatting helpers
 │
-├── as2org/             # AS→Org lookups (database-backed)
+├── time/               # Time parsing / formatting (lens-core)
+│   └── mod.rs
+│
+├── country.rs          # Country lookup (lens-bgpkit)
+├── ip/                 # IP information lookups (lens-bgpkit)
+│   └── mod.rs
+├── parse/              # MRT parsing + progress callbacks (lens-bgpkit)
+│   └── mod.rs
+├── search/             # Search across public MRT files (lens-bgpkit)
 │   ├── mod.rs
-│   ├── args.rs
-│   └── types.rs
-├── as2rel/             # AS relationship lookups (database-backed)
+│   └── query_builder.rs
+├── rpki/               # RPKI operations (lens-bgpkit)
+│   ├── mod.rs
+│   └── commons.rs
+├── pfx2as/             # Prefix→AS mapping types (lens-bgpkit)
+│   └── mod.rs
+├── as2rel/             # AS relationship lookups (lens-bgpkit)
 │   ├── mod.rs
 │   ├── args.rs
 │   └── types.rs
 │
-├── country.rs          # Country lookup (in-memory)
-├── ip/                 # IP information lookups
-│   └── mod.rs
-├── parse/              # MRT parsing (+ progress callbacks)
-│   └── mod.rs
-├── pfx2as/             # Prefix→AS mapping
-│   └── mod.rs
-├── rpki/               # RPKI operations (current + historical sources)
-│   ├── mod.rs
-│   └── commons.rs
-├── search/             # Search across public MRT files (+ progress callbacks)
-│   ├── mod.rs
-│   └── query_builder.rs
-└── time/               # Time parsing / formatting utilities
-    └── mod.rs
+└── inspect/            # Unified AS/prefix inspection (lens-full)
+    ├── mod.rs          # InspectLens implementation
+    └── types.rs        # Result types, section selection
+```
+
+---
+
+## Feature Tiers
+
+Lenses are organized by feature requirements:
+
+| Feature | Lenses | Key Dependencies |
+|---------|--------|------------------|
+| `lens-core` | `TimeLens` | chrono, dateparser |
+| `lens-bgpkit` | `CountryLens`, `IpLens`, `ParseLens`, `SearchLens`, `RpkiLens`, `Pfx2asLens`, `As2relLens` | bgpkit-*, rayon, tabled |
+| `lens-full` | `InspectLens` | All above |
+
+Library users can select minimal features:
+
+```toml
+# Time parsing only
+monocle = { version = "0.10", default-features = false, features = ["lens-core"] }
+
+# BGP operations without CLI
+monocle = { version = "0.10", default-features = false, features = ["lens-bgpkit"] }
+
+# All lenses including InspectLens
+monocle = { version = "0.10", default-features = false, features = ["lens-full"] }
 ```
 
 ---
@@ -53,6 +79,7 @@ lens/
 Lenses are designed to be called from multiple frontends:
 
 - **CLI**: commands call into lenses and print results using `OutputFormat`.
+- **WebSocket**: handlers call lenses and stream progress/results via `WsOpSink`.
 - **GUI**: a UI can call lenses on a worker thread and stream progress/results back to the UI.
 - **Library**: users can call lens APIs directly without going through CLI argument parsing.
 
@@ -124,22 +151,24 @@ Progress types are designed to be:
 
 These lenses require access to the persistent SQLite database (typically via `MonocleDatabase`):
 
-- `As2orgLens`
-- `As2relLens`
+- `As2relLens` - AS-level relationships
+- `InspectLens` - Unified AS/prefix inspection (uses ASInfo, AS2Rel, RPKI, Pfx2as repositories)
 
-(Some RPKI operations also depend on the database for current-data caching, depending on the operation path.)
+### Database-optional lenses
+
+These lenses can use the database for caching but don't strictly require it:
+
+- `RpkiLens` - Uses database for current data cache; historical queries use bgpkit-commons directly
 
 ### Standalone lenses
 
 These lenses do not require a persistent database reference:
 
-- `TimeLens`
-- `CountryLens`
-- `IpLens`
-- `ParseLens`
-- `SearchLens`
-- `Pfx2asLens`
-- `RpkiLens` (historical data paths can be fully standalone; current data may use the DB cache noted above)
+- `TimeLens` - Time parsing and formatting
+- `CountryLens` - Country code/name lookup (uses bgpkit-commons)
+- `IpLens` - IP information lookup (uses external API)
+- `ParseLens` - MRT file parsing
+- `SearchLens` - BGP message search across MRT files
 
 ---
 
@@ -147,7 +176,7 @@ These lenses do not require a persistent database reference:
 
 > Note: code below is intentionally example-focused; check the module docs / rustdoc for exact function signatures where needed.
 
-### TimeLens
+### TimeLens (lens-core)
 
 ```rust,ignore
 use monocle::lens::time::{TimeLens, TimeParseArgs};
@@ -164,26 +193,54 @@ let out = OutputFormat::Table.format(&results);
 println!("{}", out);
 ```
 
-### As2orgLens (database-backed)
+### InspectLens (lens-full, database-backed)
 
 ```rust,ignore
 use monocle::database::MonocleDatabase;
-use monocle::lens::as2org::{As2orgLens, As2orgSearchArgs};
+use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 use monocle::lens::utils::OutputFormat;
 
 let db = MonocleDatabase::open_in_dir("~/.monocle")?;
-let lens = As2orgLens::new(&db);
+let lens = InspectLens::new(&db);
 
-if lens.needs_bootstrap() {
-    lens.bootstrap()?;
+// Query AS information
+let options = InspectQueryOptions::default();
+let result = lens.query_asn(13335, &options)?;
+println!("AS{}: {}", result.asn, result.name.unwrap_or_default());
+
+// Query prefix information
+let result = lens.query_prefix("1.1.1.0/24".parse()?, &options)?;
+println!("{:?}", result);
+
+// Search by name
+let results = lens.search_by_name("cloudflare", 20)?;
+for r in results {
+    println!("AS{}: {}", r.asn, r.name.unwrap_or_default());
 }
-
-let args = As2orgSearchArgs::new("cloudflare");
-let results = lens.search(&args)?;
-println!("{}", OutputFormat::JsonPretty.format(&results));
 ```
 
-### SearchLens with progress (GUI/CLI-friendly)
+### As2relLens (lens-bgpkit, database-backed)
+
+```rust,ignore
+use monocle::database::MonocleDatabase;
+use monocle::lens::as2rel::{As2relLens, As2relSearchArgs};
+use monocle::lens::utils::OutputFormat;
+
+let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let lens = As2relLens::new(&db);
+
+// Update data if needed
+if lens.needs_update() {
+    lens.update()?;
+}
+
+// Query relationships for an ASN
+let args = As2relSearchArgs::new(13335);
+let results = lens.search(&args)?;
+println!("{}", OutputFormat::Table.format(&results));
+```
+
+### SearchLens with progress (lens-bgpkit)
 
 ```rust,ignore
 use monocle::lens::search::{SearchLens, SearchFilters, SearchProgress};
@@ -219,9 +276,14 @@ For a detailed contributor walkthrough, see `DEVELOPMENT.md`. In short:
    - `<NewLens>Args` (input)
    - `<NewLens>Result` (output)
    - `<NewLens>Lens` (operations)
-3. Wire into:
-   - `src/lens/mod.rs` exports
-   - CLI command module under `src/bin/commands/` (optional)
+3. Add feature gate in `src/lens/mod.rs`:
+   ```rust
+   #[cfg(feature = "lens-bgpkit")]  // or appropriate feature
+   pub mod newlens;
+   ```
+4. Wire into (optional):
+   - CLI command module under `src/bin/commands/`
+   - WebSocket handler under `src/server/handlers/`
 
 ---
 
@@ -229,10 +291,10 @@ For a detailed contributor walkthrough, see `DEVELOPMENT.md`. In short:
 
 Consistent naming makes lenses predictable:
 
-- Lens struct: `<Name>Lens` (e.g., `TimeLens`, `RpkiLens`)
-- Arg structs: `<Name><Op>Args` (e.g., `As2orgSearchArgs`, `RpkiRoaLookupArgs`)
-- Result structs: `<Name><Op>Result` (e.g., `As2orgSearchResult`)
-- Module names: snake_case (`as2org`, `pfx2as`)
+- Lens struct: `<Name>Lens` (e.g., `TimeLens`, `RpkiLens`, `InspectLens`)
+- Arg structs: `<Name><Op>Args` (e.g., `As2relSearchArgs`, `RpkiRoaLookupArgs`)
+- Result structs: `<Name><Op>Result` (e.g., `As2relSearchResult`)
+- Module names: snake_case (`as2rel`, `pfx2as`, `inspect`)
 
 ---
 
@@ -256,4 +318,6 @@ Consistent naming makes lenses predictable:
 
 - `ARCHITECTURE.md` (project-level architecture)
 - `DEVELOPMENT.md` (contributor guide)
+- `src/server/README.md` (WebSocket API protocol)
 - `src/database/README.md` (database module overview)
+- `examples/README.md` (example code by feature tier)

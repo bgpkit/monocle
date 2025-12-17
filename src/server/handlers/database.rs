@@ -72,16 +72,6 @@ pub struct SourcesInfo {
     pub pfx2as: SourceInfo,
 }
 
-/// Cache info
-#[derive(Debug, Clone, Serialize)]
-pub struct CacheInfoResponse {
-    /// Cache directory
-    pub directory: String,
-
-    /// Pfx2as cache entry count
-    pub pfx2as_cache_count: usize,
-}
-
 /// Response for database.status
 #[derive(Debug, Clone, Serialize)]
 pub struct DatabaseStatusResponse {
@@ -90,9 +80,6 @@ pub struct DatabaseStatusResponse {
 
     /// Data sources status
     pub sources: SourcesInfo,
-
-    /// Cache info
-    pub cache: CacheInfoResponse,
 }
 
 /// Handler for database.status method
@@ -113,9 +100,7 @@ impl WsMethod for DatabaseStatusHandler {
     ) -> WsResult<()> {
         // Build paths
         let sqlite_path = format!("{}/monocle.db", ctx.data_dir);
-        let cache_dir = format!("{}/cache", ctx.data_dir);
         let sqlite_exists = Path::new(&sqlite_path).exists();
-        let cache_exists = Path::new(&cache_dir).exists();
 
         // Get SQLite size if exists
         let sqlite_size = if sqlite_exists {
@@ -178,20 +163,6 @@ impl WsMethod for DatabaseStatusHandler {
                 )
             };
 
-        // Count pfx2as cache files
-        let pfx2as_cache_count = if cache_exists {
-            std::fs::read_dir(&cache_dir)
-                .map(|entries| {
-                    entries
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.file_name().to_string_lossy().starts_with("pfx2as_"))
-                        .count()
-                })
-                .unwrap_or(0)
-        } else {
-            0
-        };
-
         let status_to_string = |status: &DataSourceStatus| -> String {
             match status {
                 DataSourceStatus::Ready => "ready".to_string(),
@@ -225,10 +196,6 @@ impl WsMethod for DatabaseStatusHandler {
                     last_updated: None,
                     next_refresh_after: None,
                 },
-            },
-            cache: CacheInfoResponse {
-                directory: cache_dir,
-                pfx2as_cache_count,
             },
         };
 
@@ -489,10 +456,6 @@ mod tests {
                     last_updated: Some("2024-01-01T00:00:00Z".to_string()),
                     next_refresh_after: None,
                 },
-            },
-            cache: CacheInfoResponse {
-                directory: "/path/to/cache".to_string(),
-                pfx2as_cache_count: 5,
             },
         };
         let json = serde_json::to_string(&response).unwrap();

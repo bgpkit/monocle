@@ -1,6 +1,6 @@
 # Monocle Architecture
 
-This document describes the architecture of the `monocle` project: a BGP information toolkit that can be used as both a Rust library and a command-line application.
+This document describes the architecture of the `monocle` project: a BGP information toolkit that can be used as both a Rust library, a command-line application, and a WebSocket server.
 
 ## Goals and Design Principles
 
@@ -79,69 +79,71 @@ src/
 │   │
 │   └── monocle/              # Main persistent monocle database
 │       ├── mod.rs
-│       ├── asinfo.rs         # Unified AS information (replaces as2org)
+│       ├── asinfo.rs         # Unified AS information (from bgpkit-commons)
 │       ├── as2rel.rs         # AS relationships
-│       ├── rpki.rs           # ROAs/ASPAs cache
-│       ├── pfx2as.rs         # Prefix-to-ASN mappings
-│       └── file_cache.rs     # File-based caching utilities
+│       ├── rpki.rs           # ROAs/ASPAs cache (SQLite with blob prefixes)
+│       └── pfx2as.rs         # Prefix-to-ASN mappings (SQLite with blob prefixes)
 │
 ├── lens/                     # Business logic ("use-cases")
 │   ├── mod.rs
 │   ├── README.md
 │   ├── utils.rs              # OutputFormat, formatting helpers
-│   ├── country.rs            # Country code/name lookup
+│   ├── country.rs            # Country code/name lookup (lens-bgpkit)
 │   │
-│   ├── as2rel/               # AS relationship lens
+│   ├── as2rel/               # AS relationship lens (lens-bgpkit)
 │   │   ├── mod.rs
 │   │   ├── args.rs
 │   │   └── types.rs
 │   │
-│   ├── inspect/              # Unified AS/prefix inspection (main entry point)
+│   ├── inspect/              # Unified AS/prefix inspection (lens-full)
 │   │   ├── mod.rs            # InspectLens implementation
 │   │   └── types.rs          # Result types, section selection
 │   │
-│   ├── ip/                   # IP information lookup
+│   ├── ip/                   # IP information lookup (lens-bgpkit)
 │   │   └── mod.rs
 │   │
-│   ├── parse/                # MRT file parsing
+│   ├── parse/                # MRT file parsing (lens-bgpkit)
 │   │   └── mod.rs
 │   │
-│   ├── pfx2as/               # Prefix-to-ASN mapping lens
-│   │   └── mod.rs            # Pfx2asLens with lookup/refresh
+│   ├── pfx2as/               # Prefix-to-ASN mapping types (lens-bgpkit)
+│   │   └── mod.rs            # Types only; repository handles lookups
 │   │
-│   ├── rpki/                 # RPKI validation and data
+│   ├── rpki/                 # RPKI validation and data (lens-bgpkit)
 │   │   ├── mod.rs            # RpkiLens with validation logic
 │   │   └── commons.rs        # bgpkit-commons integration
 │   │
-│   ├── search/               # BGP message search
+│   ├── search/               # BGP message search (lens-bgpkit)
 │   │   ├── mod.rs
 │   │   └── query_builder.rs
 │   │
-│   └── time/                 # Time parsing and formatting
+│   └── time/                 # Time parsing and formatting (lens-core)
 │       └── mod.rs
 │
-├── server/                   # WebSocket server
+├── server/                   # WebSocket server (cli feature)
 │   ├── mod.rs                # Server startup, handle_socket
-│   ├── protocol.rs           # Core protocol types
+│   ├── protocol.rs           # Core protocol types (RequestEnvelope, ResponseEnvelope)
 │   ├── router.rs             # Router + Dispatcher
 │   ├── handler.rs            # WsMethod trait, WsContext
 │   ├── sink.rs               # WsSink (transport primitive)
 │   ├── op_sink.rs            # WsOpSink (terminal-guarded)
-│   ├── operations.rs         # Operation registry
+│   ├── operations.rs         # Operation registry for cancellation
 │   └── handlers/             # Method handlers
 │       ├── mod.rs
 │       ├── inspect.rs        # inspect.query, inspect.refresh
-│       ├── rpki.rs
-│       ├── as2rel.rs
+│       ├── rpki.rs           # rpki.validate, rpki.roas, rpki.aspas
+│       ├── as2rel.rs         # as2rel.search, as2rel.relationship
+│       ├── database.rs       # database.status, database.refresh
+│       ├── parse.rs          # parse.start, parse.cancel (streaming)
+│       ├── search.rs         # search.start, search.cancel (streaming)
 │       └── ...
 │
 └── bin/
     ├── monocle.rs            # CLI entry point
     └── commands/             # Command handlers (thin wrappers around lenses)
         ├── as2rel.rs
-        ├── config.rs
+        ├── config.rs         # Config display + db-refresh, db-backup, db-sources
         ├── country.rs
-        ├── inspect.rs        # Unified inspect command
+        ├── inspect.rs        # Unified inspect command (replaces whois, pfx2as)
         ├── ip.rs
         ├── parse.rs
         ├── rpki.rs
@@ -155,14 +157,15 @@ src/
 
 The `inspect` command and lens consolidate multiple data sources into a single query interface:
 
-- **ASInfo**: Core AS data, AS2Org, PeeringDB, Hegemony, Population
+- **ASInfo**: Core AS data from bgpkit-commons (replaces as2org)
 - **Connectivity**: AS2Rel-based upstream/peer/downstream relationships
 - **RPKI**: ROAs and ASPA records
 - **Pfx2as**: Prefix-to-ASN mappings
 
 Features:
-- Mixed query types (ASN, prefix, name search)
-- Section selection (`--select`)
+- Auto-detects query type (ASN, prefix, IP address, or name)
+- Section selection (`--show basic/prefixes/connectivity/rpki/all`)
+- Display limits with `--full`, `--full-roas`, `--full-prefixes`, `--full-connectivity`
 - Auto-refresh of stale data
 - Multiple output formats
 
@@ -170,28 +173,40 @@ Features:
 
 The RPKI lens (`RpkiLens`) provides:
 - **Validation logic** (RFC 6811): Valid/Invalid/NotFound states
-- **Cache management**: Uses `RpkiRepository` for current data
+- **Cache management**: Uses `RpkiRepository` for current data (SQLite with blob prefixes)
 - **Historical queries**: Uses bgpkit-commons for date-specific lookups
 
 Layering:
-- `RpkiRepository` (database): Raw data access only
+- `RpkiRepository` (database): Raw data access only (CRUD, prefix range queries)
 - `RpkiLens` (lens): Validation logic, cache refresh, formatting
 
 ### `pfx2as` - Prefix-to-ASN Mapping
 
-The Pfx2as lens (`Pfx2asLens`) provides:
-- **Lookup modes**: Exact, longest, covering, covered
+The Pfx2as repository (`Pfx2asRepository`) provides:
+- **Lookup modes**: Exact, longest prefix match, covering (supernets), covered (subnets)
 - **ASN queries**: Get all prefixes for an ASN
-- **Cache management**: Download and store pfx2as data
+- **SQLite storage**: IP prefixes stored as 16-byte start/end address pairs
+- **Cache management**: 24-hour TTL with automatic refresh
+
+Note: The file-based cache has been removed; all pfx2as data now uses SQLite.
 
 ### `server` - WebSocket API
 
-The WebSocket server provides programmatic access to monocle functionality:
+The WebSocket server (`monocle server`) provides programmatic access to monocle functionality:
 
 - **Protocol**: JSON-RPC style with request/response envelopes
-- **Streaming**: Progress updates for long-running operations
-- **Terminal guard**: `WsOpSink` ensures exactly one terminal response
-- **Operation tracking**: `OperationRegistry` for cancellation support
+- **Streaming**: Progress updates for long-running operations (parse, search)
+- **Terminal guard**: `WsOpSink` ensures exactly one terminal response per operation
+- **Operation tracking**: `OperationRegistry` for cancellation support via `op_id`
+- **DB-first policy**: Queries read from local SQLite cache
+
+Available method namespaces:
+- `system.*`: Server introspection (info, methods)
+- `time.*`, `ip.*`, `country.*`: Utility lookups
+- `rpki.*`, `as2rel.*`, `pfx2as.*`: BGP data queries
+- `inspect.*`: Unified AS/prefix inspection
+- `parse.*`, `search.*`: Streaming MRT operations
+- `database.*`: Database management
 
 ## Module Architecture
 
@@ -199,9 +214,10 @@ The WebSocket server provides programmatic access to monocle functionality:
 
 Responsibilities:
 - compute default paths and load config file overrides
-- provide shared helpers used by both `config` and `database` CLI commands to display:
+- provide shared helpers used by `config` CLI command to display:
   - SQLite database info (size, table counts, last update time)
   - cache settings and cache directory info
+  - database management (refresh, backup, sources)
 
 This module is intentionally "infra-ish": it should not implement domain logic.
 
@@ -224,11 +240,11 @@ Notes:
 Responsibilities:
 - main persistent monocle dataset store (SQLite DB under the monocle data directory)
 - repositories for datasets:
-  - ASInfo (unified AS information from multiple sources)
+  - ASInfo (unified AS information from bgpkit-commons)
   - AS2Rel (AS-level relationships)
-  - RPKI (ROAs/ASPAs metadata and lookup tables)
-  - Pfx2as (prefix-to-ASN mappings)
-- file cache helpers for datasets that are stored outside SQLite (if applicable)
+  - RPKI (ROAs/ASPAs with blob-based prefix storage)
+  - Pfx2as (prefix-to-ASN mappings with blob-based prefix storage)
+- file cache helpers for auxiliary file-based caching
 
 Key idea:
 - `MonocleDatabase` is the entry point for accessing the persistent DB/repositories.
@@ -303,24 +319,34 @@ The CLI should not duplicate core logic. It should:
 
 ## Feature Flags
 
-Monocle supports conditional compilation via Cargo features.
+Monocle supports conditional compilation via Cargo features, organized in tiers:
 
-- `cli` (default):
-  - enables clap derives and other CLI-only dependencies
-  - required to build the `monocle` binary
-- `full`:
-  - currently aliases to `cli`
+- **`database`**: SQLite operations only (rusqlite, oneio, ipnet, chrono)
+- **`lens-core`**: Standalone lenses like TimeLens (adds chrono-humanize, dateparser)
+- **`lens-bgpkit`**: BGP-related lenses (adds bgpkit-*, rayon, tabled)
+- **`lens-full`**: All lenses including InspectLens
+- **`display`**: Table formatting with tabled (included in lens-bgpkit)
+- **`cli`** (default): Full CLI binary with server support (adds axum, tokio, tower-http)
 
-Library users can disable default features to reduce dependency footprint:
+Library users can select minimal features based on their needs:
 
 ```toml
-monocle = { version = "0.10", default-features = false }
+# Minimal database access
+monocle = { version = "0.10", default-features = false, features = ["database"] }
+
+# BGP operations without CLI overhead
+monocle = { version = "0.10", default-features = false, features = ["lens-bgpkit"] }
+
+# Full functionality without CLI
+monocle = { version = "0.10", default-features = false, features = ["lens-full"] }
 ```
 
 ## Related Documents
 
 - `README.md` — user-facing CLI and library overview
-- `REFACTOR_TODO.md` — refactoring progress and remaining tasks
+- `CHANGELOG.md` — version history and breaking changes
+- `DEVELOPMENT.md` — contributor guide for adding lenses and fixing bugs
+- `src/server/README.md` — WebSocket API protocol specification
 - `src/database/README.md` — database module notes
 - `src/lens/README.md` — lens module patterns and conventions
-- `src/server/REFACTOR_PLAN.md` — WebSocket server design notes
+- `examples/README.md` — example code organized by feature tier

@@ -2,18 +2,13 @@
 //!
 //! This module provides the main persistent database used across monocle sessions.
 //! The monocle database stores:
-//! - AS2Org mappings (AS to Organization) - SQLite
+//! - ASInfo (unified AS information) - SQLite
 //! - AS2Rel data (AS-level relationships) - SQLite
 //! - RPKI ROAs and ASPAs - SQLite (with blob-based prefix storage)
 //! - Pfx2as mappings - SQLite (with blob-based prefix storage)
-//!
-//! Legacy file-based caching is still available for backward compatibility:
-//! - RPKI ROAs and ASPAs - JSON file cache
-//! - Pfx2as mappings - JSON file cache
 
 mod as2rel;
 mod asinfo;
-mod file_cache;
 mod pfx2as;
 mod rpki;
 
@@ -38,23 +33,6 @@ pub use pfx2as::{
     Pfx2asSchemaDefinitions, ValidationStats, DEFAULT_PFX2AS_CACHE_TTL,
 };
 
-// File-based cache for RPKI
-pub use file_cache::{
-    // Cache utilities
-    cache_size,
-    clear_all_caches,
-    ensure_cache_dirs,
-    // RPKI cache
-    AspaRecord,
-    RoaRecord,
-    RpkiCacheData,
-    RpkiCacheMeta,
-    RpkiFileCache,
-    // TTL defaults
-    DEFAULT_RPKI_HISTORICAL_TTL,
-    DEFAULT_RPKI_TTL,
-};
-
 use crate::database::core::{DatabaseConn, SchemaManager, SchemaStatus};
 use anyhow::{anyhow, Result};
 use tracing::info;
@@ -66,9 +44,6 @@ use tracing::info;
 /// - Schema initialization and migrations
 /// - Automatic schema drift detection and reset
 /// - Access to data repositories
-///
-/// For RPKI and Pfx2as data that require INET operations, use the
-/// `RpkiFileCache` and `Pfx2asFileCache` types instead.
 pub struct MonocleDatabase {
     db: DatabaseConn,
 }

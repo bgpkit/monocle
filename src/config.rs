@@ -250,15 +250,6 @@ pub struct SqliteDatabaseInfo {
     pub pfx2as_last_updated: Option<String>,
 }
 
-/// Information about the file-based cache
-#[derive(Debug, Serialize, Clone)]
-pub struct CacheInfo {
-    pub directory: String,
-    pub exists: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size_bytes: Option<u64>,
-}
-
 /// Cache settings
 #[derive(Debug, Serialize, Clone)]
 pub struct CacheSettings {
@@ -465,25 +456,6 @@ pub fn get_sqlite_info(config: &MonocleConfig) -> SqliteDatabaseInfo {
         rpki_last_updated,
         pfx2as_count,
         pfx2as_last_updated,
-    }
-}
-
-/// Get cache information
-pub fn get_cache_info(config: &MonocleConfig) -> CacheInfo {
-    use crate::database::cache_size;
-
-    let cache_dir = config.cache_dir();
-    let cache_exists = Path::new(&cache_dir).exists();
-    let cache_size_bytes = if cache_exists {
-        cache_size(&config.data_dir).ok()
-    } else {
-        None
-    };
-
-    CacheInfo {
-        directory: cache_dir,
-        exists: cache_exists,
-        size_bytes: cache_size_bytes,
     }
 }
 

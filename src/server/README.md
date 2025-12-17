@@ -27,7 +27,7 @@ Components and responsibilities:
   - receive `progress` / `stream` / terminal `result` or `error`
 - Monocle server
   - WebSocket endpoint (Axum): connection management, request parsing/validation, routing
-  - Lens layer: implements operations (time/ip/rpki/as2org/as2rel/pfx2as/country/parse/search)
+  - Lens layer: implements operations (time/ip/rpki/inspect/as2rel/pfx2as/country/parse/search)
   - Data layer: SQLite DB (authoritative local store) + file caches (as applicable)
 
 ## Common Types (Referenced by Methods)
@@ -261,12 +261,26 @@ Returns a minimal method catalog for discoverability (names + short schemas). Ke
 
 ### Namespace Organization
 
+| Namespace | Description | Feature |
+|-----------|-------------|---------|
+| `system.*` | Server introspection | cli |
+| `time.*` | Time parsing utilities | lens-core |
+| `ip.*` | IP information lookup | lens-bgpkit |
+| `rpki.*` | RPKI validation and data | lens-bgpkit |
+| `as2rel.*` | AS-level relationships | lens-bgpkit |
+| `pfx2as.*` | Prefix-to-ASN mapping | lens-bgpkit |
+| `country.*` | Country code/name lookup | lens-bgpkit |
+| `inspect.*` | Unified AS/prefix inspection | lens-full |
+| `parse.*` | MRT file parsing (streaming) | lens-bgpkit |
+| `search.*` | BGP message search (streaming) | lens-bgpkit |
+| `database.*` | Database management | database |
+
 Methods are organized into namespaces matching the lens modules:
 
 - `time.*` - Time parsing and formatting
 - `ip.*` - IP information lookup
 - `rpki.*` - RPKI validation and ROA/ASPA queries
-- `as2org.*` - AS-to-Organization mappings
+- `inspect.*` - Unified AS/prefix inspection (replaces as2org)
 - `as2rel.*` - AS-level relationships
 - `pfx2as.*` - Prefix-to-ASN mappings
 - `country.*` - Country code/name lookup
@@ -490,24 +504,79 @@ If RPKI data is not present locally, the server returns a terminal `error` with 
 
 ---
 
-### AS2Org Operations (`as2org.*`)
+### Inspect Operations (`inspect.*`)
 
-#### `as2org.search`
+The `inspect` namespace provides unified AS and prefix information lookup, replacing the former `as2org` namespace.
+
+#### `inspect.query`
+
+Query AS or prefix information from multiple data sources.
 
 Search for AS-to-Organization mappings.
 
 **Request:**
 ```json
 {
-  "id": "7",
-  "method": "as2org.search",
+  "id": "req-12",
+  "method": "inspect.query",
   "params": {
-    "query": ["13335", "cloudflare"],
-    "asn_only": false,
-    "name_only": false,
-    "country_only": false,
-    "full_country": true,
-    "full_table": false
+    "query": "13335",
+    "query_type": "auto",
+    "sections": ["basic", "connectivity", "rpki"],
+    "limits": {
+      "roas": 10,
+      "prefixes": 10,
+      "connectivity": 5
+    }
+  }
+}
+```
+
+**Parameters:**
+- `query` (required): ASN (13335, AS13335), prefix (1.1.1.0/24), IP (1.1.1.1), or name (cloudflare)
+- `query_type` (optional): "auto" (default), "asn", "prefix", "name"
+- `sections` (optional): Array of sections to include: "basic", "prefixes", "connectivity", "rpki", "all"
+- `limits` (optional): Limits for each section (default: roas=10, prefixes=10, connectivity=5)
+
+**Response:**
+```json
+{
+  "id": "req-12",
+  "type": "result",
+  "data": {
+    "query": "13335",
+    "query_type": "asn",
+    "asn": 13335,
+    "name": "CLOUDFLARENET",
+    "country": "US",
+    "sections": {
+      "connectivity": {
+        "upstreams": [{"asn": 174, "name": "COGENT-174", "percentage": 85.2}],
+        "downstreams": [{"asn": 14789, "name": "CLOUDFLARE-CN", "percentage": 95.1}],
+        "peers": [{"asn": 6939, "name": "HURRICANE", "percentage": 92.3}]
+      },
+      "rpki": {
+        "roas": [{"prefix": "1.1.1.0/24", "max_length": 24, "ta": "ARIN"}],
+        "roa_count": 150
+      }
+    }
+  }
+}
+```
+
+#### `inspect.search`
+
+Search ASes by name or country.
+
+**Request:**
+```json
+{
+  "id": "req-13",
+  "method": "inspect.search",
+  "params": {
+    "query": "cloudflare",
+    "country": null,
+    "limit": 20
   }
 }
 ```
@@ -515,34 +584,43 @@ Search for AS-to-Organization mappings.
 **Response:**
 ```json
 {
-  "id": "7",
+  "id": "req-13",
   "type": "result",
   "data": {
     "results": [
-      {
-        "asn": 13335,
-        "as_name": "CLOUDFLARENET",
-        "org_name": "Cloudflare, Inc.",
-        "org_id": "CLOUD14",
-        "org_country": "United States",
-        "org_size": 10
-      }
-    ]
+      {"asn": 13335, "name": "CLOUDFLARENET", "country": "US"},
+      {"asn": 14789, "name": "CLOUDFLARE-CN", "country": "CN"}
+    ],
+    "count": 2
   }
 }
 ```
 
-#### `as2org.bootstrap`
+#### `inspect.refresh`
 
 Bootstrap AS2Org data from bgpkit-commons.
+Refresh the ASInfo local database from upstream source.
 
 **Request:**
 ```json
 {
-  "id": "8",
-  "method": "as2org.bootstrap",
+  "id": "req-14",
+  "method": "inspect.refresh",
   "params": {
     "force": false
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "id": "req-14",
+  "type": "result",
+  "data": {
+    "refreshed": true,
+    "as_count": 120415,
+    "message": "ASInfo data refreshed successfully"
   }
 }
 ```
@@ -903,7 +981,7 @@ Get the status of all data sources.
       "path": "/home/user/.monocle/monocle.db",
       "exists": true,
       "size_bytes": 52428800,
-      "as2org_count": 120000,
+      "asinfo_count": 120415,
       "as2rel_count": 500000,
       "rpki_roa_count": 450000
     },
@@ -936,7 +1014,7 @@ Refresh a specific data source.
   "id": "19",
   "method": "database.refresh",
   "params": {
-    "source": "rpki",
+    "source": "rpki",  // "asinfo", "as2rel", "rpki", or "pfx2as"
     "force": false
   }
 }
@@ -956,7 +1034,7 @@ Refresh a specific data source.
 ```
 
 DB-first rule:
-- All query methods (`rpki.*`, `as2org.*`, `as2rel.*`, `pfx2as.*`, etc.) must be **network-neutral** and **read from local database/cache only**.
+- All query methods (`rpki.*`, `inspect.*`, `as2rel.*`, `pfx2as.*`, etc.) must be **network-neutral** and **read from local database/cache only**.
 - Any network download/refresh must be explicit via `database.refresh` (or a dedicated refresh method if added later).
 - The server should deduplicate refresh: if `database.refresh` is called while a refresh for the same `source` is already running and `force=false`, return a response that references the existing `op_id` (and then stream progress for that operation).
 
@@ -1369,6 +1447,40 @@ class MonocleClient:
 ---
 
 ## Implementation Tracking
+
+### Implemented Methods
+
+| Method | Status | Notes |
+|--------|--------|-------|
+| `system.info` | ✅ | Server introspection |
+| `system.methods` | ✅ | Method listing |
+| `time.parse` | ✅ | Time string parsing |
+| `ip.lookup` | ✅ | IP information |
+| `ip.public` | ✅ | Public IP lookup |
+| `rpki.validate` | ✅ | RFC 6811 validation |
+| `rpki.roas` | ✅ | ROA listing |
+| `rpki.aspas` | ✅ | ASPA listing |
+| `as2rel.search` | ✅ | Relationship search |
+| `as2rel.relationship` | ✅ | Pair relationship |
+| `as2rel.update` | ✅ | Data refresh |
+| `pfx2as.lookup` | ✅ | Prefix-to-ASN mapping |
+| `country.lookup` | ✅ | Country code/name |
+| `inspect.query` | ✅ | Unified AS/prefix lookup |
+| `inspect.search` | ✅ | Name/country search |
+| `inspect.refresh` | ✅ | ASInfo refresh |
+| `parse.start` | ✅ | Streaming MRT parsing |
+| `parse.cancel` | ✅ | Cancel parsing |
+| `search.start` | ✅ | Streaming BGP search |
+| `search.cancel` | ✅ | Cancel search |
+| `database.status` | ✅ | Database info |
+| `database.refresh` | ✅ | Data source refresh |
+
+### Deprecated Methods
+
+| Method | Replacement | Notes |
+|--------|-------------|-------|
+| `as2org.search` | `inspect.search` | Use unified inspect namespace |
+| `as2org.bootstrap` | `inspect.refresh` | Use unified inspect namespace |
 
 The implementation plan and progress tracking has been moved to `WEBSOCKET_TODOS.md` to keep this design document focused and prevent it from becoming a mixed spec/roadmap.
 

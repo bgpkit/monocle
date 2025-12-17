@@ -17,56 +17,67 @@ src/
 ├── lib.rs                    # Public API exports
 ├── config.rs                 # Configuration management
 │
-├── lens/                     # Business logic layer
+├── lens/                     # Business logic layer (feature-gated)
 │   ├── mod.rs                # Lens module exports
 │   ├── utils.rs              # Shared utilities (OutputFormat, truncate_name)
-│   ├── as2org/               # Database-backed lens example
-│   │   ├── mod.rs            # Lens implementation
-│   │   ├── args.rs           # Input argument structs
-│   │   └── types.rs          # Output types and enums
-│   ├── as2rel/               # AS-level relationship lens
+│   ├── time/                 # Time parsing lens (lens-core)
+│   │   └── mod.rs
+│   ├── country.rs            # Country lookup (lens-bgpkit)
+│   ├── ip/                   # IP information lookup (lens-bgpkit)
+│   │   └── mod.rs
+│   ├── parse/                # MRT file parsing with progress (lens-bgpkit)
+│   │   └── mod.rs
+│   ├── search/               # BGP message search with progress (lens-bgpkit)
+│   │   ├── mod.rs
+│   │   └── query_builder.rs
+│   ├── rpki/                 # RPKI validation (lens-bgpkit)
+│   │   ├── mod.rs
+│   │   └── commons.rs
+│   ├── pfx2as/               # Prefix-to-ASN types (lens-bgpkit)
+│   │   └── mod.rs
+│   ├── as2rel/               # AS-level relationship lens (lens-bgpkit)
 │   │   ├── mod.rs
 │   │   ├── args.rs
 │   │   └── types.rs
-│   ├── country.rs            # Country lookup (in-memory)
-│   ├── ip/                   # IP information lookup
-│   │   └── mod.rs
-│   ├── parse/                # MRT file parsing with progress
-│   │   └── mod.rs
-│   ├── pfx2as/               # Prefix-to-ASN mapping
-│   │   └── mod.rs
-│   ├── rpki/                 # RPKI validation
-│   │   ├── mod.rs
-│   │   └── commons.rs
-│   ├── search/               # BGP message search with progress
-│   │   ├── mod.rs
-│   │   └── query_builder.rs
-│   └── time/                 # Time parsing lens
-│       └── mod.rs
+│   └── inspect/              # Unified AS/prefix inspection (lens-full)
+│       ├── mod.rs            # InspectLens implementation
+│       └── types.rs          # Result types, section selection
 │
 ├── database/                 # Data persistence layer
 │   ├── core/                 # Connection and schema management
 │   ├── session/              # Ephemeral databases (MsgStore)
 │   └── monocle/              # Main database repositories
-│       ├── as2org.rs
-│       ├── as2rel.rs
-│       ├── rpki.rs
-│       └── file_cache.rs
+│       ├── asinfo.rs         # Unified AS information (from bgpkit-commons)
+│       ├── as2rel.rs         # AS-level relationships
+│       ├── rpki.rs           # RPKI ROA/ASPA (blob-based prefix storage)
+│       └── pfx2as.rs         # Prefix-to-ASN (blob-based prefix storage)
+│
+├── server/                   # WebSocket server (cli feature)
+│   ├── mod.rs                # Server startup, handle_socket
+│   ├── protocol.rs           # Core protocol types
+│   ├── router.rs             # Router + Dispatcher
+│   ├── handler.rs            # WsMethod trait, WsContext
+│   └── handlers/             # Method handlers
+│       ├── inspect.rs        # inspect.query, inspect.refresh
+│       ├── rpki.rs           # rpki.validate, rpki.roas, rpki.aspas
+│       ├── as2rel.rs         # as2rel.search, as2rel.relationship
+│       ├── database.rs       # database.status, database.refresh
+│       ├── parse.rs          # parse.start, parse.cancel (streaming)
+│       ├── search.rs         # search.start, search.cancel (streaming)
+│       └── ...
 │
 └── bin/
     ├── monocle.rs            # CLI entry point
     └── commands/             # CLI command handlers
         ├── as2rel.rs
-        ├── config.rs
+        ├── config.rs         # Config display + db-refresh, db-backup, db-sources
         ├── country.rs
-        ├── database.rs
+        ├── inspect.rs        # Unified AS/prefix inspection (replaces whois, pfx2as)
         ├── ip.rs
         ├── parse.rs
-        ├── pfx2as.rs
         ├── rpki.rs
         ├── search.rs
-        ├── time.rs
-        └── whois.rs
+        └── time.rs
 ```
 
 ## Adding a New Lens
@@ -322,6 +333,7 @@ Use this guide to locate where to make changes for specific issues:
 | Argument parsing | `src/lens/{lens_name}/args.rs` | Args struct and validation |
 | Output formatting | `src/lens/{lens_name}/mod.rs` or `src/lens/utils.rs` | Format methods |
 | CLI behavior | `src/bin/commands/{lens_name}.rs` | CLI handler |
+| WebSocket handler | `src/server/handlers/{handler}.rs` | WebSocket method handler |
 | Database queries | `src/database/monocle/{table}.rs` | Repository implementation |
 | Schema issues | `src/database/core/schema.rs` | Schema definitions |
 | Configuration | `src/config.rs` | Config loading |
@@ -341,14 +353,14 @@ Use this guide to locate where to make changes for specific issues:
 | Lens | Main File | Related Files |
 |------|-----------|---------------|
 | Time | `src/lens/time/mod.rs` | - |
-| IP | `src/lens/ip/mod.rs` | - |
-| Country | `src/lens/country.rs` | - |
-| RPKI | `src/lens/rpki/mod.rs` | `commons.rs`, `src/database/monocle/rpki.rs` |
-| Pfx2as | `src/lens/pfx2as/mod.rs` | `src/database/monocle/file_cache.rs` |
-| As2org | `src/lens/as2org/mod.rs` | `args.rs`, `types.rs`, `src/database/monocle/as2org.rs` |
-| As2rel | `src/lens/as2rel/mod.rs` | `args.rs`, `types.rs`, `src/database/monocle/as2rel.rs` |
-| Parse | `src/lens/parse/mod.rs` | - |
-| Search | `src/lens/search/mod.rs` | `query_builder.rs` |
+| IP | `src/lens/ip/mod.rs` | `src/server/handlers/ip.rs` |
+| Country | `src/lens/country.rs` | `src/server/handlers/country.rs` |
+| RPKI | `src/lens/rpki/mod.rs` | `commons.rs`, `src/database/monocle/rpki.rs`, `src/server/handlers/rpki.rs` |
+| Pfx2as | `src/lens/pfx2as/mod.rs` | `src/database/monocle/pfx2as.rs`, `src/server/handlers/pfx2as.rs` |
+| As2rel | `src/lens/as2rel/mod.rs` | `args.rs`, `types.rs`, `src/database/monocle/as2rel.rs`, `src/server/handlers/as2rel.rs` |
+| Inspect | `src/lens/inspect/mod.rs` | `types.rs`, `src/database/monocle/asinfo.rs`, `src/server/handlers/inspect.rs` |
+| Parse | `src/lens/parse/mod.rs` | `src/server/handlers/parse.rs` |
+| Search | `src/lens/search/mod.rs` | `query_builder.rs`, `src/server/handlers/search.rs` |
 
 ## Testing Guidelines
 
@@ -432,10 +444,10 @@ mod tests {
 
 | Item | Convention | Example |
 |------|------------|---------|
-| Lens struct | `{Name}Lens` | `TimeLens`, `RpkiLens` |
-| Args struct | `{Name}{Op}Args` | `TimeParseArgs`, `RpkiValidationArgs` |
-| Result struct | `{Name}{Op}Result` | `As2orgSearchResult` |
-| Module name | snake_case | `as2org`, `pfx2as` |
+| Lens struct | `{Name}Lens` | `TimeLens`, `RpkiLens`, `InspectLens` |
+| Args struct | `{Name}{Op}Args` | `TimeParseArgs`, `RpkiValidationArgs`, `InspectQueryOptions` |
+| Result struct | `{Name}{Op}Result` | `As2relSearchResult`, `InspectResult` |
+| Module name | snake_case | `as2rel`, `pfx2as`, `inspect` |
 
 ### Documentation
 
@@ -474,13 +486,30 @@ Err(anyhow!("invalid input"))
 
 ### Feature Flags
 
-Gate CLI-specific code with the `cli` feature:
+Monocle uses layered feature flags. Gate code appropriately:
 
 ```rust
+// CLI-specific code (clap derives)
 #[cfg(feature = "cli")]
 #[derive(clap::Args)]
 pub struct MyArgs { ... }
+
+// Display formatting (tabled derives)
+#[cfg_attr(feature = "display", derive(tabled::Tabled))]
+pub struct MyResult { ... }
+
+// Lens-specific features
+#[cfg(feature = "lens-bgpkit")]
+pub mod my_lens;
 ```
+
+Feature tiers:
+- `database`: SQLite operations only
+- `lens-core`: Standalone lenses (TimeLens)
+- `lens-bgpkit`: BGP-related lenses
+- `lens-full`: All lenses including InspectLens
+- `display`: Table formatting with tabled
+- `cli`: Full CLI binary with server support
 
 ### Output Formatting
 
@@ -506,11 +535,15 @@ Before submitting a PR for a new lens:
 - [ ] Documentation with examples
 - [ ] Module exported in `src/lens/mod.rs`
 - [ ] CLI command (if applicable)
+- [ ] WebSocket handler (if applicable)
 - [ ] README updated with new lens description
+- [ ] `src/server/README.md` updated (if adding WebSocket handler)
 
 ## Getting Help
 
 - Check existing lens implementations for patterns
 - Review `src/lens/README.md` for lens architecture
 - Review `ARCHITECTURE.md` for overall project structure
+- Review `src/server/README.md` for WebSocket API patterns
+- Check `examples/README.md` for usage examples by feature tier
 - Open an issue for design questions before implementing

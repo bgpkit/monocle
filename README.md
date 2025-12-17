@@ -21,7 +21,7 @@ See through all Border Gateway Protocol (BGP) data with a monocle.
     - [Output Format](#output-format)
   - [`monocle search`](#monocle-search)
   - [`monocle time`](#monocle-time)
-  - [`monocle whois`](#monocle-whois)
+  - [`monocle inspect`](#monocle-inspect)
   - [`monocle country`](#monocle-country)
   - [`monocle as2rel`](#monocle-as2rel)
   - [`monocle rpki`](#monocle-rpki)
@@ -29,9 +29,8 @@ See through all Border Gateway Protocol (BGP) data with a monocle.
     - [`monocle rpki roas`](#monocle-rpki-roas)
     - [`monocle rpki aspas`](#monocle-rpki-aspas)
   - [`monocle ip`](#monocle-ip)
-  - [`monocle pfx2as`](#monocle-pfx2as)
   - [`monocle config`](#monocle-config)
-  - [`monocle database`](#monocle-database)
+  - [`monocle server`](#monocle-server)
 
 ## Install
 
@@ -70,9 +69,27 @@ Monocle can also be used as a library in your Rust projects. Add it to your `Car
 # Full library with CLI argument support (default)
 monocle = "0.10"
 
-# Minimal library (no CLI dependencies, smaller binary)
-monocle = { version = "0.10", default-features = false }
+# Minimal database access only
+monocle = { version = "0.10", default-features = false, features = ["database"] }
+
+# BGP operations without CLI overhead
+monocle = { version = "0.10", default-features = false, features = ["lens-bgpkit"] }
+
+# Full functionality without CLI
+monocle = { version = "0.10", default-features = false, features = ["lens-full"] }
 ```
+
+### Feature Tiers
+
+Monocle's features are organized in tiers for minimal dependency footprint:
+
+| Feature | Description | Key Dependencies |
+|---------|-------------|------------------|
+| `database` | SQLite operations only | rusqlite, oneio, ipnet, chrono |
+| `lens-core` | Standalone lenses (TimeLens) | chrono-humanize, dateparser |
+| `lens-bgpkit` | BGP-related lenses | bgpkit-*, rayon, tabled |
+| `lens-full` | All lenses including InspectLens | All above |
+| `cli` (default) | Full CLI binary with server | axum, tokio, tower-http |
 
 ### Architecture
 
@@ -81,18 +98,20 @@ The library is organized into the following core modules:
 - **`database`**: All database functionality
   - `core`: Connection management and schema definitions
   - `session`: One-time storage for search results
-  - `monocle`: Main monocle database with AS2Org, AS2Rel, and RPKI caching
+  - `monocle`: Main monocle database with ASInfo, AS2Rel, RPKI, and Pfx2as caching
 
 - **`lens`**: High-level business logic (reusable across CLI, API, GUI)
-  - `as2org`: AS-to-Organization lookup lens
-  - `as2rel`: AS-level relationships lens
-  - `country`: Country code/name lookup lens
-  - `ip`: IP information lookup lens
-  - `parse`: MRT file parsing lens with progress tracking
-  - `pfx2as`: Prefix-to-AS mapping lens
-  - `rpki`: RPKI validation and data lens
-  - `search`: BGP message search lens with progress tracking
-  - `time`: Time parsing and formatting lens
+  - `time`: Time parsing and formatting lens (lens-core)
+  - `country`: Country code/name lookup lens (lens-bgpkit)
+  - `ip`: IP information lookup lens (lens-bgpkit)
+  - `parse`: MRT file parsing lens with progress tracking (lens-bgpkit)
+  - `search`: BGP message search lens with progress tracking (lens-bgpkit)
+  - `rpki`: RPKI validation and data lens (lens-bgpkit)
+  - `pfx2as`: Prefix-to-AS mapping types (lens-bgpkit)
+  - `as2rel`: AS-level relationships lens (lens-bgpkit)
+  - `inspect`: Unified AS/prefix inspection lens (lens-full)
+
+- **`server`**: WebSocket API server (cli feature)
 
 For detailed architecture documentation, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -100,27 +119,20 @@ For detailed architecture documentation, see [`ARCHITECTURE.md`](ARCHITECTURE.md
 
 ```rust
 use monocle::database::MonocleDatabase;
-use monocle::lens::as2org::{As2orgLens, As2orgSearchArgs};
+use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 
 fn main() -> anyhow::Result<()> {
     // Open the monocle database
     let db = MonocleDatabase::open_in_dir("~/.monocle")?;
     
     // Create a lens
-    let lens = As2orgLens::new(&db);
+    let lens = InspectLens::new(&db);
     
-    // Bootstrap data if needed
-    if lens.needs_bootstrap() {
-        lens.bootstrap()?;
-    }
+    // Query AS information
+    let options = InspectQueryOptions::default();
+    let results = lens.query_asn(13335, &options)?;
     
-    // Search
-    let args = As2orgSearchArgs::new("cloudflare");
-    let results = lens.search(&args)?;
-    
-    for result in results {
-        println!("{}: {}", result.asn, result.name);
-    }
+    println!("AS{}: {}", results.asn, results.name.unwrap_or_default());
     
     Ok(())
 }
@@ -173,15 +185,14 @@ Subcommands:
 
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
-- `whois`: search AS and organization information by ASN or name
+- `server`: start a WebSocket server for programmatic access
+- `inspect`: unified AS and prefix information lookup (replaces `whois` and `pfx2as`)
 - `country`: utility to look up country name and code
 - `time`: utility to convert time between unix timestamp and RFC3339 string
 - `rpki`: RPKI validation and ROA/ASPA listing
 - `ip`: IP information lookup
-- `pfx2as`: bulk prefix-to-AS mapping lookup
 - `as2rel`: AS-level relationship lookup between ASNs
-- `config`: show monocle configuration and data paths
-- `database`: database management (refresh, backup, status, clear)
+- `config`: configuration display and database management (refresh, backup, sources)
 
 ### Global Options
 
@@ -201,18 +212,17 @@ A commandline application to search, parse, and process BGP information in publi
 Usage: monocle [OPTIONS] <COMMAND>
 
 Commands:
-  parse     Parse individual MRT files given a file path, local or remote
-  search    Search BGP messages from all available public MRT files
-  whois     ASN and organization lookup utility
-  country   Country name and code lookup utilities
-  time      Time conversion utilities
-  rpki      RPKI utilities
-  ip        IP information lookup
-  pfx2as    Bulk prefix-to-AS mapping lookup with the pre-generated data file
-  as2rel    AS-level relationship lookup between ASNs
-  config    Show monocle configuration and data paths
-  database  Database management commands (refresh, backup, status, clear)
-  help      Print this message or the help of the given subcommand(s)
+  parse    Parse individual MRT files given a file path, local or remote
+  search   Search BGP messages from all available public MRT files
+  server   Start the WebSocket server (ws://<address>:<port>/ws, health: http://<address>:<port>/health)
+  inspect  Unified AS and prefix information lookup
+  country  Country name and code lookup utilities
+  time     Time conversion utilities
+  rpki     RPKI utilities
+  ip       IP information lookup
+  as2rel   AS-level relationship lookup between ASNs
+  config   Show monocle configuration, data paths, and database management
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -c, --config <CONFIG>  configuration file path, by default $HOME/.monocle.toml is used
@@ -402,47 +412,68 @@ Examples:
 ➜  monocle time "yesterday" "last week"
 ```
 
-### `monocle whois`
+### `monocle inspect`
 
-Search AS and organization information by ASN or name.
+Unified AS and prefix information lookup. Replaces the former `whois` and `pfx2as` commands.
 
 ```text
-➜  monocle whois --help
-ASN and organization lookup utility
+➜  monocle inspect --help
+Unified AS and prefix information lookup
 
-Usage: monocle whois [OPTIONS] <QUERY>
+Usage: monocle inspect [OPTIONS] [QUERY]...
 
 Arguments:
-  <QUERY>  ASN (e.g., 13335) or search term (e.g., "cloudflare")
+  [QUERY]...  One or more queries: ASN (13335, AS13335), prefix (1.1.1.0/24), IP (1.1.1.1), or name (cloudflare)
 
 Options:
-      --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
-      --json             Output as JSON objects (shortcut for --format json-pretty)
-      --update           Force update the local database
-  -f, --full             Include both AS and organization results
-      --show-full-name   Show full organization name without truncation
-  -h, --help             Print help
+  -a, --asn                Force treat queries as ASNs
+      --debug              Print debug information
+  -p, --prefix             Force treat queries as prefixes
+      --format <FORMAT>    Output format: table (default), markdown, json, json-pretty, json-line, psv
+  -n, --name               Force treat queries as name search
+  -c, --country <COUNTRY>  Search by country code (e.g., US, DE)
+      --json               Output as JSON objects (shortcut for --format json-pretty)
+      --show <SECTION>     Select data sections to display (can be repeated). Available: basic (default), prefixes, connectivity, rpki, all
+      --full               Show all data sections with no limits
+      --full-roas          Show all RPKI ROAs (default: top 10)
+      --full-prefixes      Show all prefixes (default: top 10)
+      --full-connectivity  Show all neighbors (default: top 5 per category)
+      --limit <N>          Limit search results (default: 20)
+  -u, --update             Force refresh the asinfo database
+  -h, --help               Print help
 ```
 
 Examples:
 
 ```text
-➜  monocle whois 13335
-┌───────┬────────────────────┬─────────┬──────────┐
-│ asn   │ name               │ country │ org_name │
-├───────┼────────────────────┼─────────┼──────────┤
-│ 13335 │ CLOUDFLARENET      │ US      │ Cloudflare, Inc. │
-└───────┴────────────────────┴─────────┴──────────┘
+# Look up AS by number
+➜  monocle inspect 13335
+┌───────┬────────────────────┬─────────┐
+│ asn   │ name               │ country │
+├───────┼────────────────────┼─────────┤
+│ 13335 │ CLOUDFLARENET      │ US      │
+└───────┴────────────────────┴─────────┘
 
-➜  monocle whois cloudflare
-┌───────┬────────────────────────────┬─────────┬────────────────────┐
-│ asn   │ name                       │ country │ org_name           │
-├───────┼────────────────────────────┼─────────┼────────────────────┤
-│ 13335 │ CLOUDFLARENET              │ US      │ Cloudflare, Inc.   │
-│ 14789 │ CLOUDFLARE-CN              │ CN      │ Cloudflare, Inc.   │
-│ ...   │ ...                        │ ...     │ ...                │
-└───────┴────────────────────────────┴─────────┴────────────────────┘
+# Search by name
+➜  monocle inspect cloudflare
+┌───────┬────────────────────────────┬─────────┐
+│ asn   │ name                       │ country │
+├───────┼────────────────────────────┼─────────┤
+│ 13335 │ CLOUDFLARENET              │ US      │
+│ 14789 │ CLOUDFLARE-CN              │ CN      │
+│ ...   │ ...                        │ ...     │
+└───────┴────────────────────────────┴─────────┘
+
+# Look up prefix (replaces pfx2as)
+➜  monocle inspect 1.1.1.0/24
+┌────────────┬───────┬────────────────────┐
+│ prefix     │ asn   │ name               │
+├────────────┼───────┼────────────────────┤
+│ 1.1.1.0/24 │ 13335 │ CLOUDFLARENET      │
+└────────────┴───────┴────────────────────┘
+
+# Show all sections for an AS
+➜  monocle inspect 13335 --show all
 ```
 
 ### `monocle country`
@@ -713,59 +744,34 @@ Examples:
 ➜  monocle ip
 ```
 
-### `monocle pfx2as`
+### `monocle config`
 
-Bulk prefix-to-AS mapping lookup using pre-generated data files.
+Show monocle configuration, data paths, and manage the database.
 
 ```text
-➜  monocle pfx2as --help
-Bulk prefix-to-AS mapping lookup with the pre-generated data file
+➜  monocle config --help
+Show monocle configuration, data paths, and database management
 
-Usage: monocle pfx2as [OPTIONS] <RESOURCES>...
+Usage: monocle config [OPTIONS] [COMMAND]
 
-Arguments:
-  <RESOURCES>...  Prefixes or IP addresses to look up
+Commands:
+  db-refresh  Refresh data source(s)
+  db-backup   Backup the database to a destination
+  db-sources  List available data sources and their status
+  help        Print this message or the help of the given subcommand(s)
 
 Options:
       --debug            Print debug information
       --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
       --json             Output as JSON objects (shortcut for --format json-pretty)
+  -v, --verbose          Show detailed information about all data files
   -h, --help             Print help
 ```
 
 Examples:
 
 ```text
-➜  monocle pfx2as 1.1.1.0/24 8.8.8.8
-┌────────────────┬─────────┬─────────────────┐
-│ query          │ asn     │ prefix          │
-├────────────────┼─────────┼─────────────────┤
-│ 1.1.1.0/24     │ 13335   │ 1.1.1.0/24      │
-│ 8.8.8.8        │ 15169   │ 8.8.8.0/24      │
-└────────────────┴─────────┴─────────────────┘
-```
-
-### `monocle config`
-
-Show monocle configuration and data paths.
-
-```text
-➜  monocle config --help
-Show monocle configuration and data paths
-
-Usage: monocle config [OPTIONS]
-
-Options:
-      --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
-      --json             Output as JSON objects (shortcut for --format json-pretty)
-      --verbose          Show detailed file listing
-  -h, --help             Print help
-```
-
-Example:
-
-```text
+# Show configuration and database status
 ➜  monocle config
 Configuration:
   Config file: ~/.monocle.toml (not found, using defaults)
@@ -773,59 +779,76 @@ Configuration:
 
 SQLite Database: ~/.monocle/monocle-data.sqlite3
   Size: 45.2 MB
-  AS2Org: 120415 ASes, 96828 organizations
+  ASInfo: 120415 ASes
   AS2Rel: 1234567 relationships
   RPKI: 784188 ROAs, 388 ASPAs (updated 2 hours ago)
-```
-
-### `monocle database`
-
-Database management commands for refreshing, backing up, and clearing data.
-
-```text
-➜  monocle database --help
-Database management commands (refresh, backup, status, clear)
-
-Usage: monocle database [OPTIONS] [COMMAND]
-
-Commands:
-  status   Show database status (default if no subcommand)
-  refresh  Refresh a data source
-  backup   Backup the database to a file
-  clear    Clear a data source
-  sources  List available data sources
-  help     Print this message or the help of the given subcommand(s)
-
-Options:
-      --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
-      --json             Output as JSON objects (shortcut for --format json-pretty)
-  -h, --help             Print help
-```
-
-Examples:
-
-```text
-# Show database status
-➜  monocle database
-# or
-➜  monocle database status
+  Pfx2as: 1000000 prefixes
 
 # Refresh all data sources
-➜  monocle database refresh --all
+➜  monocle config db-refresh --all
 
 # Refresh a specific source
-➜  monocle database refresh as2org
-➜  monocle database refresh rpki
+➜  monocle config db-refresh asinfo
+➜  monocle config db-refresh rpki
 
 # Backup the database
-➜  monocle database backup ~/monocle-backup.sqlite3
-
-# Clear a data source (with confirmation)
-➜  monocle database clear as2rel
+➜  monocle config db-backup ~/monocle-backup.sqlite3
 
 # List available data sources
-➜  monocle database sources
+➜  monocle config db-sources
+```
+
+### `monocle server`
+
+Start a WebSocket server for programmatic access to monocle functionality.
+
+```text
+➜  monocle server --help
+Start the WebSocket server
+
+Usage: monocle server [OPTIONS]
+
+Options:
+  -a, --address <ADDRESS>  Bind address [default: 127.0.0.1]
+  -p, --port <PORT>        Bind port [default: 8080]
+  -h, --help               Print help
+```
+
+**Endpoints:**
+- WebSocket: `ws://<address>:<port>/ws`
+- Health check: `http://<address>:<port>/health`
+
+**Features:**
+- JSON-RPC style request/response protocol
+- Streaming support with progress reporting for parse/search operations
+- Operation cancellation via `op_id`
+- DB-first policy: queries read from local SQLite cache
+
+**Available methods:**
+- `system.info`, `system.methods` - Server introspection
+- `time.parse` - Time string parsing
+- `ip.lookup`, `ip.public` - IP information lookup
+- `rpki.validate`, `rpki.roas`, `rpki.aspas` - RPKI operations
+- `as2rel.search`, `as2rel.relationship`, `as2rel.update` - AS relationships
+- `pfx2as.lookup` - Prefix-to-ASN mapping
+- `country.lookup` - Country code/name lookup
+- `inspect.query`, `inspect.refresh` - Unified AS/prefix inspection
+- `parse.start`, `parse.cancel` - MRT file parsing (streaming)
+- `search.start`, `search.cancel` - BGP message search (streaming)
+- `database.status`, `database.refresh` - Database management
+
+For detailed protocol specification, see [`src/server/README.md`](src/server/README.md).
+
+Example:
+
+```text
+➜  monocle server
+Starting WebSocket server on 127.0.0.1:8080
+  WebSocket: ws://127.0.0.1:8080/ws
+  Health: http://127.0.0.1:8080/health
+
+➜  monocle server --address 0.0.0.0 --port 3000
+Starting WebSocket server on 0.0.0.0:3000
 ```
 
 ## Built with ❤️ by BGPKIT Team

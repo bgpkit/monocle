@@ -181,8 +181,8 @@ pub use config::MonocleConfig;
 
 // Shared database info types (used by config and database commands)
 pub use config::{
-    format_size, get_cache_info, get_cache_settings, get_data_source_info, get_sqlite_info,
-    CacheInfo, CacheSettings, DataSource, DataSourceInfo, DataSourceStatus, SqliteDatabaseInfo,
+    format_size, get_cache_settings, get_data_source_info, get_sqlite_info, CacheSettings,
+    DataSource, DataSourceInfo, DataSourceStatus, SqliteDatabaseInfo,
 };
 
 // =============================================================================
@@ -223,9 +223,6 @@ pub use database::{
 // Session types
 #[cfg(feature = "lens-bgpkit")]
 pub use database::MsgStore;
-
-// File-based cache for RPKI
-pub use database::RpkiFileCache;
 
 // =============================================================================
 // Lens Module - Feature-gated exports

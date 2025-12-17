@@ -4,7 +4,7 @@
 //!
 //! - **core**: Core database infrastructure (SQLite connections, schema management)
 //! - **session**: Session-based storage for one-time operations (e.g., search results)
-//! - **monocle**: Main monocle database for persistent data (AS2Org, AS2Rel, caches)
+//! - **monocle**: Main monocle database for persistent data
 //!
 //! # Architecture
 //!
@@ -17,17 +17,23 @@
 //! ├── session/        # One-time storage (requires lens-bgpkit feature)
 //! │   └── msg_store   # BGP message search results (SQLite)
 //! │
-//! └── monocle/        # Persistent storage
-//!     ├── as2org      # AS-to-Organization mappings (SQLite)
-//!     ├── as2rel      # AS-level relationships (SQLite)
-//!     └── file_cache  # RPKI and Pfx2as caches (JSON files)
+//! └── monocle/        # Persistent storage (all SQLite)
+//!     ├── asinfo      # Unified AS information (from bgpkit-commons)
+//!     ├── as2rel      # AS-level relationships
+//!     ├── rpki        # RPKI ROA/ASPA data (blob-based prefix storage)
+//!     └── pfx2as      # Prefix-to-ASN mappings (blob-based prefix storage)
 //! ```
 //!
 //! # Database Backend Strategy
 //!
-//! Monocle uses SQLite as its database backend for AS2Org and AS2Rel data.
-//! For data requiring INET operations (prefix matching, containment queries),
-//! file-based JSON caching is used since SQLite doesn't natively support these.
+//! Monocle uses SQLite as its sole database backend. All data is stored in SQLite:
+//! - ASInfo (unified AS information)
+//! - AS2Rel (AS-level relationships)
+//! - RPKI ROAs and ASPAs (with blob-based prefix storage for range queries)
+//! - Pfx2as mappings (with blob-based prefix storage for range queries)
+//!
+//! IP prefixes are stored as 16-byte start/end address pairs (BLOBs), with IPv4
+//! addresses converted to IPv6-mapped format for uniform storage.
 //!
 //! # Feature Requirements
 //!
@@ -38,7 +44,7 @@
 //!
 //! ## Monocle Database (SQLite)
 //!
-//! The monocle database is the primary interface for AS2Org and AS2Rel data:
+//! The monocle database is the primary interface for all persistent data:
 //!
 //! ```rust,ignore
 //! use monocle::database::MonocleDatabase;
@@ -46,28 +52,19 @@
 //! // Open the monocle database
 //! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 //!
-//! // Bootstrap data if needed
+//! // Bootstrap ASInfo data if needed
 //! if db.needs_asinfo_bootstrap() {
 //!     db.bootstrap_asinfo()?;
 //! }
 //!
-//! // Query data
+//! // Query AS data
 //! let results = db.asinfo().search_by_name("cloudflare")?;
-//! ```
 //!
-//! ## File-based Caching (RPKI and Pfx2as)
+//! // Query RPKI data
+//! let roas = db.rpki().get_roas_by_asn(13335)?;
 //!
-//! For RPKI and Pfx2as data that require prefix operations:
-//!
-//! ```rust,ignore
-//! use monocle::database::{RpkiFileCache, DEFAULT_RPKI_TTL};
-//!
-//! // RPKI cache
-//! let rpki_cache = RpkiFileCache::new("~/.monocle")?;
-//! if !rpki_cache.is_fresh("cloudflare", None, DEFAULT_RPKI_TTL) {
-//!     // Load and cache new data
-//!     rpki_cache.store("cloudflare", None, roas, aspas)?;
-//! }
+//! // Query prefix-to-ASN mappings
+//! let results = db.pfx2as().lookup_longest("1.1.1.1")?;
 //! ```
 //!
 //! ## Session Database (SQLite - for exports)
@@ -127,27 +124,6 @@ pub use monocle::{
 // Requires lens-bgpkit feature because MsgStore depends on bgpkit_parser::BgpElem
 #[cfg(feature = "lens-bgpkit")]
 pub use session::MsgStore;
-
-// =============================================================================
-// File-based Cache Types (for RPKI)
-// =============================================================================
-
-// RPKI file cache
-pub use monocle::{
-    // Cache utilities
-    cache_size,
-    clear_all_caches,
-    ensure_cache_dirs,
-    // RPKI cache
-    AspaRecord,
-    RoaRecord,
-    RpkiCacheData,
-    RpkiCacheMeta,
-    RpkiFileCache,
-    // TTL defaults
-    DEFAULT_RPKI_HISTORICAL_TTL,
-    DEFAULT_RPKI_TTL,
-};
 
 // =============================================================================
 // Helper function
