@@ -5,7 +5,8 @@
 use clap::Args;
 use monocle::database::MonocleDatabase;
 use monocle::lens::inspect::{
-    InspectDataSection, InspectDisplayConfig, InspectLens, InspectQueryOptions, InspectResult,
+    InspectDataSection, InspectDisplayConfig, InspectLens, InspectQueryOptions, InspectQueryType,
+    InspectResult,
 };
 use monocle::lens::utils::OutputFormat;
 use monocle::MonocleConfig;
@@ -114,8 +115,14 @@ pub fn run(config: &MonocleConfig, args: InspectArgs, output_format: OutputForma
         }
     }
 
-    // Ensure all required data is available (auto-refresh if empty or expired)
-    match lens.ensure_data_available() {
+    // Build query options first so we know which sections are needed
+    let (options, select_result) = build_query_options(&args);
+
+    // Determine which sections are needed based on query options and query type
+    let required_sections = determine_required_sections(&args, &options, &lens);
+
+    // Ensure only the required data sources are available (auto-refresh if empty or expired)
+    match lens.ensure_data_for_sections(&required_sections) {
         Ok(summary) => {
             // Print messages about any data that was refreshed
             for msg in summary.format_messages() {
@@ -127,9 +134,6 @@ pub fn run(config: &MonocleConfig, args: InspectArgs, output_format: OutputForma
             // Continue anyway - some data sources may still work
         }
     }
-
-    // Build query options
-    let (options, select_result) = build_query_options(&args);
 
     // Execute query
     let result = if let Some(ref country) = args.country {
@@ -256,6 +260,79 @@ fn build_query_options(args: &InspectArgs) -> (InspectQueryOptions, ShowParseRes
     }
 
     (options, show_result)
+}
+
+/// Determine which data sections are required based on the query
+fn determine_required_sections(
+    args: &InspectArgs,
+    options: &InspectQueryOptions,
+    lens: &InspectLens,
+) -> HashSet<InspectDataSection> {
+    let mut sections = HashSet::new();
+
+    // If explicit sections are selected, use those
+    if let Some(ref selected) = options.select {
+        return selected.clone();
+    }
+
+    // Otherwise, determine based on query type
+    // For country search, we only need basic
+    if args.country.is_some() {
+        sections.insert(InspectDataSection::Basic);
+        return sections;
+    }
+
+    // For name search, we only need basic
+    if args.name {
+        sections.insert(InspectDataSection::Basic);
+        return sections;
+    }
+
+    // For explicit ASN or prefix queries, use defaults for that type
+    if args.asn {
+        for s in InspectDataSection::default_for_asn() {
+            sections.insert(s);
+        }
+        return sections;
+    }
+
+    if args.prefix {
+        for s in InspectDataSection::default_for_prefix() {
+            sections.insert(s);
+        }
+        // Prefix queries always need pfx2as data for prefix-to-AS mapping
+        // and RPKI data for validation
+        sections.insert(InspectDataSection::Prefixes);
+        sections.insert(InspectDataSection::Rpki);
+        return sections;
+    }
+
+    // For auto-detected queries, we need to check each query
+    // Use the most conservative approach: determine types and combine defaults
+    for query in &args.query {
+        let query_type = lens.detect_query_type(query);
+        let defaults = match query_type {
+            InspectQueryType::Asn => InspectDataSection::default_for_asn(),
+            InspectQueryType::Prefix => InspectDataSection::default_for_prefix(),
+            InspectQueryType::Name => InspectDataSection::default_for_name(),
+        };
+        for s in defaults {
+            sections.insert(s);
+        }
+        // Prefix queries always need pfx2as data for prefix-to-AS mapping
+        // and RPKI data for validation
+        if query_type == InspectQueryType::Prefix {
+            sections.insert(InspectDataSection::Prefixes);
+            sections.insert(InspectDataSection::Rpki);
+        }
+    }
+
+    // If no queries, default to basic
+    if sections.is_empty() {
+        sections.insert(InspectDataSection::Basic);
+    }
+
+    sections
 }
 
 /// Output results in the appropriate format

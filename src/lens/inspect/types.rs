@@ -207,13 +207,23 @@ pub struct RoaSummary {
     pub truncated: bool,
 }
 
+/// ASPA provider entry with ASN and name
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AspaProvider {
+    pub asn: u32,
+    pub name: Option<String>,
+}
+
 /// ASPA information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AspaInfo {
     pub customer_asn: u32,
-    pub provider_asns: Vec<u32>,
-    /// Provider names (enriched from asinfo)
-    pub provider_names: Vec<Option<String>>,
+    /// Customer AS name (enriched from asinfo)
+    pub customer_name: Option<String>,
+    /// Customer AS country (enriched from asinfo)
+    pub customer_country: Option<String>,
+    /// Provider ASNs with names (enriched from asinfo)
+    pub providers: Vec<AspaProvider>,
 }
 
 /// RPKI information for a prefix

@@ -21,28 +21,66 @@ pub struct RpkiRoaEntry {
     pub ta: String,
 }
 
+/// ASPA provider entry with ASN and name
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpkiAspaProvider {
+    pub asn: u32,
+    pub name: Option<String>,
+}
+
 /// ASPA entry for display (grouped by customer ASN)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpkiAspaEntry {
     pub customer_asn: u32,
-    pub providers: Vec<u32>,
+    pub customer_name: Option<String>,
+    pub customer_country: Option<String>,
+    pub providers: Vec<RpkiAspaProvider>,
 }
 
 /// ASPA entry for table display
 #[derive(Debug, Clone, Tabled)]
 pub struct RpkiAspaTableEntry {
-    pub customer_asn: u32,
+    #[tabled(rename = "Customer ASN")]
+    pub customer_asn: String,
+    #[tabled(rename = "Customer Name")]
+    pub customer_name: String,
+    #[tabled(rename = "Country")]
+    pub customer_country: String,
+    #[tabled(rename = "Providers")]
     pub providers: String,
+}
+
+/// Default max width for customer name in table display
+const DEFAULT_NAME_MAX_WIDTH: usize = 20;
+
+/// Truncate a name to fit within max_width, adding "..." if truncated
+fn truncate_name(name: &str, max_width: usize) -> String {
+    if name.len() <= max_width {
+        name.to_string()
+    } else if max_width <= 3 {
+        "...".to_string()
+    } else {
+        format!("{}...", &name[..max_width - 3])
+    }
 }
 
 impl From<&RpkiAspaEntry> for RpkiAspaTableEntry {
     fn from(entry: &RpkiAspaEntry) -> Self {
         RpkiAspaTableEntry {
-            customer_asn: entry.customer_asn,
+            customer_asn: format!("AS{}", entry.customer_asn),
+            customer_name: entry
+                .customer_name
+                .as_ref()
+                .map(|n| truncate_name(n, DEFAULT_NAME_MAX_WIDTH))
+                .unwrap_or_else(|| "—".to_string()),
+            customer_country: entry
+                .customer_country
+                .clone()
+                .unwrap_or_else(|| "—".to_string()),
             providers: entry
                 .providers
                 .iter()
-                .map(|p| p.to_string())
+                .map(|p| p.asn.to_string())
                 .collect::<Vec<_>>()
                 .join(", "),
         }
@@ -205,9 +243,17 @@ pub fn get_aspas(
         let mut sorted_providers = filtered_providers;
         sorted_providers.sort();
 
+        // Create providers with None names (enrichment happens in lens layer)
+        let providers_with_names: Vec<RpkiAspaProvider> = sorted_providers
+            .into_iter()
+            .map(|asn| RpkiAspaProvider { asn, name: None })
+            .collect();
+
         results.push(RpkiAspaEntry {
             customer_asn: aspa.customer_asn,
-            providers: sorted_providers,
+            customer_name: None,
+            customer_country: None,
+            providers: providers_with_names,
         });
     }
 

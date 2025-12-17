@@ -6,6 +6,27 @@ All notable changes to this project will be documented in this file.
 
 This is a major release with significant architectural changes, new commands, and breaking changes.
 
+### Improvements
+
+#### `monocle inspect` Command Enhancements
+
+* **Progress messages during first load**: Users now see informative messages while data sources are being loaded (e.g., "Loading ASInfo data (AS names, organizations, PeeringDB)...")
+* **Improved output formatting**: 
+  - Added "Query: xxx (type: asn/prefix/name)" header for all queries
+  - Added "─── Basic Information ───" section header for ASN queries
+  - Dividers now only appear between different queries, not between sections of the same query
+* **Performance optimization**: Only loads required data sources based on query type (e.g., basic ASN query only loads ASInfo, not all 4 data sources)
+
+#### ASPA Enrichment
+
+* **Customer AS information**: ASPA records now include customer AS name and country via SQL JOINs
+* **Provider names**: Provider ASNs are enriched with names from asinfo database
+* **Unified provider structure**: JSON output now uses `providers` array with `{asn, name}` objects instead of separate `provider_asns` and `provider_names` arrays
+* **Table display improvements**: 
+  - `rpki aspas` command now shows Customer ASN, Customer Name, Country, and Providers columns
+  - Customer names truncated to 20 characters for cleaner display
+  - Provider list shows ASN integers only (names available in JSON output)
+
 ### New Commands
 
 #### `monocle inspect` - Unified AS/Prefix Information Lookup
@@ -156,14 +177,11 @@ monocle = { version = "0.10", default-features = false, features = ["lens-full"]
 
 ### Bug Fixes
 
-* Fixed AS2Rel data loading (incorrect serde attribute)
-* Fixed AS2Rel duplicate rows and percentage calculation
-* Optimized AS2Rel queries with SQL JOINs
 * Handle SIGPIPE gracefully to prevent panics when piping output
 
 ### Documentation
 
-* Moved `WEBSOCKET_DESIGN.md` to `src/server/README.md` for better organization
+* Add websocket server documentation to `src/server/README.md`
 * Updated all documentation references to point to new location
 
 ### Breaking Changes

@@ -23,8 +23,9 @@ pub use asinfo::{
     AsinfoStoreCounts, JsonlRecord, ASINFO_DATA_URL, DEFAULT_ASINFO_TTL,
 };
 pub use rpki::{
-    RpkiAspaRecord, RpkiCacheMetadata, RpkiRepository, RpkiRoaRecord, RpkiValidationResult,
-    RpkiValidationState, DEFAULT_RPKI_CACHE_TTL,
+    RpkiAspaEnrichedRecord, RpkiAspaProviderEnriched, RpkiAspaRecord, RpkiCacheMetadata,
+    RpkiRepository, RpkiRoaRecord, RpkiValidationResult, RpkiValidationState,
+    DEFAULT_RPKI_CACHE_TTL,
 };
 
 // Pfx2as repository (SQLite-based)

@@ -167,8 +167,11 @@ fn main() -> anyhow::Result<()> {
                         "     Customer AS{} authorized providers:",
                         aspa.customer_asn
                     );
-                    let providers: Vec<String> =
-                        aspa.providers.iter().map(|a| format!("AS{}", a)).collect();
+                    let providers: Vec<String> = aspa
+                        .providers
+                        .iter()
+                        .map(|a| format!("AS{}", a.asn))
+                        .collect();
                     println!("       {}", providers.join(", "));
                 }
             }

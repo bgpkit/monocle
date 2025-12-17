@@ -75,6 +75,22 @@ pub struct RpkiAspaRecord {
     pub provider_asns: Vec<u32>,
 }
 
+/// ASPA provider with enriched name information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpkiAspaProviderEnriched {
+    pub asn: u32,
+    pub name: Option<String>,
+}
+
+/// Enriched ASPA record with customer and provider names from asinfo
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpkiAspaEnrichedRecord {
+    pub customer_asn: u32,
+    pub customer_name: Option<String>,
+    pub customer_country: Option<String>,
+    pub providers: Vec<RpkiAspaProviderEnriched>,
+}
+
 /// RPKI cache metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpkiCacheMetadata {
@@ -508,6 +524,189 @@ impl<'a> RpkiRepository<'a> {
         let mut results = Vec::new();
         for customer_asn in customer_asns {
             let aspas = self.get_aspas_by_customer(customer_asn)?;
+            results.extend(aspas);
+        }
+
+        Ok(results)
+    }
+
+    /// Get all ASPAs with enriched customer and provider names (via SQL JOINs)
+    pub fn get_all_aspas_enriched(&self) -> Result<Vec<RpkiAspaEnrichedRecord>> {
+        if !self.tables_exist() {
+            return Ok(Vec::new());
+        }
+
+        // Query that joins with asinfo_core for customer info
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                a.customer_asn,
+                c.name as customer_name,
+                c.country as customer_country,
+                GROUP_CONCAT(a.provider_asn) as provider_asns
+            FROM rpki_aspa a
+            LEFT JOIN asinfo_core c ON a.customer_asn = c.asn
+            GROUP BY a.customer_asn
+            ORDER BY a.customer_asn
+            "#,
+        )?;
+
+        let customer_rows: Vec<(u32, Option<String>, Option<String>, String)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, u32>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Now get provider names with a second query
+        let mut provider_stmt = self.conn.prepare(
+            r#"
+            SELECT
+                a.customer_asn,
+                a.provider_asn,
+                c.name as provider_name
+            FROM rpki_aspa a
+            LEFT JOIN asinfo_core c ON a.provider_asn = c.asn
+            ORDER BY a.customer_asn, a.provider_asn
+            "#,
+        )?;
+
+        let provider_rows: Vec<(u32, u32, Option<String>)> = provider_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, u32>(0)?,
+                    row.get::<_, u32>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Build a map of customer_asn -> providers
+        let mut provider_map: std::collections::HashMap<u32, Vec<RpkiAspaProviderEnriched>> =
+            std::collections::HashMap::new();
+        for (customer_asn, provider_asn, provider_name) in provider_rows {
+            provider_map
+                .entry(customer_asn)
+                .or_default()
+                .push(RpkiAspaProviderEnriched {
+                    asn: provider_asn,
+                    name: provider_name,
+                });
+        }
+
+        // Build the final results
+        let results: Vec<RpkiAspaEnrichedRecord> = customer_rows
+            .into_iter()
+            .map(|(customer_asn, customer_name, customer_country, _)| {
+                let providers = provider_map.remove(&customer_asn).unwrap_or_default();
+                RpkiAspaEnrichedRecord {
+                    customer_asn,
+                    customer_name,
+                    customer_country,
+                    providers,
+                }
+            })
+            .collect();
+
+        Ok(results)
+    }
+
+    /// Get ASPAs filtered by customer ASN with enriched names (via SQL JOINs)
+    pub fn get_aspas_by_customer_enriched(
+        &self,
+        customer_asn: u32,
+    ) -> Result<Vec<RpkiAspaEnrichedRecord>> {
+        if !self.tables_exist() {
+            return Ok(Vec::new());
+        }
+
+        // Get customer info
+        let mut customer_stmt = self.conn.prepare(
+            r#"
+            SELECT
+                a.customer_asn,
+                c.name as customer_name,
+                c.country as customer_country
+            FROM rpki_aspa a
+            LEFT JOIN asinfo_core c ON a.customer_asn = c.asn
+            WHERE a.customer_asn = ?1
+            LIMIT 1
+            "#,
+        )?;
+
+        let customer_info: Option<(u32, Option<String>, Option<String>)> = customer_stmt
+            .query_row([customer_asn], |row| {
+                Ok((
+                    row.get::<_, u32>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .ok();
+
+        let Some((customer_asn, customer_name, customer_country)) = customer_info else {
+            return Ok(Vec::new());
+        };
+
+        // Get providers with names
+        let mut provider_stmt = self.conn.prepare(
+            r#"
+            SELECT
+                a.provider_asn,
+                c.name as provider_name
+            FROM rpki_aspa a
+            LEFT JOIN asinfo_core c ON a.provider_asn = c.asn
+            WHERE a.customer_asn = ?1
+            ORDER BY a.provider_asn
+            "#,
+        )?;
+
+        let providers: Vec<RpkiAspaProviderEnriched> = provider_stmt
+            .query_map([customer_asn], |row| {
+                Ok(RpkiAspaProviderEnriched {
+                    asn: row.get(0)?,
+                    name: row.get(1)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(vec![RpkiAspaEnrichedRecord {
+            customer_asn,
+            customer_name,
+            customer_country,
+            providers,
+        }])
+    }
+
+    /// Get ASPAs filtered by provider ASN with enriched names (via SQL JOINs)
+    pub fn get_aspas_by_provider_enriched(
+        &self,
+        provider_asn: u32,
+    ) -> Result<Vec<RpkiAspaEnrichedRecord>> {
+        if !self.tables_exist() {
+            return Ok(Vec::new());
+        }
+
+        // Get all customer ASNs that have this provider
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT customer_asn FROM rpki_aspa WHERE provider_asn = ?1")?;
+
+        let customer_asns: Vec<u32> = stmt
+            .query_map([provider_asn], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut results = Vec::new();
+        for customer_asn in customer_asns {
+            let aspas = self.get_aspas_by_customer_enriched(customer_asn)?;
             results.extend(aspas);
         }
 

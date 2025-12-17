@@ -14,7 +14,7 @@
 pub mod commons;
 
 // Re-export types needed for external use (input/output structs)
-pub use commons::{RpkiAspaEntry, RpkiAspaTableEntry, RpkiRoaEntry};
+pub use commons::{RpkiAspaEntry, RpkiAspaProvider, RpkiAspaTableEntry, RpkiRoaEntry};
 
 use crate::database::MonocleDatabase;
 use crate::lens::utils::option_u32_from_str;
@@ -593,7 +593,7 @@ impl<'a> RpkiLens<'a> {
         }
     }
 
-    /// Get ASPAs from cache
+    /// Get ASPAs from cache using enriched SQL queries with JOINs
     fn get_aspas_from_cache(
         &self,
         customer_asn: Option<u32>,
@@ -601,34 +601,50 @@ impl<'a> RpkiLens<'a> {
     ) -> Result<Vec<RpkiAspaEntry>> {
         let repo = self.db.rpki();
 
-        let aspas = match (customer_asn, provider_asn) {
+        // Use enriched queries that do SQL JOINs for names
+        let enriched_aspas = match (customer_asn, provider_asn) {
             (Some(c), Some(p)) => {
                 // Filter by both customer and provider
-                let by_customer = repo.get_aspas_by_customer(c)?;
+                let by_customer = repo.get_aspas_by_customer_enriched(c)?;
                 by_customer
                     .into_iter()
-                    .filter(|a| a.provider_asns.contains(&p))
+                    .map(|mut a| {
+                        // Filter providers to only include the specified one
+                        a.providers.retain(|prov| prov.asn == p);
+                        a
+                    })
+                    .filter(|a| !a.providers.is_empty())
                     .collect()
             }
             (Some(c), None) => {
                 // Filter by customer only
-                repo.get_aspas_by_customer(c)?
+                repo.get_aspas_by_customer_enriched(c)?
             }
             (None, Some(p)) => {
                 // Filter by provider only
-                repo.get_aspas_by_provider(p)?
+                repo.get_aspas_by_provider_enriched(p)?
             }
             (None, None) => {
                 // Get all ASPAs
-                repo.get_all_aspas()?
+                repo.get_all_aspas_enriched()?
             }
         };
 
-        Ok(aspas
+        // Convert from enriched DB records to RpkiAspaEntry
+        Ok(enriched_aspas
             .into_iter()
             .map(|a| RpkiAspaEntry {
                 customer_asn: a.customer_asn,
-                providers: a.provider_asns,
+                customer_name: a.customer_name,
+                customer_country: a.customer_country,
+                providers: a
+                    .providers
+                    .into_iter()
+                    .map(|p| RpkiAspaProvider {
+                        asn: p.asn,
+                        name: p.name,
+                    })
+                    .collect(),
             })
             .collect())
     }

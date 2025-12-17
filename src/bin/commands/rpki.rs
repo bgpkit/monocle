@@ -942,15 +942,20 @@ fn output_aspas_entries(
             }
         }
         OutputFormat::Psv => {
-            println!("customer_asn|providers");
+            println!("customer_asn|customer_name|customer_country|providers");
             for aspa in &aspas {
                 let providers = aspa
                     .providers
                     .iter()
-                    .map(|p| p.to_string())
+                    .map(|p| format!("AS{}", p.asn))
                     .collect::<Vec<_>>()
                     .join(",");
-                println!("{}|{}", aspa.customer_asn, providers);
+                let customer_name = aspa.customer_name.as_deref().unwrap_or("-");
+                let customer_country = aspa.customer_country.as_deref().unwrap_or("-");
+                println!(
+                    "{}|{}|{}|{}",
+                    aspa.customer_asn, customer_name, customer_country, providers
+                );
             }
         }
     }

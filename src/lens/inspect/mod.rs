@@ -29,7 +29,7 @@ use crate::database::{
 use crate::lens::country::CountryLens;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::time::Instant;
 use tabled::settings::Style;
@@ -170,6 +170,7 @@ impl<'a> InspectLens<'a> {
 
         // Check and refresh ASInfo
         if self.db.asinfo().is_empty() {
+            eprintln!("Loading ASInfo data (AS names, organizations, PeeringDB)...");
             info!("ASInfo data is empty, bootstrapping...");
             match self.db.bootstrap_asinfo() {
                 Ok(counts) => {
@@ -193,6 +194,7 @@ impl<'a> InspectLens<'a> {
                 }
             }
         } else if self.db.needs_asinfo_refresh() {
+            eprintln!("Refreshing ASInfo data (AS names, organizations, PeeringDB)...");
             info!("ASInfo data is stale, refreshing...");
             match self.db.bootstrap_asinfo() {
                 Ok(counts) => {
@@ -219,6 +221,7 @@ impl<'a> InspectLens<'a> {
 
         // Check and refresh AS2Rel
         if self.db.as2rel().is_empty() {
+            eprintln!("Loading AS2Rel data (AS relationships)...");
             info!("AS2Rel data is empty, loading...");
             match self.db.update_as2rel() {
                 Ok(count) => {
@@ -239,6 +242,7 @@ impl<'a> InspectLens<'a> {
                 }
             }
         } else if self.db.needs_as2rel_update() {
+            eprintln!("Refreshing AS2Rel data (AS relationships)...");
             info!("AS2Rel data is stale, refreshing...");
             match self.db.update_as2rel() {
                 Ok(count) => {
@@ -262,6 +266,7 @@ impl<'a> InspectLens<'a> {
 
         // Check and refresh RPKI
         if self.db.rpki().is_empty() {
+            eprintln!("Loading RPKI data (ROAs, ASPA)...");
             info!("RPKI data is empty, loading from bgpkit-commons...");
             match self.refresh_rpki_from_commons() {
                 Ok(count) => {
@@ -277,6 +282,7 @@ impl<'a> InspectLens<'a> {
                 }
             }
         } else if self.db.rpki().needs_refresh(DEFAULT_RPKI_CACHE_TTL) {
+            eprintln!("Refreshing RPKI data (ROAs, ASPA)...");
             info!("RPKI data is stale, refreshing...");
             match self.refresh_rpki_from_commons() {
                 Ok(count) => {
@@ -300,6 +306,7 @@ impl<'a> InspectLens<'a> {
 
         // Check and refresh Pfx2as
         if self.db.pfx2as().is_empty() {
+            eprintln!("Loading Pfx2as data (prefix-to-AS mappings)...");
             info!("Pfx2as data is empty, loading...");
             match self.refresh_pfx2as() {
                 Ok(count) => {
@@ -320,6 +327,7 @@ impl<'a> InspectLens<'a> {
                 }
             }
         } else if self.db.pfx2as().needs_refresh(DEFAULT_PFX2AS_CACHE_TTL) {
+            eprintln!("Refreshing Pfx2as data (prefix-to-AS mappings)...");
             info!("Pfx2as data is stale, refreshing...");
             match self.refresh_pfx2as() {
                 Ok(count) => {
@@ -337,6 +345,200 @@ impl<'a> InspectLens<'a> {
                         format!("Failed to refresh Pfx2as: {}", e),
                         None,
                     );
+                }
+            }
+        }
+
+        Ok(summary)
+    }
+
+    /// Ensure only the data sources needed for specific sections are available
+    ///
+    /// This is more efficient than `ensure_data_available()` when you know
+    /// which sections you need. It only loads/refreshes the required data sources.
+    pub fn ensure_data_for_sections(
+        &self,
+        sections: &HashSet<InspectDataSection>,
+    ) -> Result<DataRefreshSummary> {
+        let mut summary = DataRefreshSummary::new();
+
+        // ASInfo is always needed for basic information
+        if sections.contains(&InspectDataSection::Basic) {
+            if self.db.asinfo().is_empty() {
+                eprintln!("Loading ASInfo data (AS names, organizations, PeeringDB)...");
+                match self.db.bootstrap_asinfo() {
+                    Ok(counts) => {
+                        summary.add(
+                            "asinfo",
+                            true,
+                            format!(
+                                "ASInfo data loaded: {} core, {} as2org, {} peeringdb",
+                                counts.core, counts.as2org, counts.peeringdb
+                            ),
+                            Some(counts.core),
+                        );
+                    }
+                    Err(e) => {
+                        summary.add(
+                            "asinfo",
+                            false,
+                            format!("Failed to load ASInfo: {}", e),
+                            None,
+                        );
+                    }
+                }
+            } else if self.db.needs_asinfo_refresh() {
+                eprintln!("Refreshing ASInfo data (AS names, organizations, PeeringDB)...");
+                match self.db.bootstrap_asinfo() {
+                    Ok(counts) => {
+                        summary.add(
+                            "asinfo",
+                            true,
+                            format!(
+                                "ASInfo data refreshed: {} core, {} as2org, {} peeringdb",
+                                counts.core, counts.as2org, counts.peeringdb
+                            ),
+                            Some(counts.core),
+                        );
+                    }
+                    Err(e) => {
+                        summary.add(
+                            "asinfo",
+                            false,
+                            format!("Failed to refresh ASInfo: {}", e),
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        // AS2Rel is needed for connectivity section
+        if sections.contains(&InspectDataSection::Connectivity) {
+            if self.db.as2rel().is_empty() {
+                eprintln!("Loading AS2Rel data (AS relationships)...");
+                match self.db.update_as2rel() {
+                    Ok(count) => {
+                        summary.add(
+                            "as2rel",
+                            true,
+                            format!("AS2Rel data loaded: {} relationships", count),
+                            Some(count),
+                        );
+                    }
+                    Err(e) => {
+                        summary.add(
+                            "as2rel",
+                            false,
+                            format!("Failed to load AS2Rel: {}", e),
+                            None,
+                        );
+                    }
+                }
+            } else if self.db.needs_as2rel_update() {
+                eprintln!("Refreshing AS2Rel data (AS relationships)...");
+                match self.db.update_as2rel() {
+                    Ok(count) => {
+                        summary.add(
+                            "as2rel",
+                            true,
+                            format!("AS2Rel data refreshed: {} relationships", count),
+                            Some(count),
+                        );
+                    }
+                    Err(e) => {
+                        summary.add(
+                            "as2rel",
+                            false,
+                            format!("Failed to refresh AS2Rel: {}", e),
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        // RPKI is needed for rpki section
+        if sections.contains(&InspectDataSection::Rpki) {
+            if self.db.rpki().is_empty() {
+                eprintln!("Loading RPKI data (ROAs, ASPA)...");
+                match self.refresh_rpki_from_commons() {
+                    Ok(count) => {
+                        summary.add(
+                            "rpki",
+                            true,
+                            format!("RPKI data loaded: {} ROAs", count),
+                            Some(count),
+                        );
+                    }
+                    Err(e) => {
+                        summary.add("rpki", false, format!("Failed to load RPKI: {}", e), None);
+                    }
+                }
+            } else if self.db.rpki().needs_refresh(DEFAULT_RPKI_CACHE_TTL) {
+                eprintln!("Refreshing RPKI data (ROAs, ASPA)...");
+                match self.refresh_rpki_from_commons() {
+                    Ok(count) => {
+                        summary.add(
+                            "rpki",
+                            true,
+                            format!("RPKI data refreshed: {} ROAs", count),
+                            Some(count),
+                        );
+                    }
+                    Err(e) => {
+                        summary.add(
+                            "rpki",
+                            false,
+                            format!("Failed to refresh RPKI: {}", e),
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Pfx2as is needed for prefixes section
+        if sections.contains(&InspectDataSection::Prefixes) {
+            if self.db.pfx2as().is_empty() {
+                eprintln!("Loading Pfx2as data (prefix-to-AS mappings)...");
+                match self.refresh_pfx2as() {
+                    Ok(count) => {
+                        summary.add(
+                            "pfx2as",
+                            true,
+                            format!("Pfx2as data loaded: {} prefixes", count),
+                            Some(count),
+                        );
+                    }
+                    Err(e) => {
+                        summary.add(
+                            "pfx2as",
+                            false,
+                            format!("Failed to load Pfx2as: {}", e),
+                            None,
+                        );
+                    }
+                }
+            } else if self.db.pfx2as().needs_refresh(DEFAULT_PFX2AS_CACHE_TTL) {
+                eprintln!("Refreshing Pfx2as data (prefix-to-AS mappings)...");
+                match self.refresh_pfx2as() {
+                    Ok(count) => {
+                        summary.add(
+                            "pfx2as",
+                            true,
+                            format!("Pfx2as data refreshed: {} prefixes", count),
+                            Some(count),
+                        );
+                    }
+                    Err(e) => {
+                        summary.add(
+                            "pfx2as",
+                            false,
+                            format!("Failed to refresh Pfx2as: {}", e),
+                            None,
+                        );
+                    }
                 }
             }
         }
@@ -926,24 +1128,37 @@ impl<'a> InspectLens<'a> {
         if include_aspa {
             if let Ok(aspa_records) = rpki.get_aspas_by_customer(asn) {
                 if let Some(aspa_record) = aspa_records.into_iter().next() {
-                    // Get provider names
-                    let provider_names: Vec<Option<String>> = aspa_record
+                    // Get customer AS info
+                    let (customer_name, customer_country) = self
+                        .db
+                        .asinfo()
+                        .get_core(aspa_record.customer_asn)
+                        .ok()
+                        .flatten()
+                        .map(|r| (Some(r.name), Some(r.country)))
+                        .unwrap_or((None, None));
+
+                    // Get providers with names
+                    let providers: Vec<AspaProvider> = aspa_record
                         .provider_asns
                         .iter()
                         .map(|asn| {
-                            self.db
+                            let name = self
+                                .db
                                 .asinfo()
                                 .get_core(*asn)
                                 .ok()
                                 .flatten()
-                                .map(|r| r.name)
+                                .map(|r| r.name);
+                            AspaProvider { asn: *asn, name }
                         })
                         .collect();
 
                     rpki_info.aspa = Some(AspaInfo {
                         customer_asn: aspa_record.customer_asn,
-                        provider_asns: aspa_record.provider_asns,
-                        provider_names,
+                        customer_name,
+                        customer_country,
+                        providers,
                     });
                 }
             }
@@ -1195,41 +1410,49 @@ impl<'a> InspectLens<'a> {
 
         // Always show ASN results as a table (even single ASN)
         if !asn_results.is_empty() {
-            let asn_table = self.format_asn_results_table(&asn_results, config);
-            if !asn_table.is_empty() {
-                output.push_str(&asn_table);
-            }
+            // Show each ASN query result with its sections
+            // Use dividers between different ASN queries, not between sections of the same query
+            for (idx, query_result) in asn_results.iter().enumerate() {
+                // Add divider between different queries (not for the first one)
+                if idx > 0 {
+                    output.push_str(divider);
+                }
 
-            // Show additional sections for each ASN (prefixes, connectivity, rpki)
-            for query_result in &asn_results {
-                let mut asn_sections = Vec::new();
+                // Always show query meta header
+                output.push_str(&format!(
+                    "Query: {} (type: {})\n",
+                    query_result.query, query_result.query_type
+                ));
+
+                // Basic information section with header
+                let asn_table = self.format_asn_results_table(&[query_result], config);
+                if !asn_table.is_empty() && asn_table != "No ASN results to display" {
+                    output.push_str("─── Basic Information ───\n");
+                    output.push_str(&asn_table);
+                }
 
                 // Prefixes section
                 if let Some(ref prefixes) = query_result.prefixes {
-                    asn_sections.push(self.format_prefixes_section(prefixes, config));
+                    if !output.is_empty() {
+                        output.push_str("\n\n");
+                    }
+                    output.push_str(&self.format_prefixes_section(prefixes, config));
                 }
 
                 // Connectivity section
                 if let Some(ref connectivity) = query_result.connectivity {
-                    asn_sections.push(self.format_connectivity_section(connectivity, config));
+                    if !output.is_empty() {
+                        output.push_str("\n\n");
+                    }
+                    output.push_str(&self.format_connectivity_section(connectivity, config));
                 }
 
                 // RPKI section
                 if let Some(ref rpki) = query_result.rpki {
-                    asn_sections.push(self.format_rpki_asn_section(rpki, config));
-                }
-
-                // Add sections with query header if there are any
-                if !asn_sections.is_empty() {
                     if !output.is_empty() {
-                        output.push_str(divider);
+                        output.push_str("\n\n");
                     }
-                    // Add header for which ASN these sections belong to
-                    output.push_str(&format!(
-                        "Query: {} (type: {})\n\n",
-                        query_result.query, query_result.query_type
-                    ));
-                    output.push_str(&asn_sections.join("\n\n"));
+                    output.push_str(&self.format_rpki_asn_section(rpki, config));
                 }
             }
         }
@@ -1730,10 +1953,19 @@ impl<'a> InspectLens<'a> {
         // ASPA section - show as table or "No ASPA" message
         if let Some(ref aspa) = rpki.aspa {
             lines.push(String::new()); // Empty line separator
+
+            // Format customer info with name and country if available
+            let customer_info = match (&aspa.customer_name, &aspa.customer_country) {
+                (Some(name), Some(country)) => {
+                    format!("AS{} - {} [{}]", aspa.customer_asn, name, country)
+                }
+                (Some(name), None) => format!("AS{} - {}", aspa.customer_asn, name),
+                _ => format!("AS{}", aspa.customer_asn),
+            };
             lines.push(format!(
-                "ASPA: AS{} ({} providers)",
-                aspa.customer_asn,
-                aspa.provider_asns.len()
+                "ASPA: {} ({} providers)",
+                customer_info,
+                aspa.providers.len()
             ));
 
             #[derive(Tabled)]
@@ -1745,12 +1977,11 @@ impl<'a> InspectLens<'a> {
             }
 
             let rows: Vec<AspaProviderRow> = aspa
-                .provider_asns
+                .providers
                 .iter()
-                .zip(aspa.provider_names.iter())
-                .map(|(asn, name)| AspaProviderRow {
-                    asn: format!("AS{}", asn),
-                    name: match name {
+                .map(|provider| AspaProviderRow {
+                    asn: format!("AS{}", provider.asn),
+                    name: match &provider.name {
                         Some(n) => self.truncate_name(n, config),
                         None => "—".to_string(),
                     },
