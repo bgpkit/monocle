@@ -416,6 +416,14 @@ Examples:
 
 Unified AS and prefix information lookup. Replaces the former `whois` and `pfx2as` commands.
 
+By default, `inspect` shows all available information for ASN and prefix queries, including:
+- **Basic**: AS name, country, organization, and PeeringDB info (website, IRR AS-SET)
+- **Prefixes**: Announced prefixes with RPKI validation status
+- **Connectivity**: AS relationships (upstreams, peers, downstreams)
+- **RPKI**: ROAs and ASPA records
+
+When querying multiple ASNs, a **glance table** is automatically shown first, providing a quick overview of all queried ASNs before the detailed per-ASN information.
+
 ```text
 ➜  monocle inspect --help
 Unified AS and prefix information lookup
@@ -433,7 +441,7 @@ Options:
   -n, --name               Force treat queries as name search
   -c, --country <COUNTRY>  Search by country code (e.g., US, DE)
       --json               Output as JSON objects (shortcut for --format json-pretty)
-      --show <SECTION>     Select data sections to display (can be repeated). Available: basic (default), prefixes, connectivity, rpki, all
+      --show <SECTION>     Select data sections to display (can be repeated). Available: basic, prefixes, connectivity, rpki, all
       --full               Show all data sections with no limits
       --full-roas          Show all RPKI ROAs (default: top 10)
       --full-prefixes      Show all prefixes (default: top 10)
@@ -446,34 +454,87 @@ Options:
 Examples:
 
 ```text
-# Look up AS by number
+# Look up AS by number (shows all information by default)
 ➜  monocle inspect 13335
-┌───────┬────────────────────┬─────────┐
-│ asn   │ name               │ country │
-├───────┼────────────────────┼─────────┤
-│ 13335 │ CLOUDFLARENET      │ US      │
-└───────┴────────────────────┴─────────┘
+Query: 13335 (type: asn)
+─── Basic Information ───
+ASN:     AS13335
+Name:    CLOUDFLARENET
+Country: US
+Org:     Cloudflare, Inc.
+Org ID:  CLOUD14-ARIN
+Website: https://www.cloudflare.com
+AS-SET:     AS13335:AS-CLOUDFLARE
+
+─── Announced Prefixes ───
+Total: 5526 (2409 IPv4, 3117 IPv6)
+RPKI Validation: valid 5071 (91.8%), invalid 1 (0.0%), unknown 454 (8.2%)
+╭─────────────────────┬────────────╮
+│ Prefix              │ Validation │
+├─────────────────────┼────────────┤
+│ 103.186.74.0/24     │ unknown    │
+│ ...                 │ ...        │
+╰─────────────────────┴────────────╯
+(showing 10 of 5526 prefixes, use --full-prefixes to show all)
+
+─── Connectivity ───
+...
+(results truncated, use --full-connectivity to show all)
+
+─── RPKI ───
+ROAs: 4420 total (2754 IPv4, 1666 IPv6)
+...
+(ROA list truncated, use --full-roas to show all)
+
+# Query multiple ASNs (glance table shown first)
+➜  monocle inspect 13335 15169
+─── Glance ───
+╭─────────┬───────────────┬─────────┬──────────────────╮
+│ ASN     │ Name          │ Country │ Org              │
+├─────────┼───────────────┼─────────┼──────────────────┤
+│ AS13335 │ CLOUDFLARENET │ US      │ Cloudflare, Inc. │
+│ AS15169 │ GOOGLE        │ US      │ Google LLC       │
+╰─────────┴───────────────┴─────────┴──────────────────╯
+
+════════════════════════════════════════════════════════════════════════════════
+
+Query: 13335 (type: asn)
+─── Basic Information ───
+...
 
 # Search by name
-➜  monocle inspect cloudflare
-┌───────┬────────────────────────────┬─────────┐
-│ asn   │ name                       │ country │
-├───────┼────────────────────────────┼─────────┤
-│ 13335 │ CLOUDFLARENET              │ US      │
-│ 14789 │ CLOUDFLARE-CN              │ CN      │
-│ ...   │ ...                        │ ...     │
-└───────┴────────────────────────────┴─────────┘
+➜  monocle inspect -n cloudflare
+Query: cloudflare (type: name)
 
-# Look up prefix (replaces pfx2as)
+─── Search Results ───
+Found: 5 matches
+╭────────┬────────────────────────────┬─────────╮
+│ ASN    │ Name                       │ Country │
+├────────┼────────────────────────────┼─────────┤
+│ 13335  │ CLOUDFLARENET              │ US      │
+│ ...    │ ...                        │ ...     │
+╰────────┴────────────────────────────┴─────────╯
+
+# Look up prefix
 ➜  monocle inspect 1.1.1.0/24
-┌────────────┬───────┬────────────────────┐
-│ prefix     │ asn   │ name               │
-├────────────┼───────┼────────────────────┤
-│ 1.1.1.0/24 │ 13335 │ CLOUDFLARENET      │
-└────────────┴───────┴────────────────────┘
+Query: 1.1.1.0/24 (type: prefix)
 
-# Show all sections for an AS
-➜  monocle inspect 13335 --show all
+─── Announced Prefix ───
+╭────────────────┬────────────┬─────────┬────────────╮
+│ Matched Prefix │ Match Type │ ASN     │ Validation │
+├────────────────┼────────────┼─────────┼────────────┤
+│ 1.1.1.0/24     │ exact      │ AS13335 │ valid      │
+╰────────────────┴────────────┴─────────┴────────────╯
+
+─── Covering ROAs ───
+╭────────────┬────────────┬────────────┬───────╮
+│ Prefix     │ Max Length │ Origin ASN │ TA    │
+├────────────┼────────────┼────────────┼───────┤
+│ 1.1.1.0/24 │ 24         │ AS13335    │ APNIC │
+╰────────────┴────────────┴────────────┴───────╯
+
+# Show only basic information
+➜  monocle inspect 13335 --show basic
 ```
 
 ### `monocle country`

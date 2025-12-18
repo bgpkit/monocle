@@ -1393,7 +1393,7 @@ impl<'a> InspectLens<'a> {
         let divider = if config.use_markdown_style {
             "\n\n---\n\n"
         } else {
-            "\n\n════════════════════════════════════════════════════════════════════════════════\n\n"
+            "\n\n════════════════════════════════════════\n════════════════════════════════════════\n\n"
         };
 
         // Separate ASN and non-ASN (prefix/name) results
@@ -1408,13 +1408,23 @@ impl<'a> InspectLens<'a> {
             .filter(|q| q.query_type != InspectQueryType::Asn)
             .collect();
 
-        // Always show ASN results as a table (even single ASN)
+        // Automatically show glance table when there are multiple ASN results (table output only)
+        let show_glance = asn_results.len() > 1;
+        if show_glance {
+            let glance_table = self.format_glance_table(&asn_results, config);
+            if !glance_table.is_empty() {
+                // output.push_str("─── Glance ───\n");
+                output.push_str(&glance_table);
+            }
+        }
+
+        // Always show ASN results with detailed info
         if !asn_results.is_empty() {
             // Show each ASN query result with its sections
             // Use dividers between different ASN queries, not between sections of the same query
             for (idx, query_result) in asn_results.iter().enumerate() {
-                // Add divider between different queries (not for the first one)
-                if idx > 0 {
+                // Add divider between different queries (not for the first one, or after glance)
+                if idx > 0 || (show_glance && !output.is_empty()) {
                     output.push_str(divider);
                 }
 
@@ -1424,11 +1434,11 @@ impl<'a> InspectLens<'a> {
                     query_result.query, query_result.query_type
                 ));
 
-                // Basic information section with header
-                let asn_table = self.format_asn_results_table(&[query_result], config);
-                if !asn_table.is_empty() && asn_table != "No ASN results to display" {
+                // Basic information section with row-based format (no truncation)
+                let asn_info = self.format_asn_basic_rows(query_result, config);
+                if !asn_info.is_empty() {
                     output.push_str("─── Basic Information ───\n");
-                    output.push_str(&asn_table);
+                    output.push_str(&asn_info);
                 }
 
                 // Prefixes section
@@ -1471,8 +1481,66 @@ impl<'a> InspectLens<'a> {
         output
     }
 
-    /// Format ASN results as a single table (one ASN per row)
-    fn format_asn_results_table(
+    /// Format ASN basic info as rows (not a table) with full names (no truncation)
+    fn format_asn_basic_rows(
+        &self,
+        query_result: &InspectQueryResult,
+        config: &InspectDisplayConfig,
+    ) -> String {
+        let asinfo = match query_result.asinfo.as_ref() {
+            Some(a) => a,
+            None => return String::new(),
+        };
+        let detail = match asinfo.detail.as_ref() {
+            Some(d) => d,
+            None => return String::new(),
+        };
+
+        let mut lines = Vec::new();
+
+        // Core info - full names, no truncation
+        lines.push(format!("ASN:     AS{}", detail.core.asn));
+        lines.push(format!("Name:    {}", detail.core.name));
+        lines.push(format!("Country: {}", detail.core.country));
+
+        if let Some(ref as2org) = detail.as2org {
+            lines.push(format!("Org:     {}", as2org.org_name));
+            lines.push(format!("Org ID:  {}", as2org.org_id));
+        }
+
+        // Always show peeringdb info if available (part of basic info)
+        if let Some(ref pdb) = detail.peeringdb {
+            if let Some(ref website) = pdb.website {
+                lines.push(format!("Website: {}", website));
+            }
+            if let Some(ref irr) = pdb.irr_as_set {
+                lines.push(format!("AS-SET:  {}", irr));
+            }
+        }
+
+        if config.should_show_hegemony() {
+            if let Some(ref heg) = detail.hegemony {
+                lines.push(format!(
+                    "Hegemony: IPv4={:.4}, IPv6={:.4}",
+                    heg.ipv4, heg.ipv6
+                ));
+            }
+        }
+
+        if config.should_show_population() {
+            if let Some(ref pop) = detail.population {
+                lines.push(format!(
+                    "Population: {:.2}% country, {:.4}% global ({} users)",
+                    pop.percent_country, pop.percent_global, pop.user_count
+                ));
+            }
+        }
+
+        lines.join("\n")
+    }
+
+    /// Format glance table - quick overview of all ASNs in a single table
+    fn format_glance_table(
         &self,
         asn_results: &[&InspectQueryResult],
         config: &InspectDisplayConfig,
@@ -1648,7 +1716,7 @@ impl<'a> InspectLens<'a> {
                     lines.push(format!("Website: {}", website));
                 }
                 if let Some(ref irr) = pdb.irr_as_set {
-                    lines.push(format!("IRR:     {}", irr));
+                    lines.push(format!("AS-SET:  {}", irr));
                 }
             }
         }
@@ -1793,7 +1861,7 @@ impl<'a> InspectLens<'a> {
                 lines.push(table);
 
                 if rpki.truncated {
-                    lines.push("(ROA list truncated)".to_string());
+                    lines.push("(ROA list truncated, use --full-roas to show all)".to_string());
                 }
             } else {
                 lines.push("No covering ROAs found".to_string());
@@ -1901,7 +1969,7 @@ impl<'a> InspectLens<'a> {
         lines.push(format_group("Downstreams", &summary.downstreams));
 
         if connectivity.truncated {
-            lines.push("(results truncated)".to_string());
+            lines.push("(results truncated, use --full-connectivity to show all)".to_string());
         }
 
         lines.join("\n\n")
@@ -1945,7 +2013,7 @@ impl<'a> InspectLens<'a> {
                 lines.push(table);
 
                 if roas.truncated {
-                    lines.push("(ROA list truncated)".to_string());
+                    lines.push("(ROA list truncated, use --full-roas to show all)".to_string());
                 }
             }
         }
@@ -2054,7 +2122,7 @@ impl<'a> InspectLens<'a> {
 
         if prefixes.truncated {
             lines.push(format!(
-                "(showing {} of {} prefixes)",
+                "(showing {} of {} prefixes, use --full-prefixes to show all)",
                 prefixes.prefixes.len(),
                 prefixes.total_count
             ));
@@ -2101,7 +2169,7 @@ impl<'a> InspectLens<'a> {
             lines.push(table);
 
             if search.truncated {
-                lines.push("(results truncated)".to_string());
+                lines.push("(results truncated, use --limit to show more)".to_string());
             }
         }
 
@@ -2185,13 +2253,18 @@ mod tests {
     fn test_query_options_should_include() {
         let options = InspectQueryOptions::default();
 
-        // Basic should be included by default for all query types
+        // All sections should be included by default for ASN and Prefix queries
         assert!(options.should_include(InspectDataSection::Basic, InspectQueryType::Asn));
-        assert!(options.should_include(InspectDataSection::Basic, InspectQueryType::Prefix));
-        assert!(options.should_include(InspectDataSection::Basic, InspectQueryType::Name));
+        assert!(options.should_include(InspectDataSection::Prefixes, InspectQueryType::Asn));
+        assert!(options.should_include(InspectDataSection::Connectivity, InspectQueryType::Asn));
+        assert!(options.should_include(InspectDataSection::Rpki, InspectQueryType::Asn));
 
-        // Prefixes should NOT be included by default for ASN queries (only basic is default now)
-        assert!(!options.should_include(InspectDataSection::Prefixes, InspectQueryType::Asn));
+        assert!(options.should_include(InspectDataSection::Basic, InspectQueryType::Prefix));
+        assert!(options.should_include(InspectDataSection::Prefixes, InspectQueryType::Prefix));
+
+        // Name queries only show basic by default
+        assert!(options.should_include(InspectDataSection::Basic, InspectQueryType::Name));
+        assert!(!options.should_include(InspectDataSection::Prefixes, InspectQueryType::Name));
 
         // With explicit selection, only selected sections are included
         let options =

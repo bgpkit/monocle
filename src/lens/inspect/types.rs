@@ -57,17 +57,17 @@ impl InspectDataSection {
         vec![Self::Basic, Self::Prefixes, Self::Connectivity, Self::Rpki]
     }
 
-    /// Default sections for ASN queries (basic only)
+    /// Default sections for ASN queries (all sections)
     pub fn default_for_asn() -> Vec<Self> {
-        vec![Self::Basic]
+        Self::all()
     }
 
-    /// Default sections for prefix queries
+    /// Default sections for prefix queries (all sections)
     pub fn default_for_prefix() -> Vec<Self> {
-        vec![Self::Basic, Self::Rpki]
+        Self::all()
     }
 
-    /// Default sections for name search
+    /// Default sections for name search (basic only for search results)
     pub fn default_for_name() -> Vec<Self> {
         vec![Self::Basic]
     }

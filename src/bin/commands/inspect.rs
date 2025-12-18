@@ -46,7 +46,7 @@ pub struct InspectArgs {
 
     // === Data Selection Options ===
     /// Select data sections to display (can be repeated). Overrides defaults.
-    /// Available: basic (default), prefixes, connectivity, rpki, all
+    /// Available: basic, prefixes, connectivity, rpki, all
     #[clap(long = "show", value_name = "SECTION")]
     pub show: Vec<String>,
 
