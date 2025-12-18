@@ -67,16 +67,16 @@ Monocle can also be used as a library in your Rust projects. Add it to your `Car
 ```toml
 [dependencies]
 # Full library with CLI argument support (default)
-monocle = "0.10"
+monocle = "1.0"
 
 # Minimal database access only
-monocle = { version = "0.10", default-features = false, features = ["database"] }
+monocle = { version = "1.0", default-features = false, features = ["database"] }
 
 # BGP operations without CLI overhead
-monocle = { version = "0.10", default-features = false, features = ["lens-bgpkit"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
 
 # Full functionality without CLI
-monocle = { version = "0.10", default-features = false, features = ["lens-full"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-full"] }
 ```
 
 ### Feature Tiers

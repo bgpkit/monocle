@@ -16,8 +16,9 @@
 //! cargo run --example progress_callbacks --features lens-full
 //! ```
 
+use bgpkit_parser::BgpElem;
 use monocle::lens::parse::{ParseFilters, ParseLens, ParseProgress};
-use monocle::lens::search::{SearchDumpType, SearchFilters, SearchLens, SearchProgress};
+use monocle::lens::search::{SearchFilters, SearchLens, SearchProgress};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -102,20 +103,21 @@ fn main() -> anyhow::Result<()> {
     // Part 3: Using Parse Callback (demonstration)
     // ==========================================================================
 
-    println!("\n3. Using parse callback (code example):");
-    println!("   ```rust");
-    println!("   let lens = ParseLens::new();");
-    println!("   let filters = ParseFilters {{");
-    println!("       origin_asn: Some(13335),");
-    println!("       ..Default::default()");
-    println!("   }};");
-    println!();
-    println!("   let elems = lens.parse_with_progress(");
-    println!("       &filters,");
-    println!("       \"https://example.com/updates.mrt.gz\",");
-    println!("       Some(parse_callback),");
-    println!("   )?;");
-    println!("   ```");
+    println!("\n3. Using parse callback (executing):");
+
+    let lens = ParseLens::new();
+    let filters = ParseFilters {
+        origin_asn: Some(13335),
+        ..Default::default()
+    };
+
+    // Use a real URL (Cloudflare RRC00 update file)
+    let url = "https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz";
+
+    println!("   Parsing {} ...", url);
+    let elems = lens.parse_with_progress(&filters, url, Some(parse_callback))?;
+
+    println!("   Found {} elements matching filter", elems.len());
 
     // ==========================================================================
     // Part 4: SearchProgress Callbacks
@@ -258,15 +260,28 @@ fn main() -> anyhow::Result<()> {
     let element_count = Arc::new(AtomicU64::new(0));
     let count_clone = element_count.clone();
 
-    // Note: BgpElem and collector would be the actual parameters
-    let _element_handler = Arc::new(move |_elem: (), collector: String| {
+    let element_handler = Arc::new(move |_elem: BgpElem, collector: String| {
         let count = count_clone.fetch_add(1, Ordering::SeqCst);
-        if count % 1000 == 0 {
+        if count % 100 == 0 {
             println!("   [ELEM] Received element {} from {}", count, collector);
         }
     });
 
     println!("   Element handler created");
+
+    println!("\n   Executing search (Cloudflare AS13335, 10 minutes)...");
+    let search_lens = SearchLens::new();
+    let search_filters = SearchFilters {
+        parse_filters: ParseFilters {
+            origin_asn: Some(13335),
+            start_ts: Some("2024-01-01T00:00:00Z".to_string()),
+            end_ts: Some("2024-01-01T00:10:00Z".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    search_lens.search_with_progress(&search_filters, Some(search_callback), element_handler)?;
 
     // ==========================================================================
     // Part 7: GUI Integration Pattern

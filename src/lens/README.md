@@ -61,13 +61,13 @@ Library users can select minimal features:
 
 ```toml
 # Time parsing only
-monocle = { version = "0.10", default-features = false, features = ["lens-core"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-core"] }
 
 # BGP operations without CLI
-monocle = { version = "0.10", default-features = false, features = ["lens-bgpkit"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
 
 # All lenses including InspectLens
-monocle = { version = "0.10", default-features = false, features = ["lens-full"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-full"] }
 ```
 
 ---

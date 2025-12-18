@@ -116,6 +116,18 @@ fn main() -> anyhow::Result<()> {
     println!("   Selected sections: Basic, Rpki");
     println!("   Other sections will be omitted from results");
 
+    match lens.query_as_asn(&["13335".to_string()], &selective_options) {
+        Ok(result) => {
+            println!("   Query with selective options successful!");
+            if let Some(q) = result.queries.first() {
+                println!("   Has Basic section: {}", q.asinfo.is_some());
+                println!("   Has RPKI section: {}", q.rpki.is_some());
+                println!("   Has Connectivity section: {}", q.connectivity.is_some());
+            }
+        }
+        Err(e) => println!("   Query failed: {}", e),
+    }
+
     // Example 6: Query by ASN
     println!("\n6. Query by ASN:");
     let options = InspectQueryOptions::default();

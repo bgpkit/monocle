@@ -4,6 +4,33 @@ This directory contains examples demonstrating how to use monocle as a library.
 Examples are organized by the features they require, helping you understand
 the minimum dependencies needed for different use cases.
 
+## Running All Examples
+
+You can run these examples using `cargo run --example <name>`.
+
+```bash
+# Standalone utilities
+cargo run --release --example time_parsing --features lens-core
+cargo run --release --example output_formats --features lens-core
+
+# Database operations
+cargo run --release --example database_basics --features database
+cargo run --release --example as2rel_queries --features database
+
+# BGP operations
+cargo run --release --example country_lookup --features lens-bgpkit
+cargo run --release --example rpki_validation --features lens-bgpkit
+cargo run --release --example mrt_parsing --features lens-bgpkit
+cargo run --release --example search_bgp_messages --features lens-bgpkit
+
+# Full functionality
+cargo run --release --example inspect_unified --features lens-full
+cargo run --release --example progress_callbacks --features lens-full
+
+# WebSocket Client (requires running server)
+# cargo run --example ws_client_all --features cli
+```
+
 ## Feature Tiers
 
 Monocle uses a layered feature system:
@@ -23,14 +50,6 @@ Monocle uses a layered feature system:
 
 Minimal dependencies - no bgpkit-* crates required.
 
-```bash
-# Time parsing and formatting
-cargo run --example time_parsing --features lens-core
-
-# Output format utilities
-cargo run --example output_formats --features lens-core
-```
-
 **Files:**
 - `standalone/time_parsing.rs` - Parse timestamps, convert formats
 - `standalone/output_formats.rs` - Work with OutputFormat enum
@@ -38,14 +57,6 @@ cargo run --example output_formats --features lens-core
 ### Database Examples (`database`)
 
 SQLite operations without lens overhead.
-
-```bash
-# Basic database operations
-cargo run --example database_basics --features database
-
-# AS2Rel relationship queries
-cargo run --example as2rel_queries --features database
-```
 
 **Files:**
 - `database/database_basics.rs` - MonocleDatabase, schema management
@@ -55,41 +66,26 @@ cargo run --example as2rel_queries --features database
 
 Full BGP functionality with bgpkit-* integration.
 
-```bash
-# Country code lookup
-cargo run --example country_lookup --features lens-bgpkit
-
-# RPKI validation
-cargo run --example rpki_validation --features lens-bgpkit
-
-# MRT file parsing
-cargo run --example mrt_parsing --features lens-bgpkit
-
-# BGP message search
-cargo run --example bgp_search --features lens-bgpkit
-```
-
 **Files:**
 - `bgpkit/country_lookup.rs` - Country code/name lookup
 - `bgpkit/rpki_validation.rs` - RPKI ROA validation
 - `bgpkit/mrt_parsing.rs` - Parse MRT files with filters
-- `bgpkit/bgp_search.rs` - Search BGP messages across files
+- `bgpkit/search_bgp_messages.rs` - Search BGP announcement messages (Real-world example)
 
 ### Full Examples (`lens-full`)
 
 All lenses including unified inspection.
 
-```bash
-# Unified AS/prefix inspection
-cargo run --example inspect_unified --features lens-full
-
-# Progress callback patterns
-cargo run --example progress_callbacks --features lens-full
-```
-
 **Files:**
 - `full/inspect_unified.rs` - InspectLens for unified lookups
 - `full/progress_callbacks.rs` - Progress tracking for GUI/CLI
+
+### CLI/Server Examples (`cli`)
+
+Examples requiring the full CLI/Server feature set.
+
+**Files:**
+- `ws_client_all.rs` - WebSocket client demonstrating all API methods
 
 ## Using in Your Project
 
@@ -97,7 +93,7 @@ cargo run --example progress_callbacks --features lens-full
 
 ```toml
 [dependencies]
-monocle = { version = "0.9", default-features = false, features = ["database"] }
+monocle = { version = "1.0", default-features = false, features = ["database"] }
 ```
 
 ```rust
@@ -114,7 +110,7 @@ let rels = db.as2rel().search_asn(13335)?;
 
 ```toml
 [dependencies]
-monocle = { version = "0.9", default-features = false, features = ["lens-core"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-core"] }
 ```
 
 ```rust
@@ -129,7 +125,7 @@ let results = lens.parse(&args)?;
 
 ```toml
 [dependencies]
-monocle = { version = "0.9", default-features = false, features = ["lens-bgpkit"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
 ```
 
 ```rust
@@ -151,7 +147,7 @@ println!("{}: {}", result.state, result.reason);
 
 ```toml
 [dependencies]
-monocle = { version = "0.9", default-features = false, features = ["lens-full"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-full"] }
 ```
 
 ```rust
@@ -166,17 +162,6 @@ lens.ensure_data_available()?;
 let options = InspectQueryOptions::default();
 let results = lens.query(&["13335".to_string()], &options)?;
 let json = lens.format_json(&results, true);
-```
-
-## Running All Examples
-
-```bash
-# Run all examples with full features
-cargo run --example time_parsing --features cli
-cargo run --example database_basics --features cli
-cargo run --example country_lookup --features cli
-cargo run --example rpki_validation --features cli
-cargo run --example inspect_unified --features cli
 ```
 
 ## Notes

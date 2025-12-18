@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v1.0.0 - 2025-12-18
 
 This is a major release with significant architectural changes, new commands, and breaking changes.
 
@@ -158,13 +158,13 @@ Library users can now use monocle with minimal dependencies:
 Usage examples:
 ```toml
 # Minimal database access
-monocle = { version = "0.10", default-features = false, features = ["database"] }
+monocle = { version = "1.0", default-features = false, features = ["database"] }
 
 # BGP operations without CLI overhead
-monocle = { version = "0.10", default-features = false, features = ["lens-bgpkit"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
 
 # Full functionality
-monocle = { version = "0.10", default-features = false, features = ["lens-full"] }
+monocle = { version = "1.0", default-features = false, features = ["lens-full"] }
 ```
 
 ### Improvements

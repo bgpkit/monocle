@@ -238,7 +238,7 @@ Returns protocol/server metadata so web/native clients can adapt without hardcod
   "type": "result",
   "data": {
     "protocol_version": 1,
-    "server_version": "0.1.0",
+    "server_version": "1.0.0",
     "build": {
       "git_sha": "unknown",
       "timestamp": "unknown"
@@ -1481,10 +1481,6 @@ class MonocleClient:
 |--------|-------------|-------|
 | `as2org.search` | `inspect.search` | Use unified inspect namespace |
 | `as2org.bootstrap` | `inspect.refresh` | Use unified inspect namespace |
-
-The implementation plan and progress tracking has been moved to `WEBSOCKET_TODOS.md` to keep this design document focused and prevent it from becoming a mixed spec/roadmap.
-
-See: `WEBSOCKET_TODOS.md`
 
 ---
 

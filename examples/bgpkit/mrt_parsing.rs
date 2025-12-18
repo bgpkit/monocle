@@ -163,18 +163,22 @@ fn main() -> anyhow::Result<()> {
 
     // Example 8: Parsing a remote MRT file (demonstration)
     println!("\n8. Parsing demonstration:");
-    println!("   To parse a remote MRT file, use:");
-    println!("   ```rust");
-    println!("   let filters = ParseFilters {{");
-    println!("       origin_asn: Some(13335),");
-    println!("       ..Default::default()");
-    println!("   }};");
-    println!("   let url = \"https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz\";");
-    println!("   let elems = lens.parse_with_progress(&filters, url, Some(callback))?;");
-    println!("   for elem in elems {{");
-    println!("       println!(\"{{:?}}\", elem);");
-    println!("   }}");
-    println!("   ```");
+    println!("   Parsing a remote MRT file...");
+
+    let filters = ParseFilters {
+        origin_asn: Some(13335),
+        ..Default::default()
+    };
+    let url = "https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz";
+    let elems = lens.parse_with_progress(&filters, url, Some(callback))?;
+
+    println!("   Found {} elements:", elems.len());
+    for elem in elems.iter().take(5) {
+        println!("   {:?}", elem);
+    }
+    if elems.len() > 5 {
+        println!("   ... and {} more", elems.len() - 5);
+    }
 
     // Example 9: Handler-based parsing (for streaming)
     println!("\n9. Handler-based parsing (streaming):");
