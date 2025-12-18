@@ -2,11 +2,11 @@ name: Rust
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths-ignore:
       - "**.md"
   pull_request:
-    branches: [ main ]
+    branches: [main]
     paths-ignore:
       - "**.md"
 
@@ -21,6 +21,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-features -- -D warnings
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --all-features --verbose
