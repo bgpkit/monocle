@@ -77,7 +77,12 @@ pub struct InspectArgs {
     pub update: bool,
 }
 
-pub fn run(config: &MonocleConfig, args: InspectArgs, output_format: OutputFormat) {
+pub fn run(
+    config: &MonocleConfig,
+    args: InspectArgs,
+    output_format: OutputFormat,
+    no_refresh: bool,
+) {
     let sqlite_path = config.sqlite_path();
 
     // Open the database
@@ -93,25 +98,29 @@ pub fn run(config: &MonocleConfig, args: InspectArgs, output_format: OutputForma
 
     // Handle explicit update request (force refresh all)
     if args.update {
-        eprintln!("Updating all data sources...");
-        match lens.ensure_data_available() {
-            Ok(summary) => {
-                for msg in summary.format_messages() {
-                    eprintln!("{}", msg);
+        if no_refresh {
+            eprintln!("[monocle] Warning: --update ignored because --no-refresh is set");
+        } else {
+            eprintln!("[monocle] Updating all data sources...");
+            match lens.ensure_data_available() {
+                Ok(summary) => {
+                    for msg in summary.format_messages() {
+                        eprintln!("[monocle] {}", msg);
+                    }
+                    if !summary.any_refreshed {
+                        eprintln!("[monocle] All data sources are up to date.");
+                    }
                 }
-                if !summary.any_refreshed {
-                    eprintln!("All data sources are up to date.");
+                Err(e) => {
+                    eprintln!("[monocle] Failed to update data: {}", e);
+                    std::process::exit(1);
                 }
             }
-            Err(e) => {
-                eprintln!("Failed to update data: {}", e);
-                std::process::exit(1);
-            }
-        }
 
-        // If no query provided after update, just exit
-        if args.query.is_empty() && args.country.is_none() {
-            return;
+            // If no query provided after update, just exit
+            if args.query.is_empty() && args.country.is_none() {
+                return;
+            }
         }
     }
 
@@ -122,16 +131,22 @@ pub fn run(config: &MonocleConfig, args: InspectArgs, output_format: OutputForma
     let required_sections = determine_required_sections(&args, &options, &lens);
 
     // Ensure only the required data sources are available (auto-refresh if empty or expired)
-    match lens.ensure_data_for_sections(&required_sections) {
-        Ok(summary) => {
-            // Print messages about any data that was refreshed
-            for msg in summary.format_messages() {
-                eprintln!("{}", msg);
+    // Skip if --no-refresh is set
+    if !no_refresh {
+        match lens.ensure_data_for_sections(&required_sections) {
+            Ok(summary) => {
+                // Print messages about any data that was refreshed
+                for msg in summary.format_messages() {
+                    eprintln!("[monocle] {}", msg);
+                }
             }
-        }
-        Err(e) => {
-            eprintln!("Warning: Could not verify data availability: {}", e);
-            // Continue anyway - some data sources may still work
+            Err(e) => {
+                eprintln!(
+                    "[monocle] Warning: Could not verify data availability: {}",
+                    e
+                );
+                // Continue anyway - some data sources may still work
+            }
         }
     }
 

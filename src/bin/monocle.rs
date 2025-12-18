@@ -40,6 +40,10 @@ struct Cli {
     #[clap(long, global = true)]
     json: bool,
 
+    /// Disable automatic data refresh (use existing cached data only)
+    #[clap(long, global = true)]
+    no_refresh: bool,
+
     #[clap(subcommand)]
     command: Commands,
 }
@@ -209,14 +213,18 @@ fn main() {
             }
         }
 
-        Commands::Inspect(args) => commands::inspect::run(&config, args, output_format),
+        Commands::Inspect(args) => {
+            commands::inspect::run(&config, args, output_format, cli.no_refresh)
+        }
         Commands::Time(args) => commands::time::run(args, output_format),
         Commands::Country(args) => commands::country::run(args, output_format),
         Commands::Rpki { commands } => {
-            commands::rpki::run(commands, output_format, &config.data_dir)
+            commands::rpki::run(commands, output_format, &config.data_dir, cli.no_refresh)
         }
         Commands::Ip(args) => commands::ip::run(args, output_format),
-        Commands::As2rel(args) => commands::as2rel::run(&config, args, output_format),
+        Commands::As2rel(args) => {
+            commands::as2rel::run(&config, args, output_format, cli.no_refresh)
+        }
         Commands::Config(args) => commands::config::run(&config, args, output_format),
     }
 }

@@ -40,7 +40,12 @@ pub struct As2relArgs {
     pub show_full_name: bool,
 }
 
-pub fn run(config: &MonocleConfig, args: As2relArgs, output_format: OutputFormat) {
+pub fn run(
+    config: &MonocleConfig,
+    args: As2relArgs,
+    output_format: OutputFormat,
+    no_refresh: bool,
+) {
     let As2relArgs {
         asns,
         update,
@@ -64,43 +69,50 @@ pub fn run(config: &MonocleConfig, args: As2relArgs, output_format: OutputFormat
 
     // Handle explicit updates
     if update || update_with.is_some() {
-        eprintln!("Updating AS2rel data...");
+        if no_refresh {
+            eprintln!("[monocle] Warning: --update ignored because --no-refresh is set");
+        } else {
+            eprintln!("[monocle] Updating AS2rel data...");
 
-        let db = match MonocleDatabase::open(&sqlite_path) {
-            Ok(db) => db,
-            Err(e) => {
-                eprintln!("Failed to open database: {}", e);
-                std::process::exit(1);
-            }
-        };
+            let db = match MonocleDatabase::open(&sqlite_path) {
+                Ok(db) => db,
+                Err(e) => {
+                    eprintln!("Failed to open database: {}", e);
+                    std::process::exit(1);
+                }
+            };
 
-        let lens = As2relLens::new(&db);
-        let result = match &update_with {
-            Some(path) => lens.update_from(path),
-            None => lens.update(),
-        };
+            let lens = As2relLens::new(&db);
+            let result = match &update_with {
+                Some(path) => lens.update_from(path),
+                None => lens.update(),
+            };
 
-        match result {
-            Ok(count) => {
-                eprintln!("AS2rel data updated: {} relationships loaded", count);
+            match result {
+                Ok(count) => {
+                    eprintln!(
+                        "[monocle] AS2rel data updated: {} relationships loaded",
+                        count
+                    );
+                }
+                Err(e) => {
+                    eprintln!("[monocle] Failed to update AS2rel data: {}", e);
+                    std::process::exit(1);
+                }
             }
-            Err(e) => {
-                eprintln!("Failed to update AS2rel data: {}", e);
-                std::process::exit(1);
-            }
+
+            // Continue with query using the same connection
+            run_query(
+                &db,
+                &asns,
+                sort_by_asn,
+                show_name,
+                show_full_name,
+                no_explain,
+                output_format,
+            );
+            return;
         }
-
-        // Continue with query using the same connection
-        run_query(
-            &db,
-            &asns,
-            sort_by_asn,
-            show_name,
-            show_full_name,
-            no_explain,
-            output_format,
-        );
-        return;
     }
 
     // Open the database
@@ -116,15 +128,25 @@ pub fn run(config: &MonocleConfig, args: As2relArgs, output_format: OutputFormat
 
     // Check if data needs to be initialized or updated automatically
     if lens.needs_update() {
-        eprintln!("AS2rel data is empty or outdated, updating now...");
+        if no_refresh {
+            eprintln!(
+                "[monocle] Warning: AS2rel data is empty or outdated. Results may be incomplete."
+            );
+            eprintln!("[monocle]          Run without --no-refresh or use 'monocle config db-refresh --as2rel' to load data.");
+        } else {
+            eprintln!("[monocle] AS2rel data is empty or outdated, updating now...");
 
-        match lens.update() {
-            Ok(count) => {
-                eprintln!("AS2rel data updated: {} relationships loaded", count);
-            }
-            Err(e) => {
-                eprintln!("Failed to update AS2rel data: {}", e);
-                std::process::exit(1);
+            match lens.update() {
+                Ok(count) => {
+                    eprintln!(
+                        "[monocle] AS2rel data updated: {} relationships loaded",
+                        count
+                    );
+                }
+                Err(e) => {
+                    eprintln!("[monocle] Failed to update AS2rel data: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
     }

@@ -178,7 +178,7 @@ impl IpLens {
             format!("{}?{}", IP_INFO_API, params.join("&"))
         };
 
-        let resp = ureq::get(&url).call()?.body_mut().read_json::<IpInfo>()?;
+        let resp = oneio::read_json_struct::<IpInfo>(&url)?;
         Ok(resp)
     }
 

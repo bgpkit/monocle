@@ -116,7 +116,6 @@ lens-bgpkit = [
     "dep:itertools",
     "dep:radar-rs",
     "dep:rayon",
-    "dep:ureq",
 ]
 
 # Full lens layer - all lenses including InspectLens
@@ -170,7 +169,7 @@ tracing = "0.1"
 # Database dependencies (optional but commonly needed)
 # =============================================================================
 ipnet = { version = "2.10", features = ["json"], optional = true }
-oneio = { version = "0.20.0", default-features = false, features = ["https", "gz", "bz", "json"], optional = true }
+oneio = { version = "0.20.1", default-features = false, features = ["https", "gz", "bz", "json"], optional = true }
 
 # =============================================================================
 # Lens-core dependencies (optional)
@@ -188,7 +187,6 @@ bgpkit-commons = { version = "0.10.1", features = ["asinfo", "rpki", "countries"
 itertools = { version = "0.14", optional = true }
 radar-rs = { version = "0.1.0", optional = true }
 rayon = { version = "1.8", optional = true }
-ureq = { version = "3.1", features = ["json"], optional = true }
 
 # =============================================================================
 # Display dependencies (optional)

@@ -247,4 +247,130 @@ mod tests {
         let value = db.get_meta("test_key").unwrap();
         assert_eq!(value, Some("test_value".to_string()));
     }
+
+    #[test]
+    fn test_all_repositories_accessible() {
+        let db = MonocleDatabase::open_in_memory().unwrap();
+
+        // All repositories should be accessible and empty initially
+        assert!(db.asinfo().is_empty());
+        assert!(db.as2rel().is_empty());
+        assert!(db.rpki().is_empty());
+        assert!(db.pfx2as().is_empty());
+    }
+
+    #[test]
+    fn test_schema_initialized_on_open() {
+        let db = MonocleDatabase::open_in_memory().unwrap();
+
+        // The monocle_meta table should exist and have a version
+        let version: String = db
+            .connection()
+            .query_row(
+                "SELECT value FROM monocle_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(!version.is_empty());
+    }
+
+    #[test]
+    fn test_rpki_store_and_retrieve_mock_data() {
+        let db = MonocleDatabase::open_in_memory().unwrap();
+
+        // Store mock RPKI data
+        let roas = vec![
+            RpkiRoaRecord {
+                prefix: "1.0.0.0/24".to_string(),
+                max_length: 24,
+                origin_asn: 13335,
+                ta: "apnic".to_string(),
+            },
+            RpkiRoaRecord {
+                prefix: "2001:db8::/32".to_string(),
+                max_length: 48,
+                origin_asn: 64496,
+                ta: "ripe".to_string(),
+            },
+        ];
+
+        let aspas = vec![RpkiAspaRecord {
+            customer_asn: 64496,
+            provider_asns: vec![64497, 64498],
+        }];
+
+        db.rpki().store(&roas, &aspas).unwrap();
+
+        // Verify data is stored
+        assert!(!db.rpki().is_empty());
+        let retrieved_roas = db.rpki().get_roas_by_asn(13335).unwrap();
+        assert_eq!(retrieved_roas.len(), 1);
+        assert_eq!(retrieved_roas[0].prefix, "1.0.0.0/24");
+
+        let retrieved_aspas = db.rpki().get_aspas_by_customer(64496).unwrap();
+        assert_eq!(retrieved_aspas.len(), 1);
+        assert_eq!(retrieved_aspas[0].provider_asns.len(), 2);
+    }
+
+    #[test]
+    fn test_pfx2as_store_and_retrieve_mock_data() {
+        let db = MonocleDatabase::open_in_memory().unwrap();
+
+        // Store mock pfx2as data
+        let records = vec![
+            Pfx2asDbRecord {
+                prefix: "1.0.0.0/24".to_string(),
+                origin_asn: 13335,
+                validation: "valid".to_string(),
+            },
+            Pfx2asDbRecord {
+                prefix: "8.8.8.0/24".to_string(),
+                origin_asn: 15169,
+                validation: "valid".to_string(),
+            },
+            Pfx2asDbRecord {
+                prefix: "192.0.2.0/24".to_string(),
+                origin_asn: 64496,
+                validation: "unknown".to_string(),
+            },
+        ];
+
+        db.pfx2as().store(&records, "test://mock").unwrap();
+
+        // Verify data is stored
+        assert!(!db.pfx2as().is_empty());
+
+        // Check validation stats
+        let stats = db.pfx2as().validation_stats().unwrap();
+        assert_eq!(stats.valid, 2);
+        assert_eq!(stats.unknown, 1);
+        assert_eq!(stats.invalid, 0);
+    }
+
+    #[test]
+    fn test_needs_refresh_flags() {
+        let db = MonocleDatabase::open_in_memory().unwrap();
+
+        // Empty databases should need refresh
+        assert!(db.needs_asinfo_bootstrap());
+        assert!(db.needs_asinfo_refresh());
+        assert!(db.needs_as2rel_update());
+        assert!(db.needs_rpki_refresh());
+        assert!(db.needs_pfx2as_refresh());
+    }
+
+    #[test]
+    fn test_connection_accessible() {
+        let db = MonocleDatabase::open_in_memory().unwrap();
+
+        // Should be able to execute queries on the connection
+        let result: i32 = db
+            .connection()
+            .query_row("SELECT 1 + 1", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(result, 2);
+    }
 }

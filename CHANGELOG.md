@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Bug Fixes
+
+* Fixed "database is locked" error in `monocle config db-refresh` command (Issue #90)
+  * The `do_refresh` function was opening redundant database connections for ASInfo and AS2Rel data sources
+  * Now correctly uses the already-passed database connection parameter
+
+### New Features
+
+* Added global `--no-refresh` flag to disable automatic data refresh
+  * Use `monocle --no-refresh <command>` to skip all automatic data loading/refresh
+  * Useful when you want to use existing cached data only
+  * Shows warnings when data is missing or stale instead of auto-refreshing
+
+* Added `[monocle]` prefix to all auto-refresh log messages
+  * Makes it easier to distinguish monocle's internal logging from main output
+  * Especially useful when refresh operations run automatically during commands
+
+* RPKI ASPA command now ensures ASInfo data is available for AS name enrichment
+  * Automatically loads ASInfo data before showing ASPA output
+  * AS names and countries are displayed in ASPA results
+
+### Improvements
+
+* Added comprehensive tests for database initialization with mock data
+  * Tests for all repositories being accessible after initialization
+  * Tests for schema version verification
+  * Tests for RPKI and Pfx2as mock data storage/retrieval
+
 ## v1.0.1 - 2025-12-18
 
 ### Bug Fixes

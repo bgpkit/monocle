@@ -76,10 +76,16 @@ pub enum RpkiCommands {
     },
 }
 
-pub fn run(commands: RpkiCommands, output_format: OutputFormat, data_dir: &str) {
+pub fn run(commands: RpkiCommands, output_format: OutputFormat, data_dir: &str, no_refresh: bool) {
     match commands {
         RpkiCommands::Validate { resources, refresh } => {
-            run_validate(resources, refresh, output_format, data_dir)
+            let effective_refresh = if no_refresh && refresh {
+                eprintln!("[monocle] Warning: --refresh ignored because --no-refresh is set");
+                false
+            } else {
+                refresh
+            };
+            run_validate(resources, effective_refresh, output_format, data_dir)
         }
         RpkiCommands::Roas {
             resources,
@@ -87,15 +93,24 @@ pub fn run(commands: RpkiCommands, output_format: OutputFormat, data_dir: &str) 
             source,
             collector,
             refresh,
-        } => run_roas(
-            resources,
-            date,
-            source,
-            collector,
-            refresh,
-            output_format,
-            data_dir,
-        ),
+        } => {
+            let effective_refresh = if no_refresh && refresh {
+                eprintln!("[monocle] Warning: --refresh ignored because --no-refresh is set");
+                false
+            } else {
+                refresh
+            };
+            run_roas(
+                resources,
+                date,
+                source,
+                collector,
+                effective_refresh,
+                output_format,
+                data_dir,
+                no_refresh,
+            )
+        }
         RpkiCommands::Aspas {
             customer,
             provider,
@@ -103,16 +118,25 @@ pub fn run(commands: RpkiCommands, output_format: OutputFormat, data_dir: &str) 
             source,
             collector,
             refresh,
-        } => run_aspas(
-            customer,
-            provider,
-            date,
-            source,
-            collector,
-            refresh,
-            output_format,
-            data_dir,
-        ),
+        } => {
+            let effective_refresh = if no_refresh && refresh {
+                eprintln!("[monocle] Warning: --refresh ignored because --no-refresh is set");
+                false
+            } else {
+                refresh
+            };
+            run_aspas(
+                customer,
+                provider,
+                date,
+                source,
+                collector,
+                effective_refresh,
+                output_format,
+                data_dir,
+                no_refresh,
+            )
+        }
     }
 }
 
@@ -160,15 +184,41 @@ fn ensure_rpki_cache(
             .map_err(|e| format!("Failed to check cache: {}", e))?;
 
     if needs_refresh {
-        eprintln!("Refreshing RPKI cache from Cloudflare...");
+        eprintln!("[monocle] Refreshing RPKI cache from Cloudflare...");
 
         let (roa_count, aspa_count) = lens
             .refresh()
             .map_err(|e| format!("Failed to refresh cache: {}", e))?;
 
-        eprintln!("Cached {} ROAs and {} ASPAs", roa_count, aspa_count);
+        eprintln!(
+            "[monocle] Cached {} ROAs and {} ASPAs",
+            roa_count, aspa_count
+        );
     }
 
+    Ok(())
+}
+
+/// Ensure ASInfo data is available for enriching ASPA output
+fn ensure_asinfo_for_aspa(
+    db: &MonocleDatabase,
+    no_refresh: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if db.asinfo().is_empty() {
+        if no_refresh {
+            eprintln!("[monocle] Warning: ASInfo data is empty. AS names will not be shown.");
+            eprintln!("[monocle]          Run without --no-refresh or use 'monocle config db-refresh --asinfo' to load data.");
+            return Ok(());
+        }
+        eprintln!("[monocle] Loading ASInfo data for AS name enrichment...");
+        let counts = db
+            .bootstrap_asinfo()
+            .map_err(|e| format!("Failed to load ASInfo data: {}", e))?;
+        eprintln!(
+            "[monocle] Loaded {} core, {} as2org records",
+            counts.core, counts.as2org
+        );
+    }
     Ok(())
 }
 
@@ -377,6 +427,7 @@ fn run_roas(
     refresh: bool,
     output_format: OutputFormat,
     data_dir: &str,
+    no_refresh: bool,
 ) {
     // Parse date if provided
     let (parsed_date, date_str) = match &date {
@@ -389,7 +440,7 @@ fn run_roas(
         },
         None => {
             // For current data (no date), use SQLite cache
-            run_roas_from_cache(resources, refresh, output_format, data_dir);
+            run_roas_from_cache(resources, refresh, output_format, data_dir, no_refresh);
             return;
         }
     };
@@ -530,6 +581,7 @@ fn run_roas_from_cache(
     refresh: bool,
     output_format: OutputFormat,
     data_dir: &str,
+    no_refresh: bool,
 ) {
     // Open database and create lens
     let db = match MonocleDatabase::open_in_dir(data_dir) {
@@ -541,9 +593,11 @@ fn run_roas_from_cache(
     };
 
     let lens = RpkiLens::new(&db);
-    if let Err(e) = ensure_rpki_cache(&lens, refresh) {
-        eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
-        return;
+    if !no_refresh {
+        if let Err(e) = ensure_rpki_cache(&lens, refresh) {
+            eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
+            return;
+        }
     }
 
     // Display data source
@@ -779,6 +833,7 @@ fn run_aspas(
     refresh: bool,
     output_format: OutputFormat,
     data_dir: &str,
+    no_refresh: bool,
 ) {
     // Parse date if provided
     let (parsed_date, date_str) = match &date {
@@ -791,7 +846,14 @@ fn run_aspas(
         },
         None => {
             // For current data (no date), use SQLite cache
-            run_aspas_from_cache(customer, provider, refresh, output_format, data_dir);
+            run_aspas_from_cache(
+                customer,
+                provider,
+                refresh,
+                output_format,
+                data_dir,
+                no_refresh,
+            );
             return;
         }
     };
@@ -849,6 +911,7 @@ fn run_aspas_from_cache(
     refresh: bool,
     output_format: OutputFormat,
     data_dir: &str,
+    no_refresh: bool,
 ) {
     // Open database and create lens
     let db = match MonocleDatabase::open_in_dir(data_dir) {
@@ -859,10 +922,18 @@ fn run_aspas_from_cache(
         }
     };
 
-    let lens = RpkiLens::new(&db);
-    if let Err(e) = ensure_rpki_cache(&lens, refresh) {
-        eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
+    // Ensure ASInfo data is available for AS name enrichment
+    if let Err(e) = ensure_asinfo_for_aspa(&db, no_refresh) {
+        eprintln!("ERROR: {}", e);
         return;
+    }
+
+    let lens = RpkiLens::new(&db);
+    if !no_refresh {
+        if let Err(e) = ensure_rpki_cache(&lens, refresh) {
+            eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
+            return;
+        }
     }
 
     // Display data source

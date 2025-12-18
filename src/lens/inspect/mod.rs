@@ -170,7 +170,7 @@ impl<'a> InspectLens<'a> {
 
         // Check and refresh ASInfo
         if self.db.asinfo().is_empty() {
-            eprintln!("Loading ASInfo data (AS names, organizations, PeeringDB)...");
+            eprintln!("[monocle] Loading ASInfo data (AS names, organizations, PeeringDB)...");
             info!("ASInfo data is empty, bootstrapping...");
             match self.db.bootstrap_asinfo() {
                 Ok(counts) => {
@@ -194,7 +194,7 @@ impl<'a> InspectLens<'a> {
                 }
             }
         } else if self.db.needs_asinfo_refresh() {
-            eprintln!("Refreshing ASInfo data (AS names, organizations, PeeringDB)...");
+            eprintln!("[monocle] Refreshing ASInfo data (AS names, organizations, PeeringDB)...");
             info!("ASInfo data is stale, refreshing...");
             match self.db.bootstrap_asinfo() {
                 Ok(counts) => {
@@ -221,7 +221,7 @@ impl<'a> InspectLens<'a> {
 
         // Check and refresh AS2Rel
         if self.db.as2rel().is_empty() {
-            eprintln!("Loading AS2Rel data (AS relationships)...");
+            eprintln!("[monocle] Loading AS2Rel data (AS relationships)...");
             info!("AS2Rel data is empty, loading...");
             match self.db.update_as2rel() {
                 Ok(count) => {
@@ -242,7 +242,7 @@ impl<'a> InspectLens<'a> {
                 }
             }
         } else if self.db.needs_as2rel_update() {
-            eprintln!("Refreshing AS2Rel data (AS relationships)...");
+            eprintln!("[monocle] Refreshing AS2Rel data (AS relationships)...");
             info!("AS2Rel data is stale, refreshing...");
             match self.db.update_as2rel() {
                 Ok(count) => {
@@ -266,7 +266,7 @@ impl<'a> InspectLens<'a> {
 
         // Check and refresh RPKI
         if self.db.rpki().is_empty() {
-            eprintln!("Loading RPKI data (ROAs, ASPA)...");
+            eprintln!("[monocle] Loading RPKI data (ROAs, ASPA)...");
             info!("RPKI data is empty, loading from bgpkit-commons...");
             match self.refresh_rpki_from_commons() {
                 Ok(count) => {
@@ -282,7 +282,7 @@ impl<'a> InspectLens<'a> {
                 }
             }
         } else if self.db.rpki().needs_refresh(DEFAULT_RPKI_CACHE_TTL) {
-            eprintln!("Refreshing RPKI data (ROAs, ASPA)...");
+            eprintln!("[monocle] Refreshing RPKI data (ROAs, ASPA)...");
             info!("RPKI data is stale, refreshing...");
             match self.refresh_rpki_from_commons() {
                 Ok(count) => {
@@ -306,7 +306,7 @@ impl<'a> InspectLens<'a> {
 
         // Check and refresh Pfx2as
         if self.db.pfx2as().is_empty() {
-            eprintln!("Loading Pfx2as data (prefix-to-AS mappings)...");
+            eprintln!("[monocle] Loading Pfx2as data (prefix-to-AS mappings)...");
             info!("Pfx2as data is empty, loading...");
             match self.refresh_pfx2as() {
                 Ok(count) => {
@@ -327,7 +327,7 @@ impl<'a> InspectLens<'a> {
                 }
             }
         } else if self.db.pfx2as().needs_refresh(DEFAULT_PFX2AS_CACHE_TTL) {
-            eprintln!("Refreshing Pfx2as data (prefix-to-AS mappings)...");
+            eprintln!("[monocle] Refreshing Pfx2as data (prefix-to-AS mappings)...");
             info!("Pfx2as data is stale, refreshing...");
             match self.refresh_pfx2as() {
                 Ok(count) => {
@@ -365,7 +365,7 @@ impl<'a> InspectLens<'a> {
         // ASInfo is always needed for basic information
         if sections.contains(&InspectDataSection::Basic) {
             if self.db.asinfo().is_empty() {
-                eprintln!("Loading ASInfo data (AS names, organizations, PeeringDB)...");
+                eprintln!("[monocle] Loading ASInfo data (AS names, organizations, PeeringDB)...");
                 match self.db.bootstrap_asinfo() {
                     Ok(counts) => {
                         summary.add(
@@ -388,7 +388,9 @@ impl<'a> InspectLens<'a> {
                     }
                 }
             } else if self.db.needs_asinfo_refresh() {
-                eprintln!("Refreshing ASInfo data (AS names, organizations, PeeringDB)...");
+                eprintln!(
+                    "[monocle] Refreshing ASInfo data (AS names, organizations, PeeringDB)..."
+                );
                 match self.db.bootstrap_asinfo() {
                     Ok(counts) => {
                         summary.add(
@@ -416,7 +418,7 @@ impl<'a> InspectLens<'a> {
         // AS2Rel is needed for connectivity section
         if sections.contains(&InspectDataSection::Connectivity) {
             if self.db.as2rel().is_empty() {
-                eprintln!("Loading AS2Rel data (AS relationships)...");
+                eprintln!("[monocle] Loading AS2Rel data (AS relationships)...");
                 match self.db.update_as2rel() {
                     Ok(count) => {
                         summary.add(
@@ -436,7 +438,7 @@ impl<'a> InspectLens<'a> {
                     }
                 }
             } else if self.db.needs_as2rel_update() {
-                eprintln!("Refreshing AS2Rel data (AS relationships)...");
+                eprintln!("[monocle] Refreshing AS2Rel data (AS relationships)...");
                 match self.db.update_as2rel() {
                     Ok(count) => {
                         summary.add(
@@ -461,7 +463,7 @@ impl<'a> InspectLens<'a> {
         // RPKI is needed for rpki section
         if sections.contains(&InspectDataSection::Rpki) {
             if self.db.rpki().is_empty() {
-                eprintln!("Loading RPKI data (ROAs, ASPA)...");
+                eprintln!("[monocle] Loading RPKI data (ROAs, ASPA)...");
                 match self.refresh_rpki_from_commons() {
                     Ok(count) => {
                         summary.add(
@@ -476,7 +478,7 @@ impl<'a> InspectLens<'a> {
                     }
                 }
             } else if self.db.rpki().needs_refresh(DEFAULT_RPKI_CACHE_TTL) {
-                eprintln!("Refreshing RPKI data (ROAs, ASPA)...");
+                eprintln!("[monocle] Refreshing RPKI data (ROAs, ASPA)...");
                 match self.refresh_rpki_from_commons() {
                     Ok(count) => {
                         summary.add(
@@ -501,7 +503,7 @@ impl<'a> InspectLens<'a> {
         // Pfx2as is needed for prefixes section
         if sections.contains(&InspectDataSection::Prefixes) {
             if self.db.pfx2as().is_empty() {
-                eprintln!("Loading Pfx2as data (prefix-to-AS mappings)...");
+                eprintln!("[monocle] Loading Pfx2as data (prefix-to-AS mappings)...");
                 match self.refresh_pfx2as() {
                     Ok(count) => {
                         summary.add(
@@ -521,7 +523,7 @@ impl<'a> InspectLens<'a> {
                     }
                 }
             } else if self.db.pfx2as().needs_refresh(DEFAULT_PFX2AS_CACHE_TTL) {
-                eprintln!("Refreshing Pfx2as data (prefix-to-AS mappings)...");
+                eprintln!("[monocle] Refreshing Pfx2as data (prefix-to-AS mappings)...");
                 match self.refresh_pfx2as() {
                     Ok(count) => {
                         summary.add(

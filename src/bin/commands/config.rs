@@ -394,7 +394,7 @@ fn refresh_sources(config: &MonocleConfig, sources: &[DataSource], output_format
     let mut results = Vec::new();
 
     for source in sources {
-        eprintln!("Refreshing {}...", source.name());
+        eprintln!("[monocle] Refreshing {}...", source.name());
         let start = Instant::now();
 
         let result = do_refresh(&db, source, config);
@@ -402,11 +402,11 @@ fn refresh_sources(config: &MonocleConfig, sources: &[DataSource], output_format
 
         let result_str = match &result {
             Ok(msg) => {
-                eprintln!("  ✓ {} ({:.2}s)", msg, duration);
+                eprintln!("[monocle]   ✓ {} ({:.2}s)", msg, duration);
                 msg.clone()
             }
             Err(e) => {
-                eprintln!("  ✗ Failed: {} ({:.2}s)", e, duration);
+                eprintln!("[monocle]   ✗ Failed: {} ({:.2}s)", e, duration);
                 format!("Failed: {}", e)
             }
         };
@@ -437,21 +437,18 @@ fn refresh_sources(config: &MonocleConfig, sources: &[DataSource], output_format
         }
     } else {
         eprintln!();
-        eprintln!("Refresh completed.");
+        eprintln!("[monocle] Refresh completed.");
     }
 }
 
 fn do_refresh(
     db: &MonocleDatabase,
     source: &DataSource,
-    config: &MonocleConfig,
+    _config: &MonocleConfig,
 ) -> Result<String, String> {
     match source {
         DataSource::Asinfo => {
-            // Use the database's bootstrap_asinfo method
-            let db = MonocleDatabase::open(&config.sqlite_path())
-                .map_err(|e| format!("Failed to open database: {}", e))?;
-
+            // Use the database's bootstrap_asinfo method with the passed db connection
             let counts = db
                 .bootstrap_asinfo()
                 .map_err(|e| format!("Failed to refresh asinfo: {}", e))?;
@@ -462,10 +459,7 @@ fn do_refresh(
             ))
         }
         DataSource::As2rel => {
-            // Use the database's update_as2rel method
-            let db = MonocleDatabase::open(&config.sqlite_path())
-                .map_err(|e| format!("Failed to open database: {}", e))?;
-
+            // Use the database's update_as2rel method with the passed db connection
             let count = db
                 .update_as2rel()
                 .map_err(|e| format!("Failed to refresh as2rel: {}", e))?;
