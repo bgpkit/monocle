@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.1 - 2025-12-18
+
+### Bug Fixes
+
+* Fixed cross-compilation issue on Linux platforms caused by OpenSSL dependency
+  * Updated `bgpkit-commons` to v0.10.1 which uses `rustls` instead of `native-tls`
+  * All TLS operations now use `rustls`, eliminating the need for OpenSSL development packages
+
 ## v1.0.0 - 2025-12-18
 
 This is a major release with significant architectural changes, new commands, and breaking changes.
