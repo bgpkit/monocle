@@ -30,6 +30,15 @@ All notable changes to this project will be documented in this file.
   * The `do_refresh` function was opening redundant database connections for ASInfo and AS2Rel data sources
   * Now correctly uses the already-passed database connection parameter
 
+### Improvements
+
+* Added visual `...` row indicator in tables when results are truncated
+  * Search results table now shows a `...` row when more matches exist
+  * RPKI ROA tables show truncation indicator
+  * Announced prefixes table shows truncation indicator
+  * Connectivity section (upstreams/peers/downstreams) tables show truncation indicator
+  * Makes it much more visible that additional results are available
+
 ### New Features
 
 * Added global `--no-refresh` flag to disable automatic data refresh
@@ -44,8 +53,6 @@ All notable changes to this project will be documented in this file.
 * RPKI ASPA command now ensures ASInfo data is available for AS name enrichment
   * Automatically loads ASInfo data before showing ASPA output
   * AS names and countries are displayed in ASPA results
-
-### Improvements
 
 * Added comprehensive tests for database initialization with mock data
   * Tests for all repositories being accessible after initialization
