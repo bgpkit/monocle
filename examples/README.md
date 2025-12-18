@@ -16,6 +16,7 @@ cargo run --release --example output_formats --features lens-core
 # Database operations
 cargo run --release --example database_basics --features database
 cargo run --release --example as2rel_queries --features database
+cargo run --release --example pfx2as_search --features lens-bgpkit
 
 # BGP operations
 cargo run --release --example country_lookup --features lens-bgpkit
@@ -61,6 +62,7 @@ SQLite operations without lens overhead.
 **Files:**
 - `database/database_basics.rs` - MonocleDatabase, schema management
 - `database/as2rel_queries.rs` - Query AS-level relationships
+- `database/pfx2as_search.rs` - Prefix-to-ASN mapping and search (requires `lens-bgpkit`)
 
 ### BGPKIT Examples (`lens-bgpkit`)
 

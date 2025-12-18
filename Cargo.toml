@@ -54,6 +54,11 @@ name = "as2rel_queries"
 path = "examples/database/as2rel_queries.rs"
 required-features = ["database"]
 
+[[example]]
+name = "pfx2as_search"
+path = "examples/database/pfx2as_search.rs"
+required-features = ["lens-bgpkit"]
+
 # BGPKIT examples - requires bgpkit-* crates
 [[example]]
 name = "country_lookup"

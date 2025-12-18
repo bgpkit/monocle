@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+* Added new `monocle pfx2as` command for prefix-to-ASN mapping lookups
+  * **Search by prefix**: Query prefixes to find their origin ASNs
+    * Example: `monocle pfx2as 1.1.1.0/24`
+  * **Search by ASN**: Query an ASN to find all its announced prefixes
+    * Example: `monocle pfx2as 13335` or `monocle pfx2as AS13335`
+  * **RPKI validation**: Shows RPKI validation status (valid/invalid/not_found) for each prefix-ASN pair
+  * **`--show-name`**: Display AS organization name for each origin ASN
+  * **`--include-sub`**: Include sub-prefixes (more specific) in results
+    * Example: `monocle pfx2as 8.0.0.0/8 --include-sub --limit 20`
+  * **`--include-super`**: Include super-prefixes (less specific) in results
+    * Example: `monocle pfx2as 1.1.1.0/24 --include-super`
+  * **`--limit`**: Limit the number of results
+  * Supports all standard output formats (`--format table/json/psv/etc.`)
+
 * Enhanced `monocle as2rel` command with advanced filtering and multi-ASN support
   * **`--min-visibility <PERCENT>`**: Filter results by minimum visibility percentage (0-100)
     * Available for all as2rel queries

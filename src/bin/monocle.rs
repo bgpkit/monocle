@@ -16,6 +16,7 @@ use commands::country::CountryArgs;
 use commands::inspect::InspectArgs;
 use commands::ip::IpArgs;
 use commands::parse::ParseArgs;
+use commands::pfx2as::Pfx2asArgs;
 use commands::rpki::RpkiCommands;
 use commands::search::SearchArgs;
 use commands::time::TimeArgs;
@@ -81,6 +82,12 @@ enum Commands {
 
     /// AS-level relationship lookup between ASNs.
     As2rel(As2relArgs),
+
+    /// Prefix-to-ASN mapping lookup
+    ///
+    /// Query by prefix to find origin ASNs, or by ASN to find announced prefixes.
+    /// Includes RPKI validation status for each prefix-ASN pair.
+    Pfx2as(Pfx2asArgs),
 
     /// Show monocle configuration, data paths, and database management.
     Config(ConfigArgs),
@@ -224,6 +231,9 @@ fn main() {
         Commands::Ip(args) => commands::ip::run(args, output_format),
         Commands::As2rel(args) => {
             commands::as2rel::run(&config, args, output_format, cli.no_refresh)
+        }
+        Commands::Pfx2as(args) => {
+            commands::pfx2as::run(&config, args, output_format, cli.no_refresh)
         }
         Commands::Config(args) => commands::config::run(&config, args, output_format),
     }

@@ -4,6 +4,7 @@
 //! The lens wraps `Pfx2asRepository` and provides:
 //! - Prefix lookup (exact, longest, covering, covered)
 //! - ASN-to-prefixes lookup
+//! - Search with RPKI validation and AS name enrichment
 //! - Cache management (refresh, needs_refresh)
 //! - Output formatting
 //!
@@ -11,7 +12,7 @@
 //!
 //! ```rust,ignore
 //! use monocle::database::MonocleDatabase;
-//! use monocle::lens::pfx2as::{Pfx2asLens, Pfx2asLookupArgs, Pfx2asLookupMode};
+//! use monocle::lens::pfx2as::{Pfx2asLens, Pfx2asSearchArgs};
 //!
 //! let db = MonocleDatabase::open()?;
 //! let lens = Pfx2asLens::new(&db);
@@ -21,17 +22,27 @@
 //!     lens.refresh(None)?;
 //! }
 //!
-//! // Lookup a prefix
-//! let args = Pfx2asLookupArgs::new("1.1.1.0/24").longest();
-//! let result = lens.lookup(&args)?;
+//! // Search by prefix
+//! let args = Pfx2asSearchArgs::new("1.1.1.0/24");
+//! let results = lens.search(&args)?;
 //!
-//! // Get all prefixes for an ASN
-//! let prefixes = lens.get_prefixes_for_asn(13335)?;
+//! // Search by ASN
+//! let args = Pfx2asSearchArgs::new("13335");
+//! let results = lens.search(&args)?;
+//!
+//! // Search with options
+//! let args = Pfx2asSearchArgs::new("8.8.0.0/16")
+//!     .with_include_sub(true)
+//!     .with_show_name(true);
+//! let results = lens.search(&args)?;
 //! ```
 
 use crate::database::MonocleDatabase;
+use crate::lens::rpki::RpkiLens;
+use crate::lens::utils::{truncate_name, OutputFormat, DEFAULT_NAME_MAX_LEN};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use tabled::Tabled;
 
 // =============================================================================
@@ -84,6 +95,23 @@ pub struct Pfx2asPrefixRecord {
     pub validation: String,
 }
 
+/// Search result with RPKI validation and optional AS name
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Pfx2asSearchResult {
+    /// IP prefix
+    pub prefix: String,
+    /// Origin ASN
+    pub origin_asn: u32,
+    /// AS name (if show_name is enabled)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub as_name: Option<String>,
+    /// RPKI validation status
+    pub rpki: String,
+    /// Match type (for prefix queries: longest, super, sub)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_type: Option<String>,
+}
+
 /// Output format for Pfx2as lens results
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
@@ -123,6 +151,15 @@ impl std::fmt::Display for Pfx2asLookupMode {
             Pfx2asLookupMode::Covered => write!(f, "covered"),
         }
     }
+}
+
+/// Query type for pfx2as searches
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pfx2asQueryType {
+    /// Query by ASN
+    Asn(u32),
+    /// Query by prefix
+    Prefix(String),
 }
 
 // =============================================================================
@@ -195,6 +232,91 @@ impl Pfx2asLookupArgs {
     }
 }
 
+/// Arguments for Pfx2as search operations (CLI-friendly)
+///
+/// This struct supports both prefix and ASN queries with options for
+/// including sub/super prefixes, showing AS names, and RPKI validation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+pub struct Pfx2asSearchArgs {
+    /// Query: an IP prefix (e.g., 1.1.1.0/24) or ASN (e.g., 13335, AS13335)
+    #[cfg_attr(feature = "cli", clap(value_name = "QUERY"))]
+    pub query: String,
+
+    /// Include sub-prefixes (more specific) in results when querying by prefix
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub include_sub: bool,
+
+    /// Include super-prefixes (less specific) in results when querying by prefix
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub include_super: bool,
+
+    /// Show AS name for each origin ASN
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub show_name: bool,
+
+    /// Show full AS name without truncation (default truncates to 20 chars)
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub show_full_name: bool,
+
+    /// Limit the number of results (default: no limit)
+    #[cfg_attr(feature = "cli", clap(long, short, value_name = "N"))]
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+impl Pfx2asSearchArgs {
+    /// Create new search args with a query
+    pub fn new(query: impl Into<String>) -> Self {
+        Self {
+            query: query.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Enable include_sub option
+    pub fn with_include_sub(mut self, include_sub: bool) -> Self {
+        self.include_sub = include_sub;
+        self
+    }
+
+    /// Enable include_super option
+    pub fn with_include_super(mut self, include_super: bool) -> Self {
+        self.include_super = include_super;
+        self
+    }
+
+    /// Enable show_name option
+    pub fn with_show_name(mut self, show_name: bool) -> Self {
+        self.show_name = show_name;
+        self
+    }
+
+    /// Enable show_full_name option
+    pub fn with_show_full_name(mut self, show_full_name: bool) -> Self {
+        self.show_full_name = show_full_name;
+        self
+    }
+
+    /// Set limit
+    pub fn with_limit(mut self, limit: usize) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    /// Validate arguments
+    pub fn validate(&self) -> Result<(), String> {
+        if self.query.is_empty() {
+            return Err("Query cannot be empty".to_string());
+        }
+        Ok(())
+    }
+}
+
 // =============================================================================
 // Lens
 // =============================================================================
@@ -204,8 +326,27 @@ impl Pfx2asLookupArgs {
 /// This lens wraps `Pfx2asRepository` and provides:
 /// - Prefix lookup with various modes (exact, longest, covering, covered)
 /// - ASN-to-prefixes lookup
+/// - Search with RPKI validation and AS name enrichment
 /// - Cache management
 /// - Output formatting
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use monocle::database::MonocleDatabase;
+/// use monocle::lens::pfx2as::{Pfx2asLens, Pfx2asSearchArgs};
+///
+/// let db = MonocleDatabase::open("~/.monocle/monocle-data.sqlite3")?;
+/// let lens = Pfx2asLens::new(&db);
+///
+/// // Search by prefix with RPKI validation
+/// let args = Pfx2asSearchArgs::new("1.1.1.0/24").with_show_name(true);
+/// let results = lens.search(&args)?;
+///
+/// for result in &results {
+///     println!("{} -> AS{} ({})", result.prefix, result.origin_asn, result.rpki);
+/// }
+/// ```
 pub struct Pfx2asLens<'a> {
     /// Reference to the monocle database
     db: &'a MonocleDatabase,
@@ -276,7 +417,251 @@ impl<'a> Pfx2asLens<'a> {
     }
 
     // =========================================================================
-    // Lookup operations
+    // Query type detection
+    // =========================================================================
+
+    /// Detect whether a query is an ASN or a prefix
+    pub fn detect_query_type(&self, query: &str) -> Pfx2asQueryType {
+        let trimmed = query.trim();
+
+        // Try to parse as ASN (with or without "AS" prefix)
+        let asn_str = if trimmed.to_uppercase().starts_with("AS") {
+            &trimmed[2..]
+        } else {
+            trimmed
+        };
+
+        if let Ok(asn) = asn_str.parse::<u32>() {
+            // If it's a pure number or starts with AS, treat as ASN
+            if trimmed.to_uppercase().starts_with("AS")
+                || (!trimmed.contains('.') && !trimmed.contains(':'))
+            {
+                return Pfx2asQueryType::Asn(asn);
+            }
+        }
+
+        // Otherwise treat as prefix
+        Pfx2asQueryType::Prefix(trimmed.to_string())
+    }
+
+    // =========================================================================
+    // Search operations (high-level, with RPKI and AS name enrichment)
+    // =========================================================================
+
+    /// Search for prefix-to-ASN mappings with RPKI validation and optional AS names
+    ///
+    /// This is the main entry point for pfx2as searches. It:
+    /// - Auto-detects whether the query is an ASN or prefix
+    /// - Performs the appropriate lookup
+    /// - Enriches results with RPKI validation status
+    /// - Optionally includes AS names
+    pub fn search(&self, args: &Pfx2asSearchArgs) -> Result<Vec<Pfx2asSearchResult>> {
+        // Validate args
+        args.validate().map_err(|e| anyhow::anyhow!(e))?;
+
+        let query_type = self.detect_query_type(&args.query);
+
+        match query_type {
+            Pfx2asQueryType::Asn(asn) => self.search_by_asn(asn, args),
+            Pfx2asQueryType::Prefix(prefix) => self.search_by_prefix(&prefix, args),
+        }
+    }
+
+    /// Search by ASN - returns all prefixes announced by the ASN
+    pub fn search_by_asn(
+        &self,
+        asn: u32,
+        args: &Pfx2asSearchArgs,
+    ) -> Result<Vec<Pfx2asSearchResult>> {
+        let records = self.get_prefixes_for_asn(asn)?;
+
+        if records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Apply limit
+        let records: Vec<_> = if let Some(n) = args.limit {
+            records.into_iter().take(n).collect()
+        } else {
+            records
+        };
+
+        // Get AS names if needed
+        let show_name = args.show_name || args.show_full_name;
+        let as_names = if show_name {
+            self.get_as_names(&[asn])
+        } else {
+            HashMap::new()
+        };
+
+        // Get RPKI validation and build results
+        let rpki_lens = RpkiLens::new(self.db);
+        let mut results = Vec::new();
+
+        for record in &records {
+            let rpki_state = match rpki_lens.validate(&record.prefix, record.origin_asn) {
+                Ok(result) => result.state.to_string(),
+                Err(_) => "unknown".to_string(),
+            };
+
+            let as_name = if show_name {
+                let name = as_names
+                    .get(&record.origin_asn)
+                    .cloned()
+                    .unwrap_or_default();
+                let display_name = if args.show_full_name {
+                    name
+                } else {
+                    truncate_name(&name, DEFAULT_NAME_MAX_LEN)
+                };
+                Some(display_name)
+            } else {
+                None
+            };
+
+            results.push(Pfx2asSearchResult {
+                prefix: record.prefix.clone(),
+                origin_asn: record.origin_asn,
+                as_name,
+                rpki: rpki_state,
+                match_type: None,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Search by prefix - returns origin ASNs with optional sub/super prefixes
+    pub fn search_by_prefix(
+        &self,
+        prefix: &str,
+        args: &Pfx2asSearchArgs,
+    ) -> Result<Vec<Pfx2asSearchResult>> {
+        // Collect results based on options
+        // (prefix, asn, match_type)
+        let mut all_results: Vec<(String, u32, String)> = Vec::new();
+
+        // First, do longest match
+        let longest_results = self.lookup_longest(prefix)?;
+        for result in longest_results {
+            for asn in &result.origin_asns {
+                all_results.push((result.matched_prefix.clone(), *asn, "longest".to_string()));
+            }
+        }
+
+        // Include super-prefixes (covering) if requested
+        if args.include_super {
+            let covering_results = self.lookup_covering(prefix)?;
+            for result in covering_results {
+                for asn in &result.origin_asns {
+                    // Avoid duplicates from longest match
+                    if !all_results
+                        .iter()
+                        .any(|(p, a, _)| p == &result.matched_prefix && a == asn)
+                    {
+                        all_results.push((
+                            result.matched_prefix.clone(),
+                            *asn,
+                            "super".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Include sub-prefixes (covered) if requested
+        if args.include_sub {
+            let covered_results = self.lookup_covered(prefix)?;
+            for result in covered_results {
+                for asn in &result.origin_asns {
+                    // Avoid duplicates
+                    if !all_results
+                        .iter()
+                        .any(|(p, a, _)| p == &result.matched_prefix && a == asn)
+                    {
+                        all_results.push((result.matched_prefix.clone(), *asn, "sub".to_string()));
+                    }
+                }
+            }
+        }
+
+        if all_results.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Apply limit
+        let all_results: Vec<_> = if let Some(n) = args.limit {
+            all_results.into_iter().take(n).collect()
+        } else {
+            all_results
+        };
+
+        // Get unique ASNs for name lookup
+        let unique_asns: Vec<u32> = all_results
+            .iter()
+            .map(|(_, asn, _)| *asn)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // Get AS names if needed
+        let show_name = args.show_name || args.show_full_name;
+        let as_names = if show_name {
+            self.get_as_names(&unique_asns)
+        } else {
+            HashMap::new()
+        };
+
+        // Get RPKI validation and build results
+        let rpki_lens = RpkiLens::new(self.db);
+        let mut results = Vec::new();
+
+        for (pfx, asn, match_type) in &all_results {
+            let rpki_state = match rpki_lens.validate(pfx, *asn) {
+                Ok(result) => result.state.to_string(),
+                Err(_) => "unknown".to_string(),
+            };
+
+            let as_name = if show_name {
+                let name = as_names.get(asn).cloned().unwrap_or_default();
+                let display_name = if args.show_full_name {
+                    name
+                } else {
+                    truncate_name(&name, DEFAULT_NAME_MAX_LEN)
+                };
+                Some(display_name)
+            } else {
+                None
+            };
+
+            results.push(Pfx2asSearchResult {
+                prefix: pfx.clone(),
+                origin_asn: *asn,
+                as_name,
+                rpki: rpki_state,
+                match_type: Some(match_type.clone()),
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Get AS names for a list of ASNs
+    fn get_as_names(&self, asns: &[u32]) -> HashMap<u32, String> {
+        let mut names = HashMap::new();
+        let asinfo = self.db.asinfo();
+
+        for asn in asns {
+            if let Ok(Some(record)) = asinfo.get_full(*asn) {
+                names.insert(*asn, record.core.name);
+            }
+        }
+
+        names
+    }
+
+    // =========================================================================
+    // Lookup operations (low-level)
     // =========================================================================
 
     /// Look up a prefix based on the provided arguments
@@ -378,6 +763,103 @@ impl<'a> Pfx2asLens<'a> {
     // =========================================================================
     // Formatting
     // =========================================================================
+
+    /// Format search results for display
+    pub fn format_search_results(
+        &self,
+        results: &[Pfx2asSearchResult],
+        format: &OutputFormat,
+        show_name: bool,
+    ) -> String {
+        match format {
+            OutputFormat::Json => serde_json::to_string(results).unwrap_or_default(),
+            OutputFormat::JsonPretty => serde_json::to_string_pretty(results).unwrap_or_default(),
+            OutputFormat::JsonLine => results
+                .iter()
+                .filter_map(|r| serde_json::to_string(r).ok())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            OutputFormat::Table | OutputFormat::Markdown => {
+                use tabled::settings::Style;
+                use tabled::Table;
+
+                if show_name {
+                    #[derive(Tabled)]
+                    struct Row {
+                        prefix: String,
+                        origin_asn: u32,
+                        as_name: String,
+                        rpki: String,
+                    }
+
+                    let rows: Vec<Row> = results
+                        .iter()
+                        .map(|r| Row {
+                            prefix: r.prefix.clone(),
+                            origin_asn: r.origin_asn,
+                            as_name: r.as_name.clone().unwrap_or_default(),
+                            rpki: r.rpki.clone(),
+                        })
+                        .collect();
+
+                    let mut table = Table::new(rows);
+                    if matches!(format, OutputFormat::Markdown) {
+                        table.with(Style::markdown())
+                    } else {
+                        table.with(Style::rounded())
+                    }
+                    .to_string()
+                } else {
+                    #[derive(Tabled)]
+                    struct Row {
+                        prefix: String,
+                        origin_asn: u32,
+                        rpki: String,
+                    }
+
+                    let rows: Vec<Row> = results
+                        .iter()
+                        .map(|r| Row {
+                            prefix: r.prefix.clone(),
+                            origin_asn: r.origin_asn,
+                            rpki: r.rpki.clone(),
+                        })
+                        .collect();
+
+                    let mut table = Table::new(rows);
+                    if matches!(format, OutputFormat::Markdown) {
+                        table.with(Style::markdown())
+                    } else {
+                        table.with(Style::rounded())
+                    }
+                    .to_string()
+                }
+            }
+            OutputFormat::Psv => {
+                let mut output = if show_name {
+                    "prefix|origin_asn|as_name|rpki\n".to_string()
+                } else {
+                    "prefix|origin_asn|rpki\n".to_string()
+                };
+
+                for r in results {
+                    if show_name {
+                        output.push_str(&format!(
+                            "{}|{}|{}|{}\n",
+                            r.prefix,
+                            r.origin_asn,
+                            r.as_name.as_deref().unwrap_or(""),
+                            r.rpki
+                        ));
+                    } else {
+                        output.push_str(&format!("{}|{}|{}\n", r.prefix, r.origin_asn, r.rpki));
+                    }
+                }
+
+                output.trim_end().to_string()
+            }
+        }
+    }
 
     /// Format lookup results for display
     pub fn format_results(
@@ -500,5 +982,60 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("1.1.1.0/24"));
         assert!(json.contains("13335"));
+    }
+
+    #[test]
+    fn test_search_args() {
+        let args = Pfx2asSearchArgs::new("1.1.1.0/24")
+            .with_include_sub(true)
+            .with_show_name(true)
+            .with_limit(10);
+
+        assert_eq!(args.query, "1.1.1.0/24");
+        assert!(args.include_sub);
+        assert!(args.show_name);
+        assert_eq!(args.limit, Some(10));
+    }
+
+    #[test]
+    fn test_search_args_validation() {
+        let args = Pfx2asSearchArgs::new("");
+        assert!(args.validate().is_err());
+
+        let args = Pfx2asSearchArgs::new("1.1.1.0/24");
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn test_search_result_serialization() {
+        let result = Pfx2asSearchResult {
+            prefix: "1.1.1.0/24".to_string(),
+            origin_asn: 13335,
+            as_name: Some("CLOUDFLARENET".to_string()),
+            rpki: "valid".to_string(),
+            match_type: Some("longest".to_string()),
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("1.1.1.0/24"));
+        assert!(json.contains("13335"));
+        assert!(json.contains("CLOUDFLARENET"));
+        assert!(json.contains("valid"));
+    }
+
+    #[test]
+    fn test_search_result_without_optional_fields() {
+        let result = Pfx2asSearchResult {
+            prefix: "1.1.1.0/24".to_string(),
+            origin_asn: 13335,
+            as_name: None,
+            rpki: "valid".to_string(),
+            match_type: None,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("1.1.1.0/24"));
+        assert!(!json.contains("as_name")); // should be skipped
+        assert!(!json.contains("match_type")); // should be skipped
     }
 }
