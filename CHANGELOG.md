@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### New Features
+
+* Enhanced `monocle as2rel` command with advanced filtering and multi-ASN support
+  * **`--min-visibility <PERCENT>`**: Filter results by minimum visibility percentage (0-100)
+    * Available for all as2rel queries
+    * Filters out relationships seen by fewer than the specified percentage of peers
+  * **`--single-homed`**: Find ASNs that are single-homed to the queried ASN
+    * Shows only ASNs where the queried ASN is their ONLY upstream provider
+    * Useful for identifying customers with no redundancy
+    * Example: `monocle as2rel 2914 --single-homed`
+  * **`--is-upstream`**: Filter to show only downstream customers of the queried ASN
+    * Shows relationships where the queried ASN is the upstream (provider)
+  * **`--is-downstream`**: Filter to show only upstream providers of the queried ASN
+    * Shows relationships where the queried ASN is a downstream (customer)
+  * **`--is-peer`**: Filter to show only peer relationships (settlement-free interconnection)
+  * **Multi-ASN support**: Query relationships among multiple ASNs at once
+    * When more than two ASNs are provided, shows all pair combinations
+    * Results sorted by asn1, with asn1 < asn2 for each pair
+    * Example: `monocle as2rel 174 2914 3356` shows all three pair relationships
+
 ### Bug Fixes
 
 * Fixed "database is locked" error in `monocle config db-refresh` command (Issue #90)

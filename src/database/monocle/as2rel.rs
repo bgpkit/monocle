@@ -561,6 +561,340 @@ impl<'a> As2relRepository<'a> {
 
         Ok(entry_count)
     }
+
+    /// Find ASNs that are single-homed to a specific upstream provider
+    ///
+    /// A single-homed ASN has exactly one upstream provider.
+    /// This finds all ASNs where `upstream_asn` is their ONLY upstream.
+    ///
+    /// # Arguments
+    /// * `upstream_asn` - The upstream ASN to check against
+    /// * `min_peers_pct` - Optional minimum visibility percentage (0-100)
+    ///
+    /// # Returns
+    /// List of (customer_asn, peers_count, asn_name) tuples
+    pub fn find_single_homed_to(
+        &self,
+        upstream_asn: u32,
+        min_peers_pct: Option<f32>,
+    ) -> Result<Vec<(u32, u32, Option<String>)>> {
+        let max_peers = self.get_max_peers_count();
+        let min_peers_count = min_peers_pct
+            .map(|pct| ((pct / 100.0) * max_peers as f32) as u32)
+            .unwrap_or(0);
+
+        // Query to find single-homed ASNs:
+        // 1. Find all ASNs that have the target ASN as upstream
+        // 2. Filter to those that have exactly 1 upstream total
+        let query = r#"
+            WITH asn_upstreams AS (
+                -- Normalize to (customer_asn, upstream_asn) pairs
+                SELECT
+                    CASE
+                        WHEN rel = -1 THEN asn1
+                        WHEN rel = 1 THEN asn2
+                    END as customer_asn,
+                    CASE
+                        WHEN rel = -1 THEN asn2
+                        WHEN rel = 1 THEN asn1
+                    END as upstream_asn,
+                    peers_count
+                FROM as2rel
+                WHERE rel IN (-1, 1)
+            ),
+            upstream_counts AS (
+                SELECT
+                    customer_asn,
+                    COUNT(DISTINCT upstream_asn) as upstream_count
+                FROM asn_upstreams
+                GROUP BY customer_asn
+            ),
+            has_target_upstream AS (
+                SELECT customer_asn, MAX(peers_count) as visibility
+                FROM asn_upstreams
+                WHERE upstream_asn = :upstream_asn
+                GROUP BY customer_asn
+            )
+            SELECT
+                h.customer_asn,
+                h.visibility,
+                o.org_name
+            FROM has_target_upstream h
+            JOIN upstream_counts u ON h.customer_asn = u.customer_asn
+            LEFT JOIN as2org_all o ON o.asn = h.customer_asn
+            WHERE u.upstream_count = 1
+              AND h.visibility >= :min_peers
+            ORDER BY h.visibility DESC
+        "#;
+
+        let mut stmt = self.conn.prepare(query)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::named_params! {
+                    ":upstream_asn": upstream_asn,
+                    ":min_peers": min_peers_count,
+                },
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| anyhow!("Failed to find single-homed ASNs: {}", e))?;
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Count upstreams for a given ASN
+    ///
+    /// Returns the number of distinct upstream providers for the ASN.
+    pub fn count_upstreams(&self, asn: u32) -> Result<u32> {
+        let query = r#"
+            SELECT COUNT(DISTINCT
+                CASE
+                    WHEN rel = -1 AND asn1 = :asn THEN asn2
+                    WHEN rel = 1 AND asn2 = :asn THEN asn1
+                END
+            ) as upstream_count
+            FROM as2rel
+            WHERE (asn1 = :asn OR asn2 = :asn) AND rel IN (-1, 1)
+        "#;
+
+        let count: u32 = self
+            .conn
+            .query_row(query, rusqlite::named_params! { ":asn": asn }, |row| {
+                row.get(0)
+            })
+            .map_err(|e| anyhow!("Failed to count upstreams: {}", e))?;
+
+        Ok(count)
+    }
+
+    /// Search for relationships with a specific type filter
+    ///
+    /// # Arguments
+    /// * `asn` - The ASN to query
+    /// * `rel_type` - Relationship type: -1 (asn is customer), 0 (peers), 1 (asn is provider)
+    pub fn search_asn_by_rel_type(&self, asn: u32, rel_type: i8) -> Result<Vec<As2relRecord>> {
+        // When querying for asn's perspective:
+        // - rel_type = -1: asn is customer, so (asn1=asn, rel=-1) OR (asn2=asn, rel=1)
+        // - rel_type = 0: peers, so rel=0
+        // - rel_type = 1: asn is provider, so (asn1=asn, rel=1) OR (asn2=asn, rel=-1)
+        let query = match rel_type {
+            -1 => {
+                // ASN is downstream (customer) - looking for upstreams
+                r#"
+                    SELECT asn1, asn2, paths_count, peers_count, rel
+                    FROM as2rel
+                    WHERE (asn1 = ?1 AND rel = -1) OR (asn2 = ?1 AND rel = 1)
+                "#
+            }
+            0 => {
+                // Peer relationships
+                r#"
+                    SELECT asn1, asn2, paths_count, peers_count, rel
+                    FROM as2rel
+                    WHERE (asn1 = ?1 OR asn2 = ?1) AND rel = 0
+                "#
+            }
+            1 => {
+                // ASN is upstream (provider) - looking for downstreams
+                r#"
+                    SELECT asn1, asn2, paths_count, peers_count, rel
+                    FROM as2rel
+                    WHERE (asn1 = ?1 AND rel = 1) OR (asn2 = ?1 AND rel = -1)
+                "#
+            }
+            _ => return Err(anyhow!("Invalid relationship type: {}", rel_type)),
+        };
+
+        let mut stmt = self.conn.prepare(query)?;
+        let rows = stmt
+            .query_map([asn], |row| {
+                Ok(As2relRecord {
+                    asn1: row.get(0)?,
+                    asn2: row.get(1)?,
+                    paths_count: row.get(2)?,
+                    peers_count: row.get(3)?,
+                    rel: row.get(4)?,
+                })
+            })
+            .map_err(|e| anyhow!("Failed to search ASN by rel type: {}", e))?;
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Search for relationships with a specific type filter, with names
+    ///
+    /// Like `search_asn_with_names` but filtered by relationship type.
+    pub fn search_asn_with_names_by_rel_type(
+        &self,
+        asn: u32,
+        rel_type: i8,
+    ) -> Result<Vec<AggregatedRelationship>> {
+        // Get all relationships first, then filter
+        let all_rels = self.search_asn_with_names(asn)?;
+
+        // Filter based on relationship type
+        // rel_type from ASN's perspective:
+        // -1: ASN is downstream/customer (as2_upstream should be high)
+        // 0: Peers (peer should be high)
+        // 1: ASN is upstream/provider (as1_upstream should be high)
+        let filtered: Vec<AggregatedRelationship> = all_rels
+            .into_iter()
+            .filter(|r| match rel_type {
+                -1 => r.as2_upstream_count > 0 && r.as1_upstream_count == 0, // Other is upstream of ASN
+                0 => {
+                    r.connected_count > 0 && r.as1_upstream_count == 0 && r.as2_upstream_count == 0
+                }
+                1 => r.as1_upstream_count > 0 && r.as2_upstream_count == 0, // ASN is upstream of other
+                _ => false,
+            })
+            .collect();
+
+        Ok(filtered)
+    }
+
+    /// Search for all pairs among a list of ASNs
+    ///
+    /// Returns relationships for all pairs (asn_i, asn_j) where i < j.
+    /// Results are sorted by asn1 ascending.
+    pub fn search_multi_asn_pairs(&self, asns: &[u32]) -> Result<Vec<AggregatedRelationship>> {
+        if asns.len() < 2 {
+            return Ok(vec![]);
+        }
+
+        // Generate all unique pairs where asn1 < asn2
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        for i in 0..asns.len() {
+            for j in (i + 1)..asns.len() {
+                let (a, b) = if asns[i] < asns[j] {
+                    (asns[i], asns[j])
+                } else {
+                    (asns[j], asns[i])
+                };
+                if !pairs.contains(&(a, b)) {
+                    pairs.push((a, b));
+                }
+            }
+        }
+
+        // Sort by first ASN
+        pairs.sort_by_key(|(a, _)| *a);
+
+        // Query each pair and collect results
+        let mut results = Vec::new();
+        for (asn1, asn2) in pairs {
+            let pair_results = self.search_pair_with_names(asn1, asn2)?;
+            for r in pair_results {
+                // Ensure asn1 < asn2 in the result
+                if r.asn1 <= r.asn2 {
+                    results.push(r);
+                } else {
+                    // Swap perspective
+                    results.push(AggregatedRelationship {
+                        asn1: r.asn2,
+                        asn2: r.asn1,
+                        asn2_name: None, // We'd need to look up asn1's name
+                        connected_count: r.connected_count,
+                        as1_upstream_count: r.as2_upstream_count,
+                        as2_upstream_count: r.as1_upstream_count,
+                    });
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Search for all pairs among a list of ASNs with proper name lookups
+    ///
+    /// Returns relationships for all pairs (asn_i, asn_j) where i < j.
+    /// Results are sorted by asn1 ascending.
+    pub fn search_multi_asn_pairs_with_names(
+        &self,
+        asns: &[u32],
+    ) -> Result<Vec<AggregatedRelationship>> {
+        if asns.len() < 2 {
+            return Ok(vec![]);
+        }
+
+        // Generate all unique pairs where asn1 < asn2
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        for i in 0..asns.len() {
+            for j in (i + 1)..asns.len() {
+                let (a, b) = if asns[i] < asns[j] {
+                    (asns[i], asns[j])
+                } else {
+                    (asns[j], asns[i])
+                };
+                if !pairs.contains(&(a, b)) {
+                    pairs.push((a, b));
+                }
+            }
+        }
+
+        // Sort by first ASN
+        pairs.sort_by_key(|(a, _)| *a);
+
+        // Build a query for all pairs at once
+        if pairs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Create WHERE clause for all pairs
+        let pair_conditions: Vec<String> = pairs
+            .iter()
+            .map(|(a, b)| {
+                format!(
+                    "((r.asn1 = {} AND r.asn2 = {}) OR (r.asn1 = {} AND r.asn2 = {}))",
+                    a, b, b, a
+                )
+            })
+            .collect();
+        let where_clause = pair_conditions.join(" OR ");
+
+        let query = format!(
+            r#"
+            SELECT
+                CASE WHEN r.asn1 < r.asn2 THEN r.asn1 ELSE r.asn2 END as asn1,
+                CASE WHEN r.asn1 < r.asn2 THEN r.asn2 ELSE r.asn1 END as asn2,
+                o.org_name as asn2_name,
+                MAX(CASE WHEN r.rel = 0 THEN r.peers_count ELSE 0 END) as connected_count,
+                SUM(CASE
+                    WHEN r.asn1 < r.asn2 AND r.rel = 1 THEN r.peers_count
+                    WHEN r.asn1 > r.asn2 AND r.rel = -1 THEN r.peers_count
+                    ELSE 0
+                END) as as1_upstream_count,
+                SUM(CASE
+                    WHEN r.asn1 < r.asn2 AND r.rel = -1 THEN r.peers_count
+                    WHEN r.asn1 > r.asn2 AND r.rel = 1 THEN r.peers_count
+                    ELSE 0
+                END) as as2_upstream_count
+            FROM as2rel r
+            LEFT JOIN as2org_all o ON o.asn = CASE WHEN r.asn1 < r.asn2 THEN r.asn2 ELSE r.asn1 END
+            WHERE {}
+            GROUP BY
+                CASE WHEN r.asn1 < r.asn2 THEN r.asn1 ELSE r.asn2 END,
+                CASE WHEN r.asn1 < r.asn2 THEN r.asn2 ELSE r.asn1 END
+            HAVING connected_count > 0 OR as1_upstream_count > 0 OR as2_upstream_count > 0
+            ORDER BY asn1, asn2
+        "#,
+            where_clause
+        );
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(AggregatedRelationship {
+                    asn1: row.get(0)?,
+                    asn2: row.get(1)?,
+                    asn2_name: row.get(2)?,
+                    connected_count: row.get(3)?,
+                    as1_upstream_count: row.get(4)?,
+                    as2_upstream_count: row.get(5)?,
+                })
+            })
+            .map_err(|e| anyhow!("Failed to search multi-ASN pairs: {}", e))?;
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
 }
 
 #[cfg(test)]

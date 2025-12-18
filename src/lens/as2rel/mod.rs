@@ -6,7 +6,7 @@
 pub mod args;
 pub mod types;
 
-pub use args::{As2relOutputArgs, As2relSearchArgs, As2relUpdateArgs};
+pub use args::{As2relOutputArgs, As2relSearchArgs, As2relUpdateArgs, RelationshipFilter};
 pub use types::{
     As2relDataMeta, As2relOutputFormat, As2relSearchResult, As2relSearchResultWithName,
     As2relSortOrder, As2relUpdateProgress, As2relUpdateStage,
@@ -23,6 +23,7 @@ use serde_json::json;
 ///
 /// This lens provides high-level operations for:
 /// - Searching for AS relationships by ASN or ASN pair
+/// - Filtering by relationship type, visibility, and single-homed status
 /// - Updating AS2Rel data
 /// - Formatting results for output
 pub struct As2relLens<'a> {
@@ -61,21 +62,59 @@ impl<'a> As2relLens<'a> {
     }
 
     /// Search using the provided arguments
+    ///
+    /// Supports:
+    /// - Single ASN queries (optionally filtered by relationship type, single-homed)
+    /// - Pair queries (two ASNs)
+    /// - Multi-ASN queries (all pairs among provided ASNs)
+    /// - Minimum visibility filtering
     pub fn search(&self, args: &As2relSearchArgs) -> Result<Vec<As2relSearchResult>> {
         let max_peers = self.get_max_peers_count();
 
-        // Always use the aggregating search methods - they properly combine
-        // multiple records for the same ASN pair into a single result
-        let aggregated = if args.asns.len() == 1 {
-            let asn = args.asns[0];
-            self.db.as2rel().search_asn_with_names(asn)?
+        let results = if args.asns.len() == 1 {
+            self.search_single_asn(args, max_peers)?
+        } else if args.asns.len() == 2 {
+            self.search_pair(args, max_peers)?
         } else {
-            let asn1 = args.asns[0];
-            let asn2 = args.asns[1];
-            self.db.as2rel().search_pair_with_names(asn1, asn2)?
+            self.search_multi_asn(args, max_peers)?
         };
 
-        // Convert to As2relSearchResult with percentages
+        Ok(results)
+    }
+
+    /// Search for a single ASN with optional filters
+    fn search_single_asn(
+        &self,
+        args: &As2relSearchArgs,
+        max_peers: u32,
+    ) -> Result<Vec<As2relSearchResult>> {
+        let asn = args.asns[0];
+
+        // Handle single-homed filter specially
+        if args.single_homed {
+            return self.search_single_homed(asn, args, max_peers);
+        }
+
+        // Get relationships based on filter
+        let aggregated = match args.relationship_filter() {
+            RelationshipFilter::All => self.db.as2rel().search_asn_with_names(asn)?,
+            RelationshipFilter::IsUpstream => {
+                // ASN is upstream (provider) - show its downstreams/customers
+                self.db.as2rel().search_asn_with_names_by_rel_type(asn, 1)?
+            }
+            RelationshipFilter::IsDownstream => {
+                // ASN is downstream (customer) - show its upstreams/providers
+                self.db
+                    .as2rel()
+                    .search_asn_with_names_by_rel_type(asn, -1)?
+            }
+            RelationshipFilter::IsPeer => {
+                // Show only peer relationships
+                self.db.as2rel().search_asn_with_names_by_rel_type(asn, 0)?
+            }
+        };
+
+        // Convert to search results with percentages
         let mut results: Vec<As2relSearchResult> = aggregated
             .into_iter()
             .map(|a| {
@@ -91,8 +130,141 @@ impl<'a> As2relLens<'a> {
             })
             .collect();
 
+        // Apply minimum visibility filter
+        if let Some(min_vis) = args.min_visibility {
+            results.retain(|r| r.connected_pct >= min_vis);
+        }
+
         // Sort results
         self.sort_results(&mut results, &args.sort_order());
+
+        Ok(results)
+    }
+
+    /// Search for ASNs that are single-homed to the given upstream
+    fn search_single_homed(
+        &self,
+        upstream_asn: u32,
+        args: &As2relSearchArgs,
+        max_peers: u32,
+    ) -> Result<Vec<As2relSearchResult>> {
+        let single_homed = self
+            .db
+            .as2rel()
+            .find_single_homed_to(upstream_asn, args.min_visibility)?;
+
+        let mut results: Vec<As2relSearchResult> = single_homed
+            .into_iter()
+            .map(|(customer_asn, peers_count, name)| {
+                let connected_pct = if max_peers > 0 {
+                    (peers_count as f32 / max_peers as f32) * 100.0
+                } else {
+                    0.0
+                };
+
+                As2relSearchResult {
+                    asn1: upstream_asn,
+                    asn2: customer_asn,
+                    asn2_name: name,
+                    connected: format!("{:.1}%", connected_pct),
+                    connected_pct,
+                    // For single-homed, upstream_asn is always the upstream
+                    peer: "0.0%".to_string(),
+                    as1_upstream: format!("{:.1}%", connected_pct),
+                    as2_upstream: "0.0%".to_string(),
+                }
+            })
+            .collect();
+
+        // Sort results
+        self.sort_results(&mut results, &args.sort_order());
+
+        Ok(results)
+    }
+
+    /// Search for a pair of ASNs
+    fn search_pair(
+        &self,
+        args: &As2relSearchArgs,
+        max_peers: u32,
+    ) -> Result<Vec<As2relSearchResult>> {
+        let asn1 = args.asns[0];
+        let asn2 = args.asns[1];
+
+        let aggregated = self.db.as2rel().search_pair_with_names(asn1, asn2)?;
+
+        let mut results: Vec<As2relSearchResult> = aggregated
+            .into_iter()
+            .map(|a| {
+                As2relSearchResult::from_aggregated(
+                    a.asn1,
+                    a.asn2,
+                    a.asn2_name,
+                    a.connected_count,
+                    a.as1_upstream_count,
+                    a.as2_upstream_count,
+                    max_peers,
+                )
+            })
+            .collect();
+
+        // Apply minimum visibility filter
+        if let Some(min_vis) = args.min_visibility {
+            results.retain(|r| r.connected_pct >= min_vis);
+        }
+
+        // Sort results
+        self.sort_results(&mut results, &args.sort_order());
+
+        Ok(results)
+    }
+
+    /// Search for all pairs among multiple ASNs
+    fn search_multi_asn(
+        &self,
+        args: &As2relSearchArgs,
+        max_peers: u32,
+    ) -> Result<Vec<As2relSearchResult>> {
+        let aggregated = self
+            .db
+            .as2rel()
+            .search_multi_asn_pairs_with_names(&args.asns)?;
+
+        let mut results: Vec<As2relSearchResult> = aggregated
+            .into_iter()
+            .map(|a| {
+                As2relSearchResult::from_aggregated(
+                    a.asn1,
+                    a.asn2,
+                    a.asn2_name,
+                    a.connected_count,
+                    a.as1_upstream_count,
+                    a.as2_upstream_count,
+                    max_peers,
+                )
+            })
+            .collect();
+
+        // Apply minimum visibility filter
+        if let Some(min_vis) = args.min_visibility {
+            results.retain(|r| r.connected_pct >= min_vis);
+        }
+
+        // For multi-ASN queries, always sort by asn1 (already sorted from query)
+        // but allow override with sort_by_asn flag
+        if !args.sort_by_asn {
+            // Default: sort by asn1, then connected desc
+            results.sort_by(|a, b| {
+                a.asn1.cmp(&b.asn1).then_with(|| {
+                    b.connected_pct
+                        .partial_cmp(&a.connected_pct)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+            });
+        } else {
+            // Sort by asn1, then asn2
+            results.sort_by(|a, b| a.asn1.cmp(&b.asn1).then_with(|| a.asn2.cmp(&b.asn2)));
+        }
 
         Ok(results)
     }
@@ -125,6 +297,20 @@ impl<'a> As2relLens<'a> {
              \n\
              Data source: {}\n",
             max_peers, BGPKIT_AS2REL_URL
+        )
+    }
+
+    /// Get explanation text for single-homed results
+    pub fn get_single_homed_explanation(&self, upstream_asn: u32) -> String {
+        let max_peers = self.get_max_peers_count();
+        format!(
+            "Single-homed ASNs to AS{}\n\
+             These ASNs have AS{} as their ONLY upstream provider.\n\
+             \n\
+             - connected: % of {} peers that see this relationship\n\
+             \n\
+             Data source: {}\n",
+            upstream_asn, upstream_asn, max_peers, BGPKIT_AS2REL_URL
         )
     }
 
@@ -288,6 +474,17 @@ mod tests {
     }
 
     #[test]
+    fn test_get_single_homed_explanation() {
+        let db = MonocleDatabase::open_in_memory().unwrap();
+        let lens = As2relLens::new(&db);
+
+        let explanation = lens.get_single_homed_explanation(2914);
+        assert!(explanation.contains("2914"));
+        assert!(explanation.contains("Single-homed"));
+        assert!(explanation.contains("ONLY upstream"));
+    }
+
+    #[test]
     fn test_sort_results() {
         let db = MonocleDatabase::open_in_memory().unwrap();
         let lens = As2relLens::new(&db);
@@ -320,5 +517,30 @@ mod tests {
 
         lens.sort_results(&mut results, &As2relSortOrder::Asn2Asc);
         assert_eq!(results[0].asn2, 65001); // Lower ASN first
+    }
+
+    #[test]
+    fn test_search_args_with_filters() {
+        // Test that args with filters validate correctly
+        let args = As2relSearchArgs::new(2914).single_homed_only();
+        assert!(args.validate().is_ok());
+        assert!(args.single_homed);
+
+        let args = As2relSearchArgs::new(2914).upstream_only();
+        assert!(args.validate().is_ok());
+        assert!(args.is_upstream);
+
+        let args = As2relSearchArgs::new(2914).with_min_visibility(10.0);
+        assert!(args.validate().is_ok());
+        assert_eq!(args.min_visibility, Some(10.0));
+    }
+
+    #[test]
+    fn test_multi_asn_args() {
+        let args = As2relSearchArgs::multiple(vec![174, 2914, 3356]);
+        assert!(args.validate().is_ok());
+        assert!(args.is_multi_lookup());
+        assert!(!args.is_single_lookup());
+        assert!(!args.is_pair_lookup());
     }
 }

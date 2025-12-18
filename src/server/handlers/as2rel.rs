@@ -18,7 +18,11 @@ use std::sync::Arc;
 /// Parameters for as2rel.search
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct As2relSearchParams {
-    /// ASN(s) to search for (1 or 2 ASNs)
+    /// ASN(s) to search for (1 or more ASNs)
+    ///
+    /// - Single ASN: shows all relationships for that ASN
+    /// - Two ASNs: shows the relationship between them
+    /// - Multiple ASNs: shows relationships for all pairs (asn1 < asn2)
     #[serde(default)]
     pub asns: Vec<u32>,
 
@@ -29,6 +33,39 @@ pub struct As2relSearchParams {
     /// Show AS names in results
     #[serde(default)]
     pub show_name: Option<bool>,
+
+    /// Minimum visibility percentage (0-100) to include in results
+    ///
+    /// Filters out relationships seen by fewer than this percentage of peers.
+    #[serde(default)]
+    pub min_visibility: Option<f32>,
+
+    /// Only show ASNs that are single-homed to the queried ASN
+    ///
+    /// An ASN is single-homed if it has exactly one upstream provider.
+    /// Only applicable when querying a single ASN.
+    #[serde(default)]
+    pub single_homed: Option<bool>,
+
+    /// Only show relationships where the queried ASN is an upstream (provider)
+    ///
+    /// Shows the downstream customers of the queried ASN.
+    /// Only applicable when querying a single ASN.
+    #[serde(default)]
+    pub is_upstream: Option<bool>,
+
+    /// Only show relationships where the queried ASN is a downstream (customer)
+    ///
+    /// Shows the upstream providers of the queried ASN.
+    /// Only applicable when querying a single ASN.
+    #[serde(default)]
+    pub is_downstream: Option<bool>,
+
+    /// Only show peer relationships
+    ///
+    /// Only applicable when querying a single ASN.
+    #[serde(default)]
+    pub is_peer: Option<bool>,
 }
 
 /// Response for as2rel.search
@@ -55,9 +92,49 @@ impl WsMethod for As2relSearchHandler {
         if params.asns.is_empty() {
             return Err(WsError::invalid_params("At least one ASN is required"));
         }
-        if params.asns.len() > 2 {
-            return Err(WsError::invalid_params("At most two ASNs can be specified"));
+
+        // Validate single-ASN-only filters
+        if params.asns.len() != 1 {
+            if params.single_homed.unwrap_or(false) {
+                return Err(WsError::invalid_params(
+                    "--single-homed can only be used with a single ASN",
+                ));
+            }
+            if params.is_upstream.unwrap_or(false)
+                || params.is_downstream.unwrap_or(false)
+                || params.is_peer.unwrap_or(false)
+            {
+                return Err(WsError::invalid_params(
+                    "--is-upstream, --is-downstream, and --is-peer can only be used with a single ASN",
+                ));
+            }
         }
+
+        // Validate min_visibility range
+        if let Some(min_vis) = params.min_visibility {
+            if !(0.0..=100.0).contains(&min_vis) {
+                return Err(WsError::invalid_params(
+                    "--min-visibility must be between 0 and 100",
+                ));
+            }
+        }
+
+        // Validate mutually exclusive relationship filters
+        let filter_count = [
+            params.is_upstream.unwrap_or(false),
+            params.is_downstream.unwrap_or(false),
+            params.is_peer.unwrap_or(false),
+        ]
+        .iter()
+        .filter(|&&x| x)
+        .count();
+
+        if filter_count > 1 {
+            return Err(WsError::invalid_params(
+                "Only one of --is-upstream, --is-downstream, or --is-peer can be specified",
+            ));
+        }
+
         Ok(())
     }
 
@@ -95,6 +172,11 @@ impl WsMethod for As2relSearchHandler {
                 asns: params.asns,
                 sort_by_asn: params.sort_by_asn.unwrap_or(false),
                 show_name: params.show_name.unwrap_or(false),
+                min_visibility: params.min_visibility,
+                single_homed: params.single_homed.unwrap_or(false),
+                is_upstream: params.is_upstream.unwrap_or(false),
+                is_downstream: params.is_downstream.unwrap_or(false),
+                is_peer: params.is_peer.unwrap_or(false),
                 ..Default::default()
             };
 
@@ -270,6 +352,11 @@ mod tests {
         assert!(params.asns.is_empty());
         assert!(params.sort_by_asn.is_none());
         assert!(params.show_name.is_none());
+        assert!(params.min_visibility.is_none());
+        assert!(params.single_homed.is_none());
+        assert!(params.is_upstream.is_none());
+        assert!(params.is_downstream.is_none());
+        assert!(params.is_peer.is_none());
     }
 
     #[test]
@@ -279,6 +366,15 @@ mod tests {
         assert_eq!(params.asns.len(), 1);
         assert_eq!(params.asns[0], 13335);
         assert_eq!(params.show_name, Some(true));
+    }
+
+    #[test]
+    fn test_as2rel_search_params_with_filters() {
+        let json = r#"{"asns": [2914], "single_homed": true, "min_visibility": 10.0}"#;
+        let params: As2relSearchParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.asns, vec![2914]);
+        assert_eq!(params.single_homed, Some(true));
+        assert_eq!(params.min_visibility, Some(10.0));
     }
 
     #[test]
@@ -301,9 +397,82 @@ mod tests {
         };
         assert!(As2relSearchHandler::validate(&params).is_ok());
 
-        // More than two ASNs should fail
+        // Multiple ASNs should pass (new behavior)
         let params = As2relSearchParams {
             asns: vec![13335, 174, 3356],
+            ..Default::default()
+        };
+        assert!(As2relSearchHandler::validate(&params).is_ok());
+    }
+
+    #[test]
+    fn test_as2rel_search_params_single_homed_validation() {
+        // Single-homed with single ASN should pass
+        let params = As2relSearchParams {
+            asns: vec![2914],
+            single_homed: Some(true),
+            ..Default::default()
+        };
+        assert!(As2relSearchHandler::validate(&params).is_ok());
+
+        // Single-homed with multiple ASNs should fail
+        let params = As2relSearchParams {
+            asns: vec![2914, 174],
+            single_homed: Some(true),
+            ..Default::default()
+        };
+        assert!(As2relSearchHandler::validate(&params).is_err());
+    }
+
+    #[test]
+    fn test_as2rel_search_params_relationship_filter_validation() {
+        // is_upstream with single ASN should pass
+        let params = As2relSearchParams {
+            asns: vec![2914],
+            is_upstream: Some(true),
+            ..Default::default()
+        };
+        assert!(As2relSearchHandler::validate(&params).is_ok());
+
+        // is_upstream with multiple ASNs should fail
+        let params = As2relSearchParams {
+            asns: vec![2914, 174],
+            is_upstream: Some(true),
+            ..Default::default()
+        };
+        assert!(As2relSearchHandler::validate(&params).is_err());
+
+        // Multiple relationship filters should fail
+        let params = As2relSearchParams {
+            asns: vec![2914],
+            is_upstream: Some(true),
+            is_downstream: Some(true),
+            ..Default::default()
+        };
+        assert!(As2relSearchHandler::validate(&params).is_err());
+    }
+
+    #[test]
+    fn test_as2rel_search_params_min_visibility_validation() {
+        // Valid min_visibility should pass
+        let params = As2relSearchParams {
+            asns: vec![2914],
+            min_visibility: Some(50.0),
+            ..Default::default()
+        };
+        assert!(As2relSearchHandler::validate(&params).is_ok());
+
+        // Out of range min_visibility should fail
+        let params = As2relSearchParams {
+            asns: vec![2914],
+            min_visibility: Some(-1.0),
+            ..Default::default()
+        };
+        assert!(As2relSearchHandler::validate(&params).is_err());
+
+        let params = As2relSearchParams {
+            asns: vec![2914],
+            min_visibility: Some(101.0),
             ..Default::default()
         };
         assert!(As2relSearchHandler::validate(&params).is_err());

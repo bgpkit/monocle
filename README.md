@@ -583,22 +583,29 @@ Look up AS-level relationships between ASNs using BGPKIT's AS relationship data.
 ➜  monocle as2rel --help
 AS-level relationship lookup between ASNs
 
-Usage: monocle as2rel [OPTIONS] <ASN1> [ASN2]
+Usage: monocle as2rel [OPTIONS] <ASNS>...
 
 Arguments:
-  <ASN1>  First ASN to look up
-  [ASN2]  Second ASN (optional, shows all relationships for ASN1 if omitted)
+  <ASNS>...  One or more ASNs to query relationships for
+             - Single ASN: shows all relationships for that ASN
+             - Two ASNs: shows the relationship between them
+             - Multiple ASNs: shows relationships for all pairs (asn1 < asn2)
 
 Options:
-      --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
-      --json             Output as JSON objects (shortcut for --format json-pretty)
-      --update           Force update the local database
-      --no-explain       Hide the explanation text in table output
-      --sort-by-asn      Sort results by ASN2 ascending (default: sort by connected % descending)
-      --show-name        Show organization name for ASN2 (truncated to 20 chars)
-      --show-full-name   Show full organization name without truncation
-  -h, --help             Print help
+      --debug                Print debug information
+      --format <FORMAT>      Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json                 Output as JSON objects (shortcut for --format json-pretty)
+      --update               Force update the local database
+      --no-explain           Hide the explanation text in table output
+      --sort-by-asn          Sort results by ASN2 ascending (default: sort by connected % descending)
+      --show-name            Show organization name for ASN2 (truncated to 20 chars)
+      --show-full-name       Show full organization name without truncation
+      --min-visibility <PCT> Minimum visibility percentage (0-100) to include in results
+      --single-homed         Only show ASNs that are single-homed to the queried ASN
+      --is-upstream          Only show relationships where the queried ASN is an upstream (provider)
+      --is-downstream        Only show relationships where the queried ASN is a downstream (customer)
+      --is-peer              Only show peer relationships
+  -h, --help                 Print help
 ```
 
 Output columns:
@@ -611,6 +618,7 @@ Output columns:
 Examples:
 
 ```text
+# Look up relationship between two ASNs
 ➜  monocle as2rel 13335 174
 ┌───────┬──────┬───────────┬───────┬─────────────┬─────────────┐
 │ asn1  │ asn2 │ connected │ peer  │ as1_upstream│ as2_upstream│
@@ -618,7 +626,23 @@ Examples:
 │ 13335 │ 174  │ 95.2%     │ 85.1% │ 2.3%        │ 7.8%        │
 └───────┴──────┴───────────┴───────┴─────────────┴─────────────┘
 
+# Show all relationships for an ASN with names
 ➜  monocle as2rel 13335 --show-name | head -10
+
+# Find ASNs that are single-homed to AS2914 (NTT)
+➜  monocle as2rel 2914 --single-homed --show-name
+
+# Find single-homed ASNs with at least 10% visibility
+➜  monocle as2rel 2914 --single-homed --min-visibility 10
+
+# Show only downstream customers of an ASN
+➜  monocle as2rel 2914 --is-upstream --show-name
+
+# Show only upstream providers of an ASN
+➜  monocle as2rel 13335 --is-downstream --show-name
+
+# Show relationships among multiple ASNs (all pairs)
+➜  monocle as2rel 174 2914 3356 --show-name
 ```
 
 ### `monocle rpki`
