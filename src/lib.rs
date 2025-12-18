@@ -24,19 +24,19 @@
 //!
 //! ```toml
 //! # Minimal - just database operations
-//! monocle = { version = "0.9", default-features = false, features = ["database"] }
+//! monocle = { version = "1.0", default-features = false, features = ["database"] }
 //!
 //! # Standalone utilities (time parsing, output formatting)
-//! monocle = { version = "0.9", default-features = false, features = ["lens-core"] }
+//! monocle = { version = "1.0", default-features = false, features = ["lens-core"] }
 //!
 //! # BGP operations without CLI overhead
-//! monocle = { version = "0.9", default-features = false, features = ["lens-bgpkit"] }
+//! monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
 //!
 //! # Full lens functionality with display support
-//! monocle = { version = "0.9", default-features = false, features = ["lens-full", "display"] }
+//! monocle = { version = "1.0", default-features = false, features = ["lens-full", "display"] }
 //!
 //! # Default (CLI binary)
-//! monocle = "0.9"
+//! monocle = "1.0"
 //! ```
 //!
 //! # Architecture
