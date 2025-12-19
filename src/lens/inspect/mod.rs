@@ -1844,7 +1844,7 @@ impl<'a> InspectLens<'a> {
                     ta: String,
                 }
 
-                let rows: Vec<RoaRow> = rpki
+                let mut rows: Vec<RoaRow> = rpki
                     .roas
                     .iter()
                     .map(|r| RoaRow {
@@ -1854,6 +1854,16 @@ impl<'a> InspectLens<'a> {
                         ta: r.ta.clone(),
                     })
                     .collect();
+
+                // Add a visual indicator row when results are truncated
+                if rpki.truncated {
+                    rows.push(RoaRow {
+                        prefix: "...".to_string(),
+                        max_length: 0,
+                        origin_asn: "...".to_string(),
+                        ta: "...".to_string(),
+                    });
+                }
 
                 let table = if config.use_markdown_style {
                     Table::new(rows).with(Style::markdown()).to_string()
@@ -1926,7 +1936,7 @@ impl<'a> InspectLens<'a> {
         };
         lines.push(summary_table);
 
-        let format_group = |name: &str, group: &ConnectivityGroup| -> String {
+        let format_group = |name: &str, group: &ConnectivityGroup, truncated: bool| -> String {
             let mut group_lines =
                 vec![format!("{}: {} ({:.1}%)", name, group.count, group.percent)];
 
@@ -1941,7 +1951,7 @@ impl<'a> InspectLens<'a> {
                     visibility: String,
                 }
 
-                let rows: Vec<NeighborRow> = group
+                let mut rows: Vec<NeighborRow> = group
                     .top
                     .iter()
                     .map(|e| NeighborRow {
@@ -1955,6 +1965,15 @@ impl<'a> InspectLens<'a> {
                     })
                     .collect();
 
+                // Add a visual indicator row when results are truncated and group has more items
+                if truncated && group.count as usize > group.top.len() {
+                    rows.push(NeighborRow {
+                        asn: "...".to_string(),
+                        name: "...".to_string(),
+                        visibility: "...".to_string(),
+                    });
+                }
+
                 let table = if config.use_markdown_style {
                     Table::new(rows).with(Style::markdown()).to_string()
                 } else {
@@ -1966,9 +1985,21 @@ impl<'a> InspectLens<'a> {
             group_lines.join("\n")
         };
 
-        lines.push(format_group("Upstreams", &summary.upstreams));
-        lines.push(format_group("Peers", &summary.peers));
-        lines.push(format_group("Downstreams", &summary.downstreams));
+        lines.push(format_group(
+            "Upstreams",
+            &summary.upstreams,
+            connectivity.truncated,
+        ));
+        lines.push(format_group(
+            "Peers",
+            &summary.peers,
+            connectivity.truncated,
+        ));
+        lines.push(format_group(
+            "Downstreams",
+            &summary.downstreams,
+            connectivity.truncated,
+        ));
 
         if connectivity.truncated {
             lines.push("(results truncated, use --full-connectivity to show all)".to_string());
@@ -1997,7 +2028,7 @@ impl<'a> InspectLens<'a> {
                     ta: String,
                 }
 
-                let rows: Vec<RoaRow> = roas
+                let mut rows: Vec<RoaRow> = roas
                     .entries
                     .iter()
                     .map(|r| RoaRow {
@@ -2006,6 +2037,15 @@ impl<'a> InspectLens<'a> {
                         ta: r.ta.clone(),
                     })
                     .collect();
+
+                // Add a visual indicator row when results are truncated
+                if roas.truncated {
+                    rows.push(RoaRow {
+                        prefix: "...".to_string(),
+                        max_length: 0,
+                        ta: "...".to_string(),
+                    });
+                }
 
                 let table = if config.use_markdown_style {
                     Table::new(rows).with(Style::markdown()).to_string()
@@ -2105,7 +2145,7 @@ impl<'a> InspectLens<'a> {
                 validation: String,
             }
 
-            let rows: Vec<PrefixRow> = prefixes
+            let mut rows: Vec<PrefixRow> = prefixes
                 .prefixes
                 .iter()
                 .map(|p| PrefixRow {
@@ -2113,6 +2153,14 @@ impl<'a> InspectLens<'a> {
                     validation: p.validation.clone(),
                 })
                 .collect();
+
+            // Add a visual indicator row when results are truncated
+            if prefixes.truncated {
+                rows.push(PrefixRow {
+                    prefix: "...".to_string(),
+                    validation: "...".to_string(),
+                });
+            }
 
             let table = if config.use_markdown_style {
                 Table::new(rows).with(Style::markdown()).to_string()
@@ -2153,7 +2201,7 @@ impl<'a> InspectLens<'a> {
                 country: String,
             }
 
-            let rows: Vec<SearchRow> = search
+            let mut rows: Vec<SearchRow> = search
                 .results
                 .iter()
                 .map(|r| SearchRow {
@@ -2162,6 +2210,15 @@ impl<'a> InspectLens<'a> {
                     country: r.country.clone(),
                 })
                 .collect();
+
+            // Add a visual indicator row when results are truncated
+            if search.truncated {
+                rows.push(SearchRow {
+                    asn: "...".to_string(),
+                    name: "...".to_string(),
+                    country: "...".to_string(),
+                });
+            }
 
             let table = if config.use_markdown_style {
                 Table::new(rows).with(Style::markdown()).to_string()

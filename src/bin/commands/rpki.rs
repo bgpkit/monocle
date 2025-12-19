@@ -419,6 +419,7 @@ fn parse_collector(collector: &str) -> Option<RpkiViewsCollectorOption> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_roas(
     resources: Vec<String>,
     date: Option<String>,

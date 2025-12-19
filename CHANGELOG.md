@@ -4,11 +4,54 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### New Features
+
+* Added new `monocle pfx2as` command for prefix-to-ASN mapping lookups
+  * **Search by prefix**: Query prefixes to find their origin ASNs
+    * Example: `monocle pfx2as 1.1.1.0/24`
+  * **Search by ASN**: Query an ASN to find all its announced prefixes
+    * Example: `monocle pfx2as 13335` or `monocle pfx2as AS13335`
+  * **RPKI validation**: Shows RPKI validation status (valid/invalid/not_found) for each prefix-ASN pair
+  * **`--show-name`**: Display AS organization name for each origin ASN
+  * **`--include-sub`**: Include sub-prefixes (more specific) in results
+    * Example: `monocle pfx2as 8.0.0.0/8 --include-sub --limit 20`
+  * **`--include-super`**: Include super-prefixes (less specific) in results
+    * Example: `monocle pfx2as 1.1.1.0/24 --include-super`
+  * **`--limit`**: Limit the number of results
+  * Supports all standard output formats (`--format table/json/psv/etc.`)
+
+* Enhanced `monocle as2rel` command with advanced filtering and multi-ASN support
+  * **`--min-visibility <PERCENT>`**: Filter results by minimum visibility percentage (0-100)
+    * Available for all as2rel queries
+    * Filters out relationships seen by fewer than the specified percentage of peers
+  * **`--single-homed`**: Find ASNs that are single-homed to the queried ASN
+    * Shows only ASNs where the queried ASN is their ONLY upstream provider
+    * Useful for identifying customers with no redundancy
+    * Example: `monocle as2rel 2914 --single-homed`
+  * **`--is-upstream`**: Filter to show only downstream customers of the queried ASN
+    * Shows relationships where the queried ASN is the upstream (provider)
+  * **`--is-downstream`**: Filter to show only upstream providers of the queried ASN
+    * Shows relationships where the queried ASN is a downstream (customer)
+  * **`--is-peer`**: Filter to show only peer relationships (settlement-free interconnection)
+  * **Multi-ASN support**: Query relationships among multiple ASNs at once
+    * When more than two ASNs are provided, shows all pair combinations
+    * Results sorted by asn1, with asn1 < asn2 for each pair
+    * Example: `monocle as2rel 174 2914 3356` shows all three pair relationships
+
 ### Bug Fixes
 
 * Fixed "database is locked" error in `monocle config db-refresh` command (Issue #90)
   * The `do_refresh` function was opening redundant database connections for ASInfo and AS2Rel data sources
   * Now correctly uses the already-passed database connection parameter
+
+### Improvements
+
+* Added visual `...` row indicator in tables when results are truncated
+  * Search results table now shows a `...` row when more matches exist
+  * RPKI ROA tables show truncation indicator
+  * Announced prefixes table shows truncation indicator
+  * Connectivity section (upstreams/peers/downstreams) tables show truncation indicator
+  * Makes it much more visible that additional results are available
 
 ### New Features
 
@@ -24,8 +67,6 @@ All notable changes to this project will be documented in this file.
 * RPKI ASPA command now ensures ASInfo data is available for AS name enrichment
   * Automatically loads ASInfo data before showing ASPA output
   * AS names and countries are displayed in ASPA results
-
-### Improvements
 
 * Added comprehensive tests for database initialization with mock data
   * Tests for all repositories being accessible after initialization

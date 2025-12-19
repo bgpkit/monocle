@@ -11,7 +11,11 @@ use tabled::Table;
 /// Arguments for the As2rel command
 #[derive(Args)]
 pub struct As2relArgs {
-    /// One or two ASNs to query relationships for
+    /// One or more ASNs to query relationships for
+    ///
+    /// - Single ASN: shows all relationships for that ASN
+    /// - Two ASNs: shows the relationship between them
+    /// - Multiple ASNs: shows relationships for all pairs (asn1 < asn2)
     #[clap(required = true)]
     pub asns: Vec<u32>,
 
@@ -38,6 +42,41 @@ pub struct As2relArgs {
     /// Show full organization name without truncation (default truncates to 20 chars)
     #[clap(long)]
     pub show_full_name: bool,
+
+    /// Minimum visibility percentage (0-100) to include in results
+    ///
+    /// Filters out relationships seen by fewer than this percentage of peers.
+    #[clap(long, value_name = "PERCENT")]
+    pub min_visibility: Option<f32>,
+
+    /// Only show ASNs that are single-homed to the queried ASN
+    ///
+    /// An ASN is single-homed if it has exactly one upstream provider.
+    /// This finds ASNs where the queried ASN is their ONLY upstream.
+    ///
+    /// Only applicable when querying a single ASN.
+    #[clap(long)]
+    pub single_homed: bool,
+
+    /// Only show relationships where the queried ASN is an upstream (provider)
+    ///
+    /// Shows the downstream customers of the queried ASN.
+    /// Only applicable when querying a single ASN.
+    #[clap(long, conflicts_with_all = ["is_downstream", "is_peer"])]
+    pub is_upstream: bool,
+
+    /// Only show relationships where the queried ASN is a downstream (customer)
+    ///
+    /// Shows the upstream providers of the queried ASN.
+    /// Only applicable when querying a single ASN.
+    #[clap(long, conflicts_with_all = ["is_upstream", "is_peer"])]
+    pub is_downstream: bool,
+
+    /// Only show peer relationships
+    ///
+    /// Only applicable when querying a single ASN.
+    #[clap(long, conflicts_with_all = ["is_upstream", "is_downstream"])]
+    pub is_peer: bool,
 }
 
 pub fn run(
@@ -54,15 +93,42 @@ pub fn run(
         sort_by_asn,
         show_name,
         show_full_name,
+        min_visibility,
+        single_homed,
+        is_upstream,
+        is_downstream,
+        is_peer,
     } = args;
 
     // show_full_name implies show_name
     let show_name = show_name || show_full_name;
 
     // Validate ASN count
-    if asns.is_empty() || asns.len() > 2 {
-        eprintln!("ERROR: Please provide one or two ASNs");
+    if asns.is_empty() {
+        eprintln!("ERROR: Please provide at least one ASN");
         std::process::exit(1);
+    }
+
+    // Validate single-ASN-only flags
+    if asns.len() != 1 {
+        if single_homed {
+            eprintln!("ERROR: --single-homed can only be used with a single ASN");
+            std::process::exit(1);
+        }
+        if is_upstream || is_downstream || is_peer {
+            eprintln!(
+                "ERROR: --is-upstream, --is-downstream, and --is-peer can only be used with a single ASN"
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // Validate min_visibility range
+    if let Some(min_vis) = min_visibility {
+        if !(0.0..=100.0).contains(&min_vis) {
+            eprintln!("ERROR: --min-visibility must be between 0 and 100");
+            std::process::exit(1);
+        }
     }
 
     let sqlite_path = config.sqlite_path();
@@ -110,6 +176,11 @@ pub fn run(
                 show_full_name,
                 no_explain,
                 output_format,
+                min_visibility,
+                single_homed,
+                is_upstream,
+                is_downstream,
+                is_peer,
             );
             return;
         }
@@ -160,6 +231,11 @@ pub fn run(
         show_full_name,
         no_explain,
         output_format,
+        min_visibility,
+        single_homed,
+        is_upstream,
+        is_downstream,
+        is_peer,
     );
 }
 
@@ -184,6 +260,7 @@ struct As2relResultWithName {
     as2_upstream: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_query(
     db: &MonocleDatabase,
     asns: &[u32],
@@ -192,6 +269,11 @@ fn run_query(
     show_full_name: bool,
     no_explain: bool,
     output_format: OutputFormat,
+    min_visibility: Option<f32>,
+    single_homed: bool,
+    is_upstream: bool,
+    is_downstream: bool,
+    is_peer: bool,
 ) {
     let lens = As2relLens::new(db);
 
@@ -201,6 +283,11 @@ fn run_query(
         sort_by_asn,
         show_name,
         no_explain,
+        min_visibility,
+        single_homed,
+        is_upstream,
+        is_downstream,
+        is_peer,
     };
 
     // Validate
@@ -222,20 +309,40 @@ fn run_query(
     if results.is_empty() {
         if output_format.is_json() {
             println!("[]");
+        } else if single_homed {
+            println!(
+                "No single-homed ASNs found for AS{} (with the current filters)",
+                asns[0]
+            );
         } else if asns.len() == 1 {
-            println!("No relationships found for ASN {}", asns[0]);
-        } else {
+            let filter_msg = if is_upstream {
+                " with --is-upstream filter"
+            } else if is_downstream {
+                " with --is-downstream filter"
+            } else if is_peer {
+                " with --is-peer filter"
+            } else {
+                ""
+            };
+            println!("No relationships found for ASN {}{}", asns[0], filter_msg);
+        } else if asns.len() == 2 {
             println!(
                 "No relationship found between ASN {} and ASN {}",
                 asns[0], asns[1]
             );
+        } else {
+            println!("No relationships found among the provided ASNs");
         }
         return;
     }
 
     // Print explanation to stderr unless --no-explain is set or JSON output
     if !no_explain && !output_format.is_json() {
-        eprintln!("{}", lens.get_explanation());
+        if single_homed {
+            eprintln!("{}", lens.get_single_homed_explanation(asns[0]));
+        } else {
+            eprintln!("{}", lens.get_explanation());
+        }
     }
 
     // Truncate names for table output unless show_full_name is set

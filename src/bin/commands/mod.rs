@@ -4,6 +4,7 @@ pub mod country;
 pub mod inspect;
 pub mod ip;
 pub mod parse;
+pub mod pfx2as;
 pub mod rpki;
 pub mod search;
 pub mod time;

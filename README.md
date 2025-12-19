@@ -24,6 +24,7 @@ See through all Border Gateway Protocol (BGP) data with a monocle.
   - [`monocle inspect`](#monocle-inspect)
   - [`monocle country`](#monocle-country)
   - [`monocle as2rel`](#monocle-as2rel)
+  - [`monocle pfx2as`](#monocle-pfx2as)
   - [`monocle rpki`](#monocle-rpki)
     - [`monocle rpki validate`](#monocle-rpki-validate)
     - [`monocle rpki roas`](#monocle-rpki-roas)
@@ -186,12 +187,13 @@ Subcommands:
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
 - `server`: start a WebSocket server for programmatic access
-- `inspect`: unified AS and prefix information lookup (replaces `whois` and `pfx2as`)
+- `inspect`: unified AS and prefix information lookup
 - `country`: utility to look up country name and code
 - `time`: utility to convert time between unix timestamp and RFC3339 string
+- `as2rel`: AS-level relationship lookup between ASNs
+- `pfx2as`: prefix-to-ASN mapping lookup with RPKI validation
 - `rpki`: RPKI validation and ROA/ASPA listing
 - `ip`: IP information lookup
-- `as2rel`: AS-level relationship lookup between ASNs
 - `config`: configuration display and database management (refresh, backup, sources)
 
 ### Global Options
@@ -583,22 +585,29 @@ Look up AS-level relationships between ASNs using BGPKIT's AS relationship data.
 ➜  monocle as2rel --help
 AS-level relationship lookup between ASNs
 
-Usage: monocle as2rel [OPTIONS] <ASN1> [ASN2]
+Usage: monocle as2rel [OPTIONS] <ASNS>...
 
 Arguments:
-  <ASN1>  First ASN to look up
-  [ASN2]  Second ASN (optional, shows all relationships for ASN1 if omitted)
+  <ASNS>...  One or more ASNs to query relationships for
+             - Single ASN: shows all relationships for that ASN
+             - Two ASNs: shows the relationship between them
+             - Multiple ASNs: shows relationships for all pairs (asn1 < asn2)
 
 Options:
-      --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
-      --json             Output as JSON objects (shortcut for --format json-pretty)
-      --update           Force update the local database
-      --no-explain       Hide the explanation text in table output
-      --sort-by-asn      Sort results by ASN2 ascending (default: sort by connected % descending)
-      --show-name        Show organization name for ASN2 (truncated to 20 chars)
-      --show-full-name   Show full organization name without truncation
-  -h, --help             Print help
+      --debug                Print debug information
+      --format <FORMAT>      Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json                 Output as JSON objects (shortcut for --format json-pretty)
+      --update               Force update the local database
+      --no-explain           Hide the explanation text in table output
+      --sort-by-asn          Sort results by ASN2 ascending (default: sort by connected % descending)
+      --show-name            Show organization name for ASN2 (truncated to 20 chars)
+      --show-full-name       Show full organization name without truncation
+      --min-visibility <PCT> Minimum visibility percentage (0-100) to include in results
+      --single-homed         Only show ASNs that are single-homed to the queried ASN
+      --is-upstream          Only show relationships where the queried ASN is an upstream (provider)
+      --is-downstream        Only show relationships where the queried ASN is a downstream (customer)
+      --is-peer              Only show peer relationships
+  -h, --help                 Print help
 ```
 
 Output columns:
@@ -611,6 +620,7 @@ Output columns:
 Examples:
 
 ```text
+# Look up relationship between two ASNs
 ➜  monocle as2rel 13335 174
 ┌───────┬──────┬───────────┬───────┬─────────────┬─────────────┐
 │ asn1  │ asn2 │ connected │ peer  │ as1_upstream│ as2_upstream│
@@ -618,7 +628,120 @@ Examples:
 │ 13335 │ 174  │ 95.2%     │ 85.1% │ 2.3%        │ 7.8%        │
 └───────┴──────┴───────────┴───────┴─────────────┴─────────────┘
 
+# Show all relationships for an ASN with names
 ➜  monocle as2rel 13335 --show-name | head -10
+
+# Find ASNs that are single-homed to AS2914 (NTT)
+➜  monocle as2rel 2914 --single-homed --show-name
+
+# Find single-homed ASNs with at least 10% visibility
+➜  monocle as2rel 2914 --single-homed --min-visibility 10
+
+# Show only downstream customers of an ASN
+➜  monocle as2rel 2914 --is-upstream --show-name
+
+# Show only upstream providers of an ASN
+➜  monocle as2rel 13335 --is-downstream --show-name
+
+# Show relationships among multiple ASNs (all pairs)
+➜  monocle as2rel 174 2914 3356 --show-name
+```
+
+### `monocle pfx2as`
+
+Look up prefix-to-ASN mappings. Query by prefix to find origin ASNs, or by ASN to find announced prefixes.
+Results include RPKI validation status for each prefix-ASN pair.
+
+```text
+➜  monocle pfx2as --help
+Prefix-to-ASN mapping lookup
+
+Query by prefix to find origin ASNs, or by ASN to find announced prefixes.
+Includes RPKI validation status for each prefix-ASN pair.
+
+Usage: monocle pfx2as [OPTIONS] <QUERY>
+
+Arguments:
+  <QUERY>  Query: an IP prefix (e.g., 1.1.1.0/24) or ASN (e.g., 13335, AS13335)
+
+Options:
+  -u, --update           Force update the local pfx2as database
+      --include-sub      Include sub-prefixes (more specific) in results when querying by prefix
+      --include-super    Include super-prefixes (less specific) in results when querying by prefix
+      --show-name        Show AS name for each origin ASN
+      --show-full-name   Show full AS name without truncation (default truncates to 20 chars)
+  -l, --limit <N>        Limit the number of results (default: no limit)
+      --debug            Print debug information
+      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --json             Output as JSON objects (shortcut for --format json-pretty)
+  -h, --help             Print help
+```
+
+Examples:
+
+```text
+# Look up a prefix - shows origin ASN and RPKI validation status
+➜  monocle pfx2as 1.1.1.0/24
+╭────────────┬────────────┬───────╮
+│ prefix     │ origin_asn │ rpki  │
+├────────────┼────────────┼───────┤
+│ 1.1.1.0/24 │ 13335      │ valid │
+╰────────────┴────────────┴───────╯
+
+# Look up with AS name
+➜  monocle pfx2as 1.1.1.0/24 --show-name
+╭────────────┬────────────┬───────────────┬───────╮
+│ prefix     │ origin_asn │ as_name       │ rpki  │
+├────────────┼────────────┼───────────────┼───────┤
+│ 1.1.1.0/24 │ 13335      │ CLOUDFLARENET │ valid │
+╰────────────┴────────────┴───────────────┴───────╯
+
+# Look up by ASN - shows all prefixes announced by the ASN
+➜  monocle pfx2as 13335 --limit 5 --show-name
+╭─────────────────────┬────────────┬───────────────┬───────────╮
+│ prefix              │ origin_asn │ as_name       │ rpki      │
+├─────────────────────┼────────────┼───────────────┼───────────┤
+│ 172.69.7.0/24       │ 13335      │ CLOUDFLARENET │ valid     │
+│ 2606:4700:839a::/48 │ 13335      │ CLOUDFLARENET │ valid     │
+│ 8.36.218.0/24       │ 13335      │ CLOUDFLARENET │ not_found │
+│ 2400:cb00:b8e6::/48 │ 13335      │ CLOUDFLARENET │ valid     │
+│ 172.68.134.0/24     │ 13335      │ CLOUDFLARENET │ valid     │
+╰─────────────────────┴────────────┴───────────────┴───────────╯
+
+# Include sub-prefixes (more specific prefixes)
+➜  monocle pfx2as 8.8.0.0/16 --include-sub --limit 5 --show-name
+╭──────────────┬────────────┬────────────┬───────────╮
+│ prefix       │ origin_asn │ as_name    │ rpki      │
+├──────────────┼────────────┼────────────┼───────────┤
+│ 8.0.0.0/12   │ 3356       │ LEVEL3     │ not_found │
+│ 8.8.8.0/24   │ 15169      │ GOOGLE     │ valid     │
+│ 8.8.249.0/24 │ 989        │ ANAXA3-ASN │ valid     │
+│ 8.8.216.0/24 │ 13781      │ ENERGYNET  │ valid     │
+│ 8.8.64.0/24  │ 3356       │ LEVEL3     │ not_found │
+╰──────────────┴────────────┴────────────┴───────────╯
+
+# Include super-prefixes (less specific prefixes)
+➜  monocle pfx2as 1.1.1.0/24 --include-super
+
+# JSON output
+➜  monocle pfx2as 13335 --limit 3 --json
+[
+  {
+    "prefix": "172.69.7.0/24",
+    "origin_asn": 13335,
+    "rpki": "valid"
+  },
+  {
+    "prefix": "2606:4700:839a::/48",
+    "origin_asn": 13335,
+    "rpki": "valid"
+  },
+  {
+    "prefix": "8.36.218.0/24",
+    "origin_asn": 13335,
+    "rpki": "not_found"
+  }
+]
 ```
 
 ### `monocle rpki`
