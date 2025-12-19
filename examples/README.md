@@ -95,7 +95,7 @@ Examples requiring the full CLI/Server feature set.
 
 ```toml
 [dependencies]
-monocle = { version = "1.0", default-features = false, features = ["database"] }
+monocle = { version = "1.1", default-features = false, features = ["database"] }
 ```
 
 ```rust
@@ -112,7 +112,7 @@ let rels = db.as2rel().search_asn(13335)?;
 
 ```toml
 [dependencies]
-monocle = { version = "1.0", default-features = false, features = ["lens-core"] }
+monocle = { version = "1.1", default-features = false, features = ["lens-core"] }
 ```
 
 ```rust
@@ -127,7 +127,7 @@ let results = lens.parse(&args)?;
 
 ```toml
 [dependencies]
-monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
+monocle = { version = "1.1", default-features = false, features = ["lens-bgpkit"] }
 ```
 
 ```rust
@@ -149,7 +149,7 @@ println!("{}: {}", result.state, result.reason);
 
 ```toml
 [dependencies]
-monocle = { version = "1.0", default-features = false, features = ["lens-full"] }
+monocle = { version = "1.1", default-features = false, features = ["lens-full"] }
 ```
 
 ```rust

@@ -332,13 +332,13 @@ Library users can select minimal features based on their needs:
 
 ```toml
 # Minimal database access
-monocle = { version = "1.0", default-features = false, features = ["database"] }
+monocle = { version = "1.1", default-features = false, features = ["database"] }
 
 # BGP operations without CLI overhead
-monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
+monocle = { version = "1.1", default-features = false, features = ["lens-bgpkit"] }
 
 # Full functionality without CLI
-monocle = { version = "1.0", default-features = false, features = ["lens-full"] }
+monocle = { version = "1.1", default-features = false, features = ["lens-full"] }
 ```
 
 ## Related Documents

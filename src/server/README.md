@@ -238,7 +238,7 @@ Returns protocol/server metadata so web/native clients can adapt without hardcod
   "type": "result",
   "data": {
     "protocol_version": 1,
-    "server_version": "1.0.0",
+    "server_version": "1.1.0",
     "build": {
       "git_sha": "unknown",
       "timestamp": "unknown"

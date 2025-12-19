@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v1.1.0 - 2025-12-18
 
 ### New Features
 
@@ -73,7 +73,7 @@ All notable changes to this project will be documented in this file.
   * Tests for schema version verification
   * Tests for RPKI and Pfx2as mock data storage/retrieval
 
-## v1.0.1 - 2025-12-18
+## v1.0.1 - 2025-12-17
 
 ### Bug Fixes
 
