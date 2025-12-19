@@ -61,6 +61,37 @@ Then install `monocle` using `cargo binstall`
 cargo binstall monocle
 ```
 
+### Using Docker
+
+Pull the pre-built image or build locally:
+
+```bash
+# Build the image locally
+docker build -t bgpkit/monocle:latest .
+
+# Or use docker compose
+docker compose build
+```
+
+Run monocle commands:
+
+```bash
+# Show help
+docker run --rm bgpkit/monocle:latest
+
+# Run a command (e.g., inspect an ASN)
+docker run --rm bgpkit/monocle:latest inspect 13335
+
+# Run with persistent data directory
+docker run --rm -v monocle-data:/data bgpkit/monocle:latest inspect 13335
+
+# Start the WebSocket server
+docker run --rm -p 8080:8080 -v monocle-data:/data bgpkit/monocle:latest server --address 0.0.0.0 --port 8080
+
+# Using docker compose for server mode
+docker compose up -d
+```
+
 ## Library Usage
 
 Monocle can also be used as a library in your Rust projects. Add it to your `Cargo.toml`:

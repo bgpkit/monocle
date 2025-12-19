@@ -1,0 +1,61 @@
+# Docker Compose configuration for monocle
+#
+# Usage:
+#   docker compose up -d              # Start server in background
+#   docker compose run monocle <cmd>  # Run a one-off command
+#   docker compose logs -f            # View logs
+#   docker compose down               # Stop and remove containers
+#
+# Examples:
+#   docker compose run monocle inspect 13335
+#   docker compose run monocle search --start-ts "1 hour ago" --prefix 1.1.1.0/24
+#   docker compose run monocle rpki validate 13335 1.1.1.0/24
+
+services:
+  monocle:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bgpkit/monocle:latest
+    container_name: monocle
+
+    # Persist monocle data (database, config) across container restarts
+    volumes:
+      - monocle-data:/data
+
+    # Server mode configuration
+    ports:
+      - "8080:8080"
+
+    # Override default command to run the WebSocket server
+    # Comment this out if you want to use monocle as a CLI tool only
+    command: ["server", "--address", "0.0.0.0", "--port", "8080"]
+
+    # Environment variables
+    environment:
+      - MONOCLE_DATA_DIR=/data
+      # Uncomment to accept invalid TLS certificates (useful for corporate proxies)
+      # - ONEIO_ACCEPT_INVALID_CERTS=true
+
+    # Health check for server mode
+    healthcheck:
+      test: ["CMD", "monocle", "--help"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Resource limits (optional, adjust as needed)
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 256M
+
+    # Restart policy
+    restart: unless-stopped
+
+volumes:
+  monocle-data:
+    driver: local

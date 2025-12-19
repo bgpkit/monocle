@@ -1,0 +1,43 @@
+# Build artifacts
+target/
+debug/
+release/
+
+# Git
+.git/
+.gitignore
+.github/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation (not needed for build, but keep README.md for Cargo.toml)
+CHANGELOG.md
+
+# Claude/AI assistant files
+.claude/
+
+# Test files
+tests/
+**/*_test.rs
+
+# Development files
+DEVELOPMENT.md
+ARCHITECTURE.md
+
+# Docker files (prevent recursive issues)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Misc
+*.log
+*.bak
+*.tmp
+.env
+.env.*

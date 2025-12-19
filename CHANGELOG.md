@@ -73,6 +73,15 @@ All notable changes to this project will be documented in this file.
   * Tests for schema version verification
   * Tests for RPKI and Pfx2as mock data storage/retrieval
 
+* Added Docker support with multi-stage build
+  * `Dockerfile` with two-stage build process for minimal image size (~176MB final image)
+  * Uses Rust 1.92 and Debian trixie-slim as runtime base
+  * `docker-compose.yml` for easy container orchestration
+  * `.dockerignore` to optimize build context
+  * Runs as non-root user for security
+  * Persistent data volume at `/data`
+  * Default server mode with port 8080 exposed
+
 ## v1.0.1 - 2025-12-17
 
 ### Bug Fixes
