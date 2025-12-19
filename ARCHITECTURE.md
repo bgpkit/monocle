@@ -328,18 +328,7 @@ Monocle supports conditional compilation via Cargo features, organized in tiers:
 - **`display`**: Table formatting with tabled (included in lens-bgpkit)
 - **`cli`** (default): Full CLI binary with server support (adds axum, tokio, tower-http)
 
-Library users can select minimal features based on their needs:
-
-```toml
-# Minimal database access
-monocle = { version = "1.1", default-features = false, features = ["database"] }
-
-# BGP operations without CLI overhead
-monocle = { version = "1.1", default-features = false, features = ["lens-bgpkit"] }
-
-# Full functionality without CLI
-monocle = { version = "1.1", default-features = false, features = ["lens-full"] }
-```
+Library users can select minimal features based on their needs. See the README for version and feature configuration examples.
 
 ## Related Documents
 

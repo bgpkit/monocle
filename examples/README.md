@@ -91,12 +91,9 @@ Examples requiring the full CLI/Server feature set.
 
 ## Using in Your Project
 
-### Minimal Database Access
+See the main [README](../README.md) for dependency configuration with version numbers and feature tiers.
 
-```toml
-[dependencies]
-monocle = { version = "1.1", default-features = false, features = ["database"] }
-```
+### Minimal Database Access
 
 ```rust
 use monocle::database::MonocleDatabase;
@@ -110,11 +107,6 @@ let rels = db.as2rel().search_asn(13335)?;
 
 ### Standalone Utilities
 
-```toml
-[dependencies]
-monocle = { version = "1.1", default-features = false, features = ["lens-core"] }
-```
-
 ```rust
 use monocle::lens::time::{TimeLens, TimeParseArgs};
 
@@ -124,11 +116,6 @@ let results = lens.parse(&args)?;
 ```
 
 ### BGP Operations
-
-```toml
-[dependencies]
-monocle = { version = "1.1", default-features = false, features = ["lens-bgpkit"] }
-```
 
 ```rust
 use monocle::database::MonocleDatabase;
@@ -146,11 +133,6 @@ println!("{}: {}", result.state, result.reason);
 ```
 
 ### Full Functionality
-
-```toml
-[dependencies]
-monocle = { version = "1.1", default-features = false, features = ["lens-full"] }
-```
 
 ```rust
 use monocle::database::MonocleDatabase;

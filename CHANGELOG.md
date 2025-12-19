@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## v1.1.0 - 2025-12-18
+## v1.0.2 - 2025-12-18
 
 ### New Features
 
@@ -38,6 +38,20 @@ All notable changes to this project will be documented in this file.
     * Results sorted by asn1, with asn1 < asn2 for each pair
     * Example: `monocle as2rel 174 2914 3356` shows all three pair relationships
 
+* Added global `--no-refresh` flag to disable automatic data refresh
+  * Use `monocle --no-refresh <command>` to skip all automatic data loading/refresh
+  * Useful when you want to use existing cached data only
+  * Shows warnings when data is missing or stale instead of auto-refreshing
+
+* Added Docker support with multi-stage build
+  * `Dockerfile` with two-stage build process for minimal image size (~176MB final image)
+  * Uses Rust 1.92 and Debian trixie-slim as runtime base
+  * `docker-compose.yml` for easy container orchestration
+  * `.dockerignore` to optimize build context
+  * Runs as non-root user for security
+  * Persistent data volume at `/data`
+  * Default server mode with port 8080 exposed
+
 ### Bug Fixes
 
 * Fixed "database is locked" error in `monocle config db-refresh` command (Issue #90)
@@ -53,13 +67,6 @@ All notable changes to this project will be documented in this file.
   * Connectivity section (upstreams/peers/downstreams) tables show truncation indicator
   * Makes it much more visible that additional results are available
 
-### New Features
-
-* Added global `--no-refresh` flag to disable automatic data refresh
-  * Use `monocle --no-refresh <command>` to skip all automatic data loading/refresh
-  * Useful when you want to use existing cached data only
-  * Shows warnings when data is missing or stale instead of auto-refreshing
-
 * Added `[monocle]` prefix to all auto-refresh log messages
   * Makes it easier to distinguish monocle's internal logging from main output
   * Especially useful when refresh operations run automatically during commands
@@ -72,15 +79,6 @@ All notable changes to this project will be documented in this file.
   * Tests for all repositories being accessible after initialization
   * Tests for schema version verification
   * Tests for RPKI and Pfx2as mock data storage/retrieval
-
-* Added Docker support with multi-stage build
-  * `Dockerfile` with two-stage build process for minimal image size (~176MB final image)
-  * Uses Rust 1.92 and Debian trixie-slim as runtime base
-  * `docker-compose.yml` for easy container orchestration
-  * `.dockerignore` to optimize build context
-  * Runs as non-root user for security
-  * Persistent data volume at `/data`
-  * Default server mode with port 8080 exposed
 
 ## v1.0.1 - 2025-12-17
 
