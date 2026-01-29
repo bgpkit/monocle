@@ -13,8 +13,11 @@ use monocle::database::MsgStore;
 use monocle::lens::search::SearchFilters;
 use monocle::lens::utils::OutputFormat;
 use rayon::prelude::*;
-use serde_json::json;
 use tracing::{info, warn};
+
+use super::elem_format::{
+    available_fields_help, format_elem, format_elems_table, get_header, parse_fields,
+};
 
 /// Arguments for the Search command
 #[derive(Args)]
@@ -38,6 +41,10 @@ pub struct SearchArgs {
     /// Output matching broker files (URLs) and exit without searching
     #[clap(long)]
     pub broker_files: bool,
+
+    /// Comma-separated list of fields to output
+    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help())]
+    pub fields: Option<String>,
 
     /// Filter by AS path regex string
     #[clap(flatten)]
@@ -111,8 +118,18 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         mrt_path,
         sqlite_reset,
         broker_files,
+        fields: fields_arg,
         filters,
     } = args;
+
+    // Parse and validate fields (true = search command, include collector in defaults)
+    let fields = match parse_fields(&fields_arg, true) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("ERROR: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     if let Err(e) = filters.validate() {
         eprintln!("ERROR: {e}");
@@ -223,6 +240,10 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
     let (progress_sender, progress_receiver): (Sender<ProgressUpdate>, Receiver<ProgressUpdate>) =
         channel();
 
+    // Clone fields for the writer thread
+    let fields_for_writer: Vec<&'static str> = fields.clone();
+    let is_table_format = output_format == OutputFormat::Table;
+
     // dedicated thread for handling output of results
     let writer_thread = thread::spawn(move || {
         let display_stdout = sqlite_db.is_none() && mrt_path.is_none();
@@ -239,6 +260,9 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
 
         let mut current_file_cache = vec![];
         let mut total_msg_count = 0;
+        let mut header_printed = false;
+        // Buffer for Table format - collects all elements before display
+        let mut table_buffer: Vec<(BgpElem, Option<String>)> = Vec::new();
 
         for msg in receiver {
             match msg {
@@ -246,8 +270,24 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
                     total_msg_count += 1;
 
                     if display_stdout {
-                        let output_str = format_elem(&elem, output_format, collector.as_str());
-                        println!("{output_str}");
+                        // For Table format, buffer all elements for display at end
+                        if is_table_format {
+                            table_buffer.push((*elem, Some(collector)));
+                            continue;
+                        }
+
+                        // Print header for markdown formats on first element
+                        if !header_printed {
+                            if let Some(header) = get_header(output_format, &fields_for_writer) {
+                                println!("{header}");
+                            }
+                            header_printed = true;
+                        }
+                        if let Some(output_str) =
+                            format_elem(&elem, output_format, &fields_for_writer, Some(&collector))
+                        {
+                            println!("{output_str}");
+                        }
                         continue;
                     }
 
@@ -293,6 +333,11 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
             }
         }
         drop(mrt_writer);
+
+        // For Table format, print the buffered table at the end
+        if display_stdout && is_table_format && !table_buffer.is_empty() {
+            println!("{}", format_elems_table(&table_buffer, &fields_for_writer));
+        }
 
         if !display_stdout {
             eprintln!("found {total_msg_count} messages, written into file {sqlite_path_str}");
@@ -645,28 +690,6 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         eprintln!("Writer thread failed: {:?}", e);
     }
 
-    fn format_elem(elem: &BgpElem, output_format: OutputFormat, collector: &str) -> String {
-        match output_format {
-            OutputFormat::Json | OutputFormat::JsonLine => {
-                let mut val = json!(elem);
-                if let Some(obj) = val.as_object_mut() {
-                    obj.insert("collector".to_string(), collector.into());
-                }
-                serde_json::to_string(&val).unwrap_or_else(|_| elem.to_string())
-            }
-            OutputFormat::JsonPretty => {
-                let mut val = json!(elem);
-                if let Some(obj) = val.as_object_mut() {
-                    obj.insert("collector".to_string(), collector.into());
-                }
-                serde_json::to_string_pretty(&val).unwrap_or_else(|_| elem.to_string())
-            }
-            _ => {
-                // For table/markdown/psv, use default string format with collector
-                format!("{}|{}", elem, collector)
-            }
-        }
-    }
     if let Err(e) = progress_thread.join() {
         eprintln!("Progress thread failed: {:?}", e);
     }

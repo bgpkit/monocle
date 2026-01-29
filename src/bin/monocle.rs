@@ -33,7 +33,7 @@ struct Cli {
     #[clap(long, global = true)]
     debug: bool,
 
-    /// Output format: table (default), markdown, json, json-pretty, json-line, psv
+    /// Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
     #[clap(long, global = true, value_name = "FORMAT")]
     format: Option<OutputFormat>,
 
@@ -153,6 +153,7 @@ fn main() {
     }
 
     // Determine output format: explicit --format takes precedence, then --json flag
+    // Default is Table for most commands, but PSV for parse/search (streaming data)
     let output_format = if let Some(fmt) = cli.format {
         fmt
     } else if cli.json {
@@ -161,11 +162,20 @@ fn main() {
         OutputFormat::Table
     };
 
+    // Parse and Search commands default to PSV format (better for streaming data)
+    let streaming_output_format = if let Some(fmt) = cli.format {
+        fmt
+    } else if cli.json {
+        OutputFormat::JsonPretty
+    } else {
+        OutputFormat::Psv
+    };
+
     // You can check for the existence of subcommands, and if found, use their
     // matches just as you would the top level cmd
     match cli.command {
-        Commands::Parse(args) => commands::parse::run(args, output_format),
-        Commands::Search(args) => commands::search::run(args, output_format),
+        Commands::Parse(args) => commands::parse::run(args, streaming_output_format),
+        Commands::Search(args) => commands::search::run(args, streaming_output_format),
 
         Commands::Server(args) => {
             // The server requires the `server` feature (axum + tokio). Keep the CLI
