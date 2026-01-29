@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased changes
+
+### New Features
+
+* Added `--fields` (`-f`) option to `parse` and `search` commands for selecting output fields ([#99](https://github.com/bgpkit/monocle/issues/99), [#101](https://github.com/bgpkit/monocle/pull/101))
+  * Choose which columns to display with comma-separated field names
+  * Available fields: `type`, `timestamp`, `peer_ip`, `peer_asn`, `prefix`, `as_path`, `origin`, `next_hop`, `local_pref`, `med`, `communities`, `atomic`, `aggr_asn`, `aggr_ip`, `collector`
+  * Parse command defaults exclude `collector` field (not applicable)
+  * Search command defaults include `collector` field
+  * Example: `monocle search -t 2024-01-01 -d 1h -f prefix,as_path,collector`
+
+* Added proper table formatting with borders using `tabled` crate for `--format table` ([#99](https://github.com/bgpkit/monocle/issues/99), [#101](https://github.com/bgpkit/monocle/pull/101))
+  * Table output now uses rounded borders instead of tab-separated values
+  * Markdown format includes proper header row with separator
+
+* Added `--order-by` and `--order` parameters to `parse` and `search` commands ([#98](https://github.com/bgpkit/monocle/issues/98))
+  * Sort output by: `timestamp`, `prefix`, `peer_ip`, `peer_asn`, `as_path`, or `next_hop`
+  * Direction: `asc` (ascending, default) or `desc` (descending)
+  * When ordering is specified, output is buffered and sorted before display
+  * Example: `monocle parse file.mrt --order-by timestamp --order asc`
+  * Example: `monocle search -t 2024-01-01 -d 1h -p 1.1.1.0/24 --order-by timestamp --order desc`
+
 ## v1.0.2 - 2025-12-18
 
 ### New Features

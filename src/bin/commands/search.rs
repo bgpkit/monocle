@@ -11,12 +11,12 @@ use bgpkit_parser::BgpElem;
 use clap::Args;
 use monocle::database::MsgStore;
 use monocle::lens::search::SearchFilters;
-use monocle::lens::utils::OutputFormat;
+use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat};
 use rayon::prelude::*;
 use tracing::{info, warn};
 
 use super::elem_format::{
-    available_fields_help, format_elem, format_elems_table, get_header, parse_fields,
+    available_fields_help, format_elem, format_elems_table, get_header, parse_fields, sort_elems,
 };
 
 /// Arguments for the Search command
@@ -45,6 +45,14 @@ pub struct SearchArgs {
     /// Comma-separated list of fields to output
     #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help())]
     pub fields: Option<String>,
+
+    /// Order output by field (enables buffering)
+    #[clap(long, value_enum)]
+    pub order_by: Option<OrderByField>,
+
+    /// Order direction (asc or desc, default: asc)
+    #[clap(long, value_enum, default_value = "asc")]
+    pub order: OrderDirection,
 
     /// Filter by AS path regex string
     #[clap(flatten)]
@@ -119,6 +127,8 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         sqlite_reset,
         broker_files,
         fields: fields_arg,
+        order_by,
+        order,
         filters,
     } = args;
 
@@ -243,6 +253,12 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
     // Clone fields for the writer thread
     let fields_for_writer: Vec<&'static str> = fields.clone();
     let is_table_format = output_format == OutputFormat::Table;
+    // Determine if we need buffering for sorting (in addition to table format)
+    let needs_sorting = order_by.is_some();
+    let needs_buffering = is_table_format || needs_sorting;
+    // Clone ordering parameters for writer thread
+    let order_by_for_writer = order_by;
+    let order_for_writer = order;
 
     // dedicated thread for handling output of results
     let writer_thread = thread::spawn(move || {
@@ -261,8 +277,8 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         let mut current_file_cache = vec![];
         let mut total_msg_count = 0;
         let mut header_printed = false;
-        // Buffer for Table format - collects all elements before display
-        let mut table_buffer: Vec<(BgpElem, Option<String>)> = Vec::new();
+        // Buffer for Table format or sorted output - collects all elements before display
+        let mut output_buffer: Vec<(BgpElem, Option<String>)> = Vec::new();
 
         for msg in receiver {
             match msg {
@@ -270,9 +286,9 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
                     total_msg_count += 1;
 
                     if display_stdout {
-                        // For Table format, buffer all elements for display at end
-                        if is_table_format {
-                            table_buffer.push((*elem, Some(collector)));
+                        // For Table format or when sorting is needed, buffer all elements
+                        if needs_buffering {
+                            output_buffer.push((*elem, Some(collector)));
                             continue;
                         }
 
@@ -334,9 +350,34 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         }
         drop(mrt_writer);
 
-        // For Table format, print the buffered table at the end
-        if display_stdout && is_table_format && !table_buffer.is_empty() {
-            println!("{}", format_elems_table(&table_buffer, &fields_for_writer));
+        // For buffered output (Table format or sorted), process at the end
+        if display_stdout && needs_buffering && !output_buffer.is_empty() {
+            // Sort if ordering is requested
+            if let Some(order_field) = order_by_for_writer {
+                sort_elems(&mut output_buffer, order_field, order_for_writer);
+            }
+
+            // Output based on format
+            if is_table_format {
+                println!("{}", format_elems_table(&output_buffer, &fields_for_writer));
+            } else {
+                // Print header for markdown format
+                if let Some(header) = get_header(output_format, &fields_for_writer) {
+                    println!("{header}");
+                }
+
+                // Output sorted elements
+                for (elem, collector) in &output_buffer {
+                    if let Some(output_str) = format_elem(
+                        elem,
+                        output_format,
+                        &fields_for_writer,
+                        collector.as_deref(),
+                    ) {
+                        println!("{output_str}");
+                    }
+                }
+            }
         }
 
         if !display_stdout {

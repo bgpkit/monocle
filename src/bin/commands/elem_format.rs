@@ -5,7 +5,7 @@
 //! multiple output format support.
 
 use bgpkit_parser::BgpElem;
-use monocle::lens::utils::OutputFormat;
+use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat};
 use serde_json::json;
 use tabled::builder::Builder;
 use tabled::settings::Style;
@@ -332,4 +332,56 @@ pub fn get_header(output_format: OutputFormat, fields: &[&str]) -> Option<String
             Some(format!("{}\n{}", header, separator))
         }
     }
+}
+
+/// Sort a collection of BgpElems by the specified field and direction.
+///
+/// This function sorts the elements in place, which is more efficient than
+/// creating a new vector.
+pub fn sort_elems(
+    elems: &mut [(BgpElem, Option<String>)],
+    order_by: OrderByField,
+    direction: OrderDirection,
+) {
+    elems.sort_by(|(a, _), (b, _)| {
+        let cmp = match order_by {
+            OrderByField::Timestamp => a
+                .timestamp
+                .partial_cmp(&b.timestamp)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            OrderByField::Prefix => a.prefix.to_string().cmp(&b.prefix.to_string()),
+            OrderByField::PeerIp => a.peer_ip.to_string().cmp(&b.peer_ip.to_string()),
+            OrderByField::PeerAsn => a.peer_asn.cmp(&b.peer_asn),
+            OrderByField::AsPath => {
+                let a_path = a
+                    .as_path
+                    .as_ref()
+                    .map(|p| p.to_string())
+                    .unwrap_or_default();
+                let b_path = b
+                    .as_path
+                    .as_ref()
+                    .map(|p| p.to_string())
+                    .unwrap_or_default();
+                a_path.cmp(&b_path)
+            }
+            OrderByField::NextHop => {
+                let a_hop = a
+                    .next_hop
+                    .as_ref()
+                    .map(|h| h.to_string())
+                    .unwrap_or_default();
+                let b_hop = b
+                    .next_hop
+                    .as_ref()
+                    .map(|h| h.to_string())
+                    .unwrap_or_default();
+                a_hop.cmp(&b_hop)
+            }
+        };
+        match direction {
+            OrderDirection::Asc => cmp,
+            OrderDirection::Desc => cmp.reverse(),
+        }
+    });
 }

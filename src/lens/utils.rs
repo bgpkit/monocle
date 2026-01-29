@@ -421,6 +421,117 @@ impl fmt::Display for OutputFormat {
     }
 }
 
+// =============================================================================
+// Ordering Utilities for BGP Elements
+// =============================================================================
+
+/// Fields available for ordering BGP element output
+///
+/// This enum provides the list of fields that can be used for sorting
+/// BGP elements in the output of parse and search commands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "cli", clap(rename_all = "snake_case"))]
+pub enum OrderByField {
+    /// Order by timestamp (default)
+    #[default]
+    Timestamp,
+    /// Order by network prefix
+    Prefix,
+    /// Order by peer IP address
+    PeerIp,
+    /// Order by peer AS number
+    PeerAsn,
+    /// Order by AS path (string comparison)
+    AsPath,
+    /// Order by next hop IP address
+    NextHop,
+}
+
+impl OrderByField {
+    /// Get a list of all field names for help text
+    pub fn all_names() -> &'static [&'static str] {
+        &[
+            "timestamp",
+            "prefix",
+            "peer_ip",
+            "peer_asn",
+            "as_path",
+            "next_hop",
+        ]
+    }
+}
+
+impl fmt::Display for OrderByField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Timestamp => write!(f, "timestamp"),
+            Self::Prefix => write!(f, "prefix"),
+            Self::PeerIp => write!(f, "peer_ip"),
+            Self::PeerAsn => write!(f, "peer_asn"),
+            Self::AsPath => write!(f, "as_path"),
+            Self::NextHop => write!(f, "next_hop"),
+        }
+    }
+}
+
+impl FromStr for OrderByField {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "timestamp" | "ts" | "time" => Ok(Self::Timestamp),
+            "prefix" | "pfx" => Ok(Self::Prefix),
+            "peer_ip" | "peerip" | "peer-ip" => Ok(Self::PeerIp),
+            "peer_asn" | "peerasn" | "peer-asn" => Ok(Self::PeerAsn),
+            "as_path" | "aspath" | "as-path" | "path" => Ok(Self::AsPath),
+            "next_hop" | "nexthop" | "next-hop" | "nh" => Ok(Self::NextHop),
+            _ => Err(format!(
+                "Unknown order-by field '{}'. Valid fields: {}",
+                s,
+                Self::all_names().join(", ")
+            )),
+        }
+    }
+}
+
+/// Direction for ordering output
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum OrderDirection {
+    /// Ascending order (smallest/oldest first)
+    #[default]
+    Asc,
+    /// Descending order (largest/newest first)
+    Desc,
+}
+
+impl fmt::Display for OrderDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Asc => write!(f, "asc"),
+            Self::Desc => write!(f, "desc"),
+        }
+    }
+}
+
+impl FromStr for OrderDirection {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "asc" | "ascending" | "a" => Ok(Self::Asc),
+            "desc" | "descending" | "d" => Ok(Self::Desc),
+            _ => Err(format!(
+                "Unknown order direction '{}'. Valid values: asc, desc",
+                s
+            )),
+        }
+    }
+}
+
 impl FromStr for OutputFormat {
     type Err = String;
 
@@ -753,5 +864,84 @@ mod tests {
         let json = r#"{"flag": "0"}"#;
         let result: Test = serde_json::from_str(json).unwrap();
         assert!(!result.flag);
+    }
+
+    #[test]
+    fn test_order_by_field_from_str() {
+        assert_eq!(
+            OrderByField::from_str("timestamp").unwrap(),
+            OrderByField::Timestamp
+        );
+        assert_eq!(
+            OrderByField::from_str("ts").unwrap(),
+            OrderByField::Timestamp
+        );
+        assert_eq!(
+            OrderByField::from_str("prefix").unwrap(),
+            OrderByField::Prefix
+        );
+        assert_eq!(
+            OrderByField::from_str("peer_ip").unwrap(),
+            OrderByField::PeerIp
+        );
+        assert_eq!(
+            OrderByField::from_str("peer-ip").unwrap(),
+            OrderByField::PeerIp
+        );
+        assert_eq!(
+            OrderByField::from_str("peer_asn").unwrap(),
+            OrderByField::PeerAsn
+        );
+        assert_eq!(
+            OrderByField::from_str("as_path").unwrap(),
+            OrderByField::AsPath
+        );
+        assert_eq!(
+            OrderByField::from_str("path").unwrap(),
+            OrderByField::AsPath
+        );
+        assert_eq!(
+            OrderByField::from_str("next_hop").unwrap(),
+            OrderByField::NextHop
+        );
+        assert_eq!(OrderByField::from_str("nh").unwrap(), OrderByField::NextHop);
+        assert!(OrderByField::from_str("invalid").is_err());
+    }
+
+    #[test]
+    fn test_order_by_field_display() {
+        assert_eq!(OrderByField::Timestamp.to_string(), "timestamp");
+        assert_eq!(OrderByField::Prefix.to_string(), "prefix");
+        assert_eq!(OrderByField::PeerIp.to_string(), "peer_ip");
+        assert_eq!(OrderByField::PeerAsn.to_string(), "peer_asn");
+        assert_eq!(OrderByField::AsPath.to_string(), "as_path");
+        assert_eq!(OrderByField::NextHop.to_string(), "next_hop");
+    }
+
+    #[test]
+    fn test_order_direction_from_str() {
+        assert_eq!(
+            OrderDirection::from_str("asc").unwrap(),
+            OrderDirection::Asc
+        );
+        assert_eq!(
+            OrderDirection::from_str("ascending").unwrap(),
+            OrderDirection::Asc
+        );
+        assert_eq!(
+            OrderDirection::from_str("desc").unwrap(),
+            OrderDirection::Desc
+        );
+        assert_eq!(
+            OrderDirection::from_str("descending").unwrap(),
+            OrderDirection::Desc
+        );
+        assert!(OrderDirection::from_str("invalid").is_err());
+    }
+
+    #[test]
+    fn test_order_direction_display() {
+        assert_eq!(OrderDirection::Asc.to_string(), "asc");
+        assert_eq!(OrderDirection::Desc.to_string(), "desc");
     }
 }
