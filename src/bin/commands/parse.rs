@@ -7,7 +7,10 @@ use clap::Args;
 
 use monocle::lens::parse::{ParseFilters, ParseLens};
 use monocle::lens::utils::OutputFormat;
-use serde_json::json;
+
+use super::elem_format::{
+    available_fields_help, format_elem, format_elems_table, get_header, parse_fields,
+};
 
 /// Arguments for the Parse command
 #[derive(Args)]
@@ -24,6 +27,10 @@ pub(crate) struct ParseArgs {
     #[clap(long, short = 'M')]
     pub mrt_path: Option<PathBuf>,
 
+    /// Comma-separated list of fields to output
+    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help())]
+    pub fields: Option<String>,
+
     /// Filter by AS path regex string
     #[clap(flatten)]
     pub filters: ParseFilters,
@@ -34,8 +41,18 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
         file_path,
         pretty,
         mrt_path,
+        fields: fields_arg,
         filters,
     } = args;
+
+    // Parse and validate fields (false = parse command, no collector in defaults)
+    let fields = match parse_fields(&fields_arg, false) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("ERROR: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     let lens = ParseLens::new();
 
@@ -61,16 +78,44 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
 
     let mut stdout = std::io::stdout();
 
+    // Adjust output format for pretty flag
+    let output_format = if pretty && output_format == OutputFormat::Json {
+        OutputFormat::JsonPretty
+    } else {
+        output_format
+    };
+
     match mrt_path {
         None => {
-            for elem in parser {
-                // output to stdout based on format
-                let output_str = format_elem(&elem, output_format, pretty);
-                if let Err(e) = writeln!(stdout, "{}", &output_str) {
+            // For Table format, we need to buffer all elements
+            if output_format == OutputFormat::Table {
+                let elems: Vec<(BgpElem, Option<String>)> =
+                    parser.into_iter().map(|elem| (elem, None)).collect();
+                if !elems.is_empty() {
+                    println!("{}", format_elems_table(&elems, &fields));
+                }
+                return;
+            }
+
+            // Print header for markdown format before first element
+            if let Some(header) = get_header(output_format, &fields) {
+                if let Err(e) = writeln!(stdout, "{}", &header) {
                     if e.kind() != std::io::ErrorKind::BrokenPipe {
                         eprintln!("ERROR: {e}");
                     }
                     std::process::exit(1);
+                }
+            }
+
+            for elem in parser {
+                // output to stdout based on format
+                if let Some(output_str) = format_elem(&elem, output_format, &fields, None) {
+                    if let Err(e) = writeln!(stdout, "{}", &output_str) {
+                        if e.kind() != std::io::ErrorKind::BrokenPipe {
+                            eprintln!("ERROR: {e}");
+                        }
+                        std::process::exit(1);
+                    }
                 }
             }
         }
@@ -101,28 +146,6 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
             }
             drop(writer);
             eprintln!("done. total of {} message wrote", total_count);
-        }
-    }
-}
-
-fn format_elem(elem: &BgpElem, output_format: OutputFormat, pretty: bool) -> String {
-    match output_format {
-        OutputFormat::Json => {
-            serde_json::to_string(&json!(elem)).unwrap_or_else(|_| elem.to_string())
-        }
-        OutputFormat::JsonPretty => {
-            if pretty {
-                serde_json::to_string_pretty(&json!(elem)).unwrap_or_else(|_| elem.to_string())
-            } else {
-                serde_json::to_string(&json!(elem)).unwrap_or_else(|_| elem.to_string())
-            }
-        }
-        OutputFormat::JsonLine => {
-            serde_json::to_string(&json!(elem)).unwrap_or_else(|_| elem.to_string())
-        }
-        _ => {
-            // Table, Markdown, Psv all use the default string format for streaming data
-            elem.to_string()
         }
     }
 }
