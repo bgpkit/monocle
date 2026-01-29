@@ -6,10 +6,10 @@ use bgpkit_parser::BgpElem;
 use clap::Args;
 
 use monocle::lens::parse::{ParseFilters, ParseLens};
-use monocle::lens::utils::OutputFormat;
+use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat};
 
 use super::elem_format::{
-    available_fields_help, format_elem, format_elems_table, get_header, parse_fields,
+    available_fields_help, format_elem, format_elems_table, get_header, parse_fields, sort_elems,
 };
 
 /// Arguments for the Parse command
@@ -31,6 +31,14 @@ pub(crate) struct ParseArgs {
     #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help())]
     pub fields: Option<String>,
 
+    /// Order output by field (enables buffering)
+    #[clap(long, value_enum)]
+    pub order_by: Option<OrderByField>,
+
+    /// Order direction (asc or desc, default: asc)
+    #[clap(long, value_enum, default_value = "asc")]
+    pub order: OrderDirection,
+
     /// Filter by AS path regex string
     #[clap(flatten)]
     pub filters: ParseFilters,
@@ -42,6 +50,8 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
         pretty,
         mrt_path,
         fields: fields_arg,
+        order_by,
+        order,
         filters,
     } = args;
 
@@ -85,18 +95,57 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
         output_format
     };
 
+    // Determine if we need to buffer (for Table format or when ordering is requested)
+    let needs_buffering = output_format == OutputFormat::Table || order_by.is_some();
+
     match mrt_path {
         None => {
-            // For Table format, we need to buffer all elements
-            if output_format == OutputFormat::Table {
-                let elems: Vec<(BgpElem, Option<String>)> =
+            // If buffering is needed (Table format or ordering requested), collect and sort
+            if needs_buffering {
+                let mut elems: Vec<(BgpElem, Option<String>)> =
                     parser.into_iter().map(|elem| (elem, None)).collect();
-                if !elems.is_empty() {
+
+                // Sort if ordering is requested
+                if let Some(order_field) = order_by {
+                    sort_elems(&mut elems, order_field, order);
+                }
+
+                if elems.is_empty() {
+                    return;
+                }
+
+                // Output based on format
+                if output_format == OutputFormat::Table {
                     println!("{}", format_elems_table(&elems, &fields));
+                } else {
+                    // Print header for markdown format
+                    if let Some(header) = get_header(output_format, &fields) {
+                        if let Err(e) = writeln!(stdout, "{}", &header) {
+                            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                                eprintln!("ERROR: {e}");
+                            }
+                            std::process::exit(1);
+                        }
+                    }
+
+                    // Output sorted elements
+                    for (elem, collector) in &elems {
+                        if let Some(output_str) =
+                            format_elem(elem, output_format, &fields, collector.as_deref())
+                        {
+                            if let Err(e) = writeln!(stdout, "{}", &output_str) {
+                                if e.kind() != std::io::ErrorKind::BrokenPipe {
+                                    eprintln!("ERROR: {e}");
+                                }
+                                std::process::exit(1);
+                            }
+                        }
+                    }
                 }
                 return;
             }
 
+            // Streaming output (no buffering needed)
             // Print header for markdown format before first element
             if let Some(header) = get_header(output_format, &fields) {
                 if let Err(e) = writeln!(stdout, "{}", &header) {
