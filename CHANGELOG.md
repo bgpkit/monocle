@@ -25,6 +25,13 @@ All notable changes to this project will be documented in this file.
   * Example: `-o '!13335,!15169'` excludes elements from AS13335 AND AS15169
   * Note: Cannot mix positive and negative values in the same filter
 * Added validation for ASN format, prefix CIDR notation, and negation consistency
+* **`--time-format`**: Added timestamp output format option to `parse` and `search` commands
+  * `--time-format unix` (default): Output timestamps as Unix epoch (integer/float)
+  * `--time-format rfc3339`: Output timestamps in ISO 8601/RFC3339 format (e.g., `2023-10-11T17:00:00+00:00`)
+  * Applies to non-JSON output formats (table, psv, markdown)
+  * JSON output always uses numeric Unix timestamps for backward compatibility
+  * Example: `monocle parse file.mrt --time-format rfc3339`
+  * Example: `monocle search -t 2024-01-01 -d 1h -p 1.1.1.0/24 --time-format rfc3339`
 
 ### Code Improvements
 

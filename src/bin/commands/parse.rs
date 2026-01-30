@@ -6,7 +6,7 @@ use bgpkit_parser::BgpElem;
 use clap::Args;
 
 use monocle::lens::parse::{ParseFilters, ParseLens};
-use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat};
+use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
 
 use super::elem_format::{
     available_fields_help, format_elem, format_elems_table, get_header, parse_fields, sort_elems,
@@ -39,6 +39,10 @@ pub(crate) struct ParseArgs {
     #[clap(long, value_enum, default_value = "asc")]
     pub order: OrderDirection,
 
+    /// Timestamp output format for non-JSON output (unix or rfc3339)
+    #[clap(long, value_enum, default_value = "unix")]
+    pub time_format: TimestampFormat,
+
     /// Filter by AS path regex string
     #[clap(flatten)]
     pub filters: ParseFilters,
@@ -52,6 +56,7 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
         fields: fields_arg,
         order_by,
         order,
+        time_format,
         filters,
     } = args;
 
@@ -116,7 +121,7 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
 
                 // Output based on format
                 if output_format == OutputFormat::Table {
-                    println!("{}", format_elems_table(&elems, &fields));
+                    println!("{}", format_elems_table(&elems, &fields, time_format));
                 } else {
                     // Print header for markdown format
                     if let Some(header) = get_header(output_format, &fields) {
@@ -130,9 +135,13 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
 
                     // Output sorted elements
                     for (elem, collector) in &elems {
-                        if let Some(output_str) =
-                            format_elem(elem, output_format, &fields, collector.as_deref())
-                        {
+                        if let Some(output_str) = format_elem(
+                            elem,
+                            output_format,
+                            &fields,
+                            collector.as_deref(),
+                            time_format,
+                        ) {
                             if let Err(e) = writeln!(stdout, "{}", &output_str) {
                                 if e.kind() != std::io::ErrorKind::BrokenPipe {
                                     eprintln!("ERROR: {e}");
@@ -158,7 +167,9 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
 
             for elem in parser {
                 // output to stdout based on format
-                if let Some(output_str) = format_elem(&elem, output_format, &fields, None) {
+                if let Some(output_str) =
+                    format_elem(&elem, output_format, &fields, None, time_format)
+                {
                     if let Err(e) = writeln!(stdout, "{}", &output_str) {
                         if e.kind() != std::io::ErrorKind::BrokenPipe {
                             eprintln!("ERROR: {e}");

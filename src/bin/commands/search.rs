@@ -11,7 +11,7 @@ use bgpkit_parser::BgpElem;
 use clap::Args;
 use monocle::database::MsgStore;
 use monocle::lens::search::SearchFilters;
-use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat};
+use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
 use rayon::prelude::*;
 use tracing::{info, warn};
 
@@ -53,6 +53,10 @@ pub struct SearchArgs {
     /// Order direction (asc or desc, default: asc)
     #[clap(long, value_enum, default_value = "asc")]
     pub order: OrderDirection,
+
+    /// Timestamp output format for non-JSON output (unix or rfc3339)
+    #[clap(long, value_enum, default_value = "unix")]
+    pub time_format: TimestampFormat,
 
     /// Filter by AS path regex string
     #[clap(flatten)]
@@ -129,6 +133,7 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         fields: fields_arg,
         order_by,
         order,
+        time_format,
         filters,
     } = args;
 
@@ -259,6 +264,8 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
     // Clone ordering parameters for writer thread
     let order_by_for_writer = order_by;
     let order_for_writer = order;
+    // Clone time format for writer thread
+    let time_format_for_writer = time_format;
 
     // dedicated thread for handling output of results
     let writer_thread = thread::spawn(move || {
@@ -299,9 +306,13 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
                             }
                             header_printed = true;
                         }
-                        if let Some(output_str) =
-                            format_elem(&elem, output_format, &fields_for_writer, Some(&collector))
-                        {
+                        if let Some(output_str) = format_elem(
+                            &elem,
+                            output_format,
+                            &fields_for_writer,
+                            Some(&collector),
+                            time_format_for_writer,
+                        ) {
                             println!("{output_str}");
                         }
                         continue;
@@ -359,7 +370,10 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
 
             // Output based on format
             if is_table_format {
-                println!("{}", format_elems_table(&output_buffer, &fields_for_writer));
+                println!(
+                    "{}",
+                    format_elems_table(&output_buffer, &fields_for_writer, time_format_for_writer)
+                );
             } else {
                 // Print header for markdown format
                 if let Some(header) = get_header(output_format, &fields_for_writer) {
@@ -373,6 +387,7 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
                         output_format,
                         &fields_for_writer,
                         collector.as_deref(),
+                        time_format_for_writer,
                     ) {
                         println!("{output_str}");
                     }
