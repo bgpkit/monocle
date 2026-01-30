@@ -22,20 +22,18 @@ pub use asinfo::{
     AsinfoPeeringdbRecord, AsinfoPopulationRecord, AsinfoRepository, AsinfoSchemaDefinitions,
     AsinfoStoreCounts, JsonlRecord, ASINFO_DATA_URL, DEFAULT_ASINFO_TTL,
 };
+pub use pfx2as::{
+    Pfx2asCacheDbMetadata, Pfx2asDbRecord, Pfx2asQueryResult, Pfx2asRepository,
+    Pfx2asSchemaDefinitions, ValidationStats, DEFAULT_PFX2AS_CACHE_TTL,
+};
 pub use rpki::{
     RpkiAspaEnrichedRecord, RpkiAspaProviderEnriched, RpkiAspaRecord, RpkiCacheMetadata,
     RpkiRepository, RpkiRoaRecord, RpkiValidationResult, RpkiValidationState,
     DEFAULT_RPKI_CACHE_TTL,
 };
 
-// Pfx2as repository (SQLite-based)
-pub use pfx2as::{
-    Pfx2asCacheDbMetadata, Pfx2asDbRecord, Pfx2asQueryResult, Pfx2asRepository,
-    Pfx2asSchemaDefinitions, ValidationStats, DEFAULT_PFX2AS_CACHE_TTL,
-};
-
 use crate::database::core::{DatabaseConn, SchemaManager, SchemaStatus};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tracing::info;
 
 /// Main monocle database for persistent data (SQLite backend)
@@ -205,12 +203,6 @@ impl MonocleDatabase {
         let schema = SchemaManager::new(&self.db.conn);
         schema.set_meta(key, value)
     }
-}
-
-/// Ensure the data directory exists
-pub fn ensure_data_dir(data_dir: &str) -> Result<()> {
-    std::fs::create_dir_all(data_dir)
-        .map_err(|e| anyhow!("Failed to create data directory '{}': {}", data_dir, e))
 }
 
 #[cfg(test)]

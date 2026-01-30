@@ -18,12 +18,10 @@
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
-use ipnet::IpNet;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::str::FromStr;
 use tracing::info;
 
 /// Default TTL for Pfx2as cache (24 hours)
@@ -705,7 +703,9 @@ fn ip_to_bytes(ip: IpAddr) -> [u8; 16] {
 
 /// Parse a prefix string and return (start_bytes, end_bytes, prefix_length)
 fn parse_prefix_to_range(prefix: &str) -> Result<([u8; 16], [u8; 16], u8)> {
-    let net = IpNet::from_str(prefix).map_err(|e| anyhow!("Invalid prefix '{}': {}", prefix, e))?;
+    let net: ipnet::IpNet = prefix
+        .parse()
+        .map_err(|e| anyhow!("Invalid prefix '{}': {}", prefix, e))?;
 
     let start = ip_to_bytes(net.network());
     let end = ip_to_bytes(net.broadcast());

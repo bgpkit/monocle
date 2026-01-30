@@ -283,9 +283,9 @@ dependencies = [
 
 [[package]]
 name = "bgpkit-parser"
-version = "0.13.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b7b1569f2ecafd08ddfb94f6627f8b038a77dd2be684b789fcbf6abb3e07c61"
+checksum = "c455bf7b26d83d961eb633c815b64f466b5bc349f33d014f3b6a8cdf113e9406"
 dependencies = [
  "bitflags 2.10.0",
  "bytes",
