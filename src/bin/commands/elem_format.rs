@@ -5,7 +5,7 @@
 //! multiple output format support.
 
 use bgpkit_parser::BgpElem;
-use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat};
+use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
 use serde_json::json;
 use tabled::builder::Builder;
 use tabled::settings::Style;
@@ -67,7 +67,11 @@ pub const DEFAULT_FIELDS_SEARCH: &[&str] = &[
 ];
 
 /// Format a collection of BgpElems as a tabled table with selected fields
-pub fn format_elems_table(elems: &[(BgpElem, Option<String>)], fields: &[&str]) -> String {
+pub fn format_elems_table(
+    elems: &[(BgpElem, Option<String>)],
+    fields: &[&str],
+    time_format: TimestampFormat,
+) -> String {
     let mut builder = Builder::default();
 
     // Add header row
@@ -77,7 +81,7 @@ pub fn format_elems_table(elems: &[(BgpElem, Option<String>)], fields: &[&str]) 
     for (elem, collector) in elems {
         let row: Vec<String> = fields
             .iter()
-            .map(|f| get_field_value(elem, f, collector.as_deref()))
+            .map(|f| get_field_value_with_time_format(elem, f, collector.as_deref(), time_format))
             .collect();
         builder.push_record(row);
     }
@@ -144,7 +148,20 @@ pub fn parse_fields(
 
 /// Get the value of a specific field from a BgpElem
 /// For the "collector" field, pass the collector value via the `collector` parameter.
+/// Uses default Unix timestamp format for backward compatibility.
+#[allow(dead_code)]
 pub fn get_field_value(elem: &BgpElem, field: &str, collector: Option<&str>) -> String {
+    get_field_value_with_time_format(elem, field, collector, TimestampFormat::Unix)
+}
+
+/// Get the value of a specific field from a BgpElem with configurable timestamp format
+/// For the "collector" field, pass the collector value via the `collector` parameter.
+pub fn get_field_value_with_time_format(
+    elem: &BgpElem,
+    field: &str,
+    collector: Option<&str>,
+    time_format: TimestampFormat,
+) -> String {
     match field {
         "type" => {
             if elem.elem_type == bgpkit_parser::models::ElemType::ANNOUNCE {
@@ -153,7 +170,7 @@ pub fn get_field_value(elem: &BgpElem, field: &str, collector: Option<&str>) -> 
                 "W".to_string()
             }
         }
-        "timestamp" => elem.timestamp.to_string(),
+        "timestamp" => time_format.format_timestamp(elem.timestamp),
         "peer_ip" => elem.peer_ip.to_string(),
         "peer_asn" => elem.peer_asn.to_string(),
         "prefix" => elem.prefix.to_string(),
@@ -206,6 +223,7 @@ pub fn get_field_value(elem: &BgpElem, field: &str, collector: Option<&str>) -> 
 
 /// Format a BgpElem according to the output format and selected fields.
 /// The `collector` parameter provides the collector value for the "collector" field.
+/// The `time_format` parameter controls how timestamps are displayed in non-JSON formats.
 /// Note: For Table format, this returns an empty string - use format_elems_table() instead
 /// after collecting all elements.
 pub fn format_elem(
@@ -213,13 +231,16 @@ pub fn format_elem(
     output_format: OutputFormat,
     fields: &[&str],
     collector: Option<&str>,
+    time_format: TimestampFormat,
 ) -> Option<String> {
     match output_format {
         OutputFormat::Json | OutputFormat::JsonLine => {
+            // JSON always uses Unix timestamp as number for backward compatibility
             let obj = build_json_object(elem, fields, collector);
             Some(serde_json::to_string(&obj).unwrap_or_else(|_| elem.to_string()))
         }
         OutputFormat::JsonPretty => {
+            // JSON always uses Unix timestamp as number for backward compatibility
             let obj = build_json_object(elem, fields, collector);
             Some(serde_json::to_string_pretty(&obj).unwrap_or_else(|_| elem.to_string()))
         }
@@ -227,7 +248,7 @@ pub fn format_elem(
             // Pipe-separated values (no header for backward compatibility)
             let values: Vec<String> = fields
                 .iter()
-                .map(|f| get_field_value(elem, f, collector))
+                .map(|f| get_field_value_with_time_format(elem, f, collector, time_format))
                 .collect();
             Some(values.join("|"))
         }
@@ -240,7 +261,7 @@ pub fn format_elem(
             // Markdown table row
             let values: Vec<String> = fields
                 .iter()
-                .map(|f| get_field_value(elem, f, collector))
+                .map(|f| get_field_value_with_time_format(elem, f, collector, time_format))
                 .collect();
             Some(format!("| {} |", values.join(" | ")))
         }

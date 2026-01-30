@@ -532,6 +532,72 @@ impl FromStr for OrderDirection {
     }
 }
 
+// =============================================================================
+// Timestamp Format for BGP Elements
+// =============================================================================
+
+/// Format for timestamp output in parse and search commands
+///
+/// This enum controls how timestamps are displayed in non-JSON output formats
+/// (table, psv, markdown). JSON output always uses Unix timestamps as numbers
+/// for backward compatibility.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum TimestampFormat {
+    /// Unix timestamp (integer or float) - default for backward compatibility
+    #[default]
+    Unix,
+    /// RFC3339/ISO 8601 format (e.g., "2023-10-11T15:00:00Z")
+    Rfc3339,
+}
+
+impl TimestampFormat {
+    /// Get a list of all format names for help text
+    pub fn all_names() -> &'static [&'static str] {
+        &["unix", "rfc3339"]
+    }
+
+    /// Format a Unix timestamp (f64) according to this format
+    pub fn format_timestamp(&self, timestamp: f64) -> String {
+        match self {
+            Self::Unix => timestamp.to_string(),
+            Self::Rfc3339 => {
+                let secs = timestamp as i64;
+                let nsecs = ((timestamp.fract().abs()) * 1_000_000_000.0) as u32;
+                chrono::DateTime::from_timestamp(secs, nsecs)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_else(|| timestamp.to_string())
+            }
+        }
+    }
+}
+
+impl fmt::Display for TimestampFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unix => write!(f, "unix"),
+            Self::Rfc3339 => write!(f, "rfc3339"),
+        }
+    }
+}
+
+impl FromStr for TimestampFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "unix" | "timestamp" | "ts" => Ok(Self::Unix),
+            "rfc3339" | "iso8601" | "iso" => Ok(Self::Rfc3339),
+            _ => Err(format!(
+                "Unknown timestamp format '{}'. Valid formats: {}",
+                s,
+                Self::all_names().join(", ")
+            )),
+        }
+    }
+}
+
 impl FromStr for OutputFormat {
     type Err = String;
 
@@ -943,5 +1009,57 @@ mod tests {
     fn test_order_direction_display() {
         assert_eq!(OrderDirection::Asc.to_string(), "asc");
         assert_eq!(OrderDirection::Desc.to_string(), "desc");
+    }
+
+    #[test]
+    fn test_timestamp_format_from_str() {
+        assert_eq!(
+            TimestampFormat::from_str("unix").unwrap(),
+            TimestampFormat::Unix
+        );
+        assert_eq!(
+            TimestampFormat::from_str("ts").unwrap(),
+            TimestampFormat::Unix
+        );
+        assert_eq!(
+            TimestampFormat::from_str("rfc3339").unwrap(),
+            TimestampFormat::Rfc3339
+        );
+        assert_eq!(
+            TimestampFormat::from_str("iso8601").unwrap(),
+            TimestampFormat::Rfc3339
+        );
+        assert_eq!(
+            TimestampFormat::from_str("iso").unwrap(),
+            TimestampFormat::Rfc3339
+        );
+        assert!(TimestampFormat::from_str("invalid").is_err());
+    }
+
+    #[test]
+    fn test_timestamp_format_display() {
+        assert_eq!(TimestampFormat::Unix.to_string(), "unix");
+        assert_eq!(TimestampFormat::Rfc3339.to_string(), "rfc3339");
+    }
+
+    #[test]
+    fn test_timestamp_format_unix() {
+        let format = TimestampFormat::Unix;
+        assert_eq!(format.format_timestamp(1697043600.0), "1697043600");
+        assert_eq!(format.format_timestamp(1697043600.5), "1697043600.5");
+    }
+
+    #[test]
+    fn test_timestamp_format_rfc3339() {
+        let format = TimestampFormat::Rfc3339;
+        // 1697043600 = 2023-10-11T17:00:00Z (UTC)
+        let result = format.format_timestamp(1697043600.0);
+        assert!(result.starts_with("2023-10-11T17:00:00"));
+        assert!(result.ends_with("Z") || result.contains("+00:00"));
+    }
+
+    #[test]
+    fn test_timestamp_format_default() {
+        assert_eq!(TimestampFormat::default(), TimestampFormat::Unix);
     }
 }
