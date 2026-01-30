@@ -107,7 +107,7 @@ fn main() -> anyhow::Result<()> {
 
     let lens = ParseLens::new();
     let filters = ParseFilters {
-        origin_asn: Some(13335),
+        origin_asn: vec!["13335".to_string()],
         ..Default::default()
     };
 
@@ -273,7 +273,7 @@ fn main() -> anyhow::Result<()> {
     let search_lens = SearchLens::new();
     let search_filters = SearchFilters {
         parse_filters: ParseFilters {
-            origin_asn: Some(13335),
+            origin_asn: vec!["13335".to_string()],
             start_ts: Some("2024-01-01T00:00:00Z".to_string()),
             end_ts: Some("2024-01-01T00:10:00Z".to_string()),
             ..Default::default()

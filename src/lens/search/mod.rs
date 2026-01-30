@@ -611,12 +611,12 @@ mod tests {
         // Create a test filter with a short time range to get manageable results
         let search_filters = SearchFilters {
             parse_filters: ParseFilters {
-                origin_asn: None,
-                prefix: None,
+                origin_asn: Vec::new(),
+                prefix: Vec::new(),
                 include_super: false,
                 include_sub: false,
                 peer_ip: Vec::new(),
-                peer_asn: None,
+                peer_asn: Vec::new(),
                 elem_type: None,
                 start_ts: Some("2022-01-01T00:00:00Z".to_string()),
                 end_ts: Some("2022-01-01T01:00:00Z".to_string()), // 1 hour window
@@ -699,12 +699,12 @@ mod tests {
     fn test_build_broker_with_filters() {
         let search_filters = SearchFilters {
             parse_filters: ParseFilters {
-                origin_asn: None,
-                prefix: None,
+                origin_asn: Vec::new(),
+                prefix: Vec::new(),
                 include_super: false,
                 include_sub: false,
                 peer_ip: Vec::new(),
-                peer_asn: None,
+                peer_asn: Vec::new(),
                 elem_type: None,
                 start_ts: Some("2022-01-01T00:00:00Z".to_string()),
                 end_ts: Some("2022-01-01T01:00:00Z".to_string()),

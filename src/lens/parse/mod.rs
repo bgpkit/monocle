@@ -3,6 +3,46 @@
 //! This module provides filter types for parsing MRT files with bgpkit-parser.
 //! The filter types can optionally derive Clap's Args trait when the `cli` feature is enabled.
 //!
+//! # Multiple Values and OR Logic
+//!
+//! Filter fields accept multiple comma-separated values with OR logic. When multiple
+//! values are specified, elements matching ANY of the values will be included:
+//!
+//! ```rust,ignore
+//! use monocle::lens::parse::ParseFilters;
+//!
+//! let filters = ParseFilters {
+//!     // Match elements from Cloudflare (13335), Google (15169), or Microsoft (8075)
+//!     origin_asn: vec!["13335".to_string(), "15169".to_string(), "8075".to_string()],
+//!     // Match elements for either prefix
+//!     prefix: vec!["1.1.1.0/24".to_string(), "8.8.8.0/24".to_string()],
+//!     ..Default::default()
+//! };
+//! ```
+//!
+//! # Negative Filters (Exclusion)
+//!
+//! Prefix values with `!` to exclude them:
+//!
+//! ```rust,ignore
+//! use monocle::lens::parse::ParseFilters;
+//!
+//! let filters = ParseFilters {
+//!     // Exclude elements from AS13335
+//!     origin_asn: vec!["!13335".to_string()],
+//!     ..Default::default()
+//! };
+//!
+//! // Exclude multiple ASNs (elements NOT from AS13335 AND NOT from AS15169)
+//! let filters = ParseFilters {
+//!     origin_asn: vec!["!13335".to_string(), "!15169".to_string()],
+//!     ..Default::default()
+//! };
+//! ```
+//!
+//! **Note**: You cannot mix positive and negative values in the same filter field.
+//! All values must either be positive or all prefixed with `!`.
+//!
 //! # Progress Tracking
 //!
 //! The `ParseLens` supports progress tracking through callbacks. This is useful for
@@ -29,6 +69,7 @@ use anyhow::anyhow;
 use anyhow::Result;
 use bgpkit_parser::BgpElem;
 use bgpkit_parser::BgpkitParser;
+use ipnet::IpNet;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
@@ -111,35 +152,59 @@ impl Display for ParseElemType {
 // =============================================================================
 
 /// Filters for parsing MRT files
+///
+/// All filter fields support multiple comma-separated values with OR logic.
+/// Values can be prefixed with `!` for negation (exclusion).
+///
+/// # Example
+///
+/// ```rust
+/// use monocle::lens::parse::ParseFilters;
+///
+/// // Match elements from multiple origin ASNs
+/// let filters = ParseFilters {
+///     origin_asn: vec!["13335".to_string(), "15169".to_string()],
+///     ..Default::default()
+/// };
+///
+/// // Exclude elements from specific ASNs
+/// let filters = ParseFilters {
+///     origin_asn: vec!["!13335".to_string()],
+///     ..Default::default()
+/// };
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(Args))]
 pub struct ParseFilters {
-    /// Filter by origin AS Number
-    #[cfg_attr(feature = "cli", clap(short = 'o', long))]
-    pub origin_asn: Option<u32>,
+    /// Filter by origin AS Number(s), comma-separated. Prefix with ! to exclude.
+    #[cfg_attr(feature = "cli", clap(short = 'o', long, value_delimiter = ','))]
+    #[serde(default)]
+    pub origin_asn: Vec<String>,
 
-    /// Filter by network prefix
-    #[cfg_attr(feature = "cli", clap(short = 'p', long))]
-    pub prefix: Option<String>,
+    /// Filter by network prefix(es), comma-separated. Prefix with ! to exclude.
+    #[cfg_attr(feature = "cli", clap(short = 'p', long, value_delimiter = ','))]
+    #[serde(default)]
+    pub prefix: Vec<String>,
 
-    /// Include super-prefix when filtering
+    /// Include super-prefixes when filtering
     #[cfg_attr(feature = "cli", clap(short = 's', long))]
     #[serde(default)]
     pub include_super: bool,
 
-    /// Include sub-prefix when filtering
+    /// Include sub-prefixes when filtering
     #[cfg_attr(feature = "cli", clap(short = 'S', long))]
     #[serde(default)]
     pub include_sub: bool,
 
-    /// Filter by peer IP address
+    /// Filter by peer IP address(es)
     #[cfg_attr(feature = "cli", clap(short = 'j', long))]
     #[serde(default)]
     pub peer_ip: Vec<IpAddr>,
 
-    /// Filter by peer ASN
-    #[cfg_attr(feature = "cli", clap(short = 'J', long))]
-    pub peer_asn: Option<u32>,
+    /// Filter by peer ASN(s), comma-separated. Prefix with ! to exclude.
+    #[cfg_attr(feature = "cli", clap(short = 'J', long, value_delimiter = ','))]
+    #[serde(default)]
+    pub peer_asn: Vec<String>,
 
     /// Filter by elem type: announce (a) or withdraw (w)
     #[cfg_attr(feature = "cli", clap(short = 'm', long, value_enum))]
@@ -234,6 +299,12 @@ impl ParseFilters {
     }
 
     /// Validate the filters
+    ///
+    /// Checks:
+    /// - Time strings are valid
+    /// - ASN values are valid 32-bit unsigned integers (with optional `!` prefix)
+    /// - Prefix values are valid CIDR notation (with optional `!` prefix)
+    /// - Negation is consistent within each filter (all positive or all negative)
     pub fn validate(&self) -> Result<()> {
         let time_lens = TimeLens::new();
         if let Some(ts) = &self.start_ts {
@@ -246,35 +317,110 @@ impl ParseFilters {
                 return Err(anyhow!("end-ts is not a valid time string: {}", ts));
             }
         }
+
+        // Validate origin ASNs
+        for asn in &self.origin_asn {
+            Self::validate_asn(asn)?;
+        }
+
+        // Validate peer ASNs
+        for asn in &self.peer_asn {
+            Self::validate_asn(asn)?;
+        }
+
+        // Validate prefixes
+        for prefix in &self.prefix {
+            Self::validate_prefix(prefix)?;
+        }
+
+        // Check for mixed positive/negative in same filter
+        Self::check_negation_consistency(&self.origin_asn, "origin-asn")?;
+        Self::check_negation_consistency(&self.peer_asn, "peer-asn")?;
+        Self::check_negation_consistency(&self.prefix, "prefix")?;
+
+        Ok(())
+    }
+
+    /// Validate an ASN value (with optional `!` prefix for negation)
+    fn validate_asn(value: &str) -> Result<()> {
+        let asn_str = value.strip_prefix('!').unwrap_or(value);
+        asn_str.parse::<u32>().map_err(|_| {
+            anyhow!(
+                "Invalid ASN '{}': must be a valid 32-bit unsigned integer",
+                value
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Validate a prefix value (with optional `!` prefix for negation)
+    fn validate_prefix(value: &str) -> Result<()> {
+        let prefix_str = value.strip_prefix('!').unwrap_or(value);
+        prefix_str.parse::<IpNet>().map_err(|_| {
+            anyhow!(
+                "Invalid prefix '{}': must be valid CIDR notation (e.g., 1.1.1.0/24)",
+                value
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Check that all values in a filter are either all positive or all negative
+    fn check_negation_consistency(values: &[String], field_name: &str) -> Result<()> {
+        if values.len() > 1 {
+            let negated_count = values.iter().filter(|v| v.starts_with('!')).count();
+            if negated_count > 0 && negated_count < values.len() {
+                return Err(anyhow!(
+                    "Invalid {}: cannot mix positive and negative values (all must be prefixed with ! or none)",
+                    field_name
+                ));
+            }
+        }
         Ok(())
     }
 
     /// Convert filters to a BgpkitParser
+    ///
+    /// This method creates a parser with all filters applied. Multi-value filters
+    /// use OR logic (matches ANY of the specified values). Negated values (prefixed
+    /// with `!`) exclude matching elements.
     pub fn to_parser(&self, file_path: &str) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
         let mut parser = BgpkitParser::new(file_path)?.disable_warnings();
 
         if let Some(v) = &self.as_path {
             parser = parser.add_filter("as_path", v.to_string().as_str())?;
         }
-        if let Some(v) = &self.origin_asn {
-            parser = parser.add_filter("origin_asn", v.to_string().as_str())?;
+
+        // Origin ASN filter - always use plural filter key for consistency
+        if !self.origin_asn.is_empty() {
+            let value = self.origin_asn.join(",");
+            parser = parser.add_filter("origin_asns", &value)?;
         }
-        if let Some(v) = &self.prefix {
-            let filter_type = match (self.include_super, self.include_sub) {
-                (false, false) => "prefix",
-                (true, false) => "prefix_super",
-                (false, true) => "prefix_sub",
-                (true, true) => "prefix_super_sub",
+
+        // Prefix filter - always use plural filter keys
+        if !self.prefix.is_empty() {
+            let value = self.prefix.join(",");
+            let filter_key = match (self.include_super, self.include_sub) {
+                (false, false) => "prefixes",
+                (true, false) => "prefixes_super",
+                (false, true) => "prefixes_sub",
+                (true, true) => "prefixes_super_sub",
             };
-            parser = parser.add_filter(filter_type, v.as_str())?;
+            parser = parser.add_filter(filter_key, &value)?;
         }
+
+        // Peer IPs filter
         if !self.peer_ip.is_empty() {
             let v = self.peer_ip.iter().map(|p| p.to_string()).join(",");
             parser = parser.add_filter("peer_ips", v.as_str())?;
         }
-        if let Some(v) = &self.peer_asn {
-            parser = parser.add_filter("peer_asn", v.to_string().as_str())?;
+
+        // Peer ASN filter - always use plural filter key for consistency
+        if !self.peer_asn.is_empty() {
+            let value = self.peer_asn.join(",");
+            parser = parser.add_filter("peer_asns", &value)?;
         }
+
         if let Some(v) = &self.elem_type {
             parser = parser.add_filter("type", v.to_string().as_str())?;
         }
@@ -611,5 +757,100 @@ mod tests {
     fn test_parse_progress_interval() {
         // Verify the progress interval constant is set correctly
         assert_eq!(PARSE_PROGRESS_INTERVAL, 10_000);
+    }
+
+    #[test]
+    fn test_validate_asn_valid() {
+        assert!(ParseFilters::validate_asn("13335").is_ok());
+        assert!(ParseFilters::validate_asn("!13335").is_ok());
+        assert!(ParseFilters::validate_asn("0").is_ok());
+        assert!(ParseFilters::validate_asn("4294967295").is_ok()); // max u32
+    }
+
+    #[test]
+    fn test_validate_asn_invalid() {
+        assert!(ParseFilters::validate_asn("invalid").is_err());
+        assert!(ParseFilters::validate_asn("!invalid").is_err());
+        assert!(ParseFilters::validate_asn("-1").is_err());
+        assert!(ParseFilters::validate_asn("4294967296").is_err()); // overflow u32
+    }
+
+    #[test]
+    fn test_validate_prefix_valid() {
+        assert!(ParseFilters::validate_prefix("1.1.1.0/24").is_ok());
+        assert!(ParseFilters::validate_prefix("!1.1.1.0/24").is_ok());
+        assert!(ParseFilters::validate_prefix("2001:db8::/32").is_ok());
+        assert!(ParseFilters::validate_prefix("!2001:db8::/32").is_ok());
+    }
+
+    #[test]
+    fn test_validate_prefix_invalid() {
+        assert!(ParseFilters::validate_prefix("invalid").is_err());
+        assert!(ParseFilters::validate_prefix("1.1.1.1").is_err()); // missing prefix length
+        assert!(ParseFilters::validate_prefix("1.1.1.0/33").is_err()); // invalid prefix length
+    }
+
+    #[test]
+    fn test_negation_consistency_valid() {
+        // All positive
+        let values = vec!["13335".to_string(), "15169".to_string()];
+        assert!(ParseFilters::check_negation_consistency(&values, "test").is_ok());
+
+        // All negative
+        let values = vec!["!13335".to_string(), "!15169".to_string()];
+        assert!(ParseFilters::check_negation_consistency(&values, "test").is_ok());
+
+        // Single value (positive or negative is fine)
+        let values = vec!["13335".to_string()];
+        assert!(ParseFilters::check_negation_consistency(&values, "test").is_ok());
+        let values = vec!["!13335".to_string()];
+        assert!(ParseFilters::check_negation_consistency(&values, "test").is_ok());
+
+        // Empty is fine
+        let values: Vec<String> = vec![];
+        assert!(ParseFilters::check_negation_consistency(&values, "test").is_ok());
+    }
+
+    #[test]
+    fn test_negation_consistency_invalid() {
+        // Mixed positive and negative
+        let values = vec!["13335".to_string(), "!15169".to_string()];
+        assert!(ParseFilters::check_negation_consistency(&values, "test").is_err());
+
+        let values = vec!["!13335".to_string(), "15169".to_string()];
+        assert!(ParseFilters::check_negation_consistency(&values, "test").is_err());
+    }
+
+    #[test]
+    fn test_parse_filters_validate() {
+        // Valid filters
+        let filters = ParseFilters {
+            origin_asn: vec!["13335".to_string(), "15169".to_string()],
+            prefix: vec!["1.1.1.0/24".to_string()],
+            peer_asn: vec!["!174".to_string()],
+            ..Default::default()
+        };
+        assert!(filters.validate().is_ok());
+
+        // Invalid ASN
+        let filters = ParseFilters {
+            origin_asn: vec!["invalid".to_string()],
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
+
+        // Invalid prefix
+        let filters = ParseFilters {
+            prefix: vec!["not-a-prefix".to_string()],
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
+
+        // Mixed negation
+        let filters = ParseFilters {
+            origin_asn: vec!["13335".to_string(), "!15169".to_string()],
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
     }
 }

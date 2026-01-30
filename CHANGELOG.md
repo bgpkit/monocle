@@ -4,7 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### Breaking Changes
+
+* **ParseFilters**: Changed filter field types to support multiple values with OR logic
+  * `origin_asn`: `Option<u32>` → `Vec<String>`
+  * `prefix`: `Option<String>` → `Vec<String>`
+  * `peer_asn`: `Option<u32>` → `Vec<String>`
+  * Empty `Vec` is equivalent to no filter (previous `None`)
+  * Values can be prefixed with `!` for negation (exclusion)
+  * Library users will need to update code: `Some(13335)` → `vec!["13335".to_string()]`
+
 ### New Features
+
+* **Multi-value filters**: `parse` and `search` commands now support filtering by multiple values with OR logic
+  * Example: `-o 13335,15169,8075` matches elements from ANY of the specified origin ASNs
+  * Example: `-p 1.1.1.0/24,8.8.8.0/24` matches ANY of the specified prefixes
+  * Example: `-J 174,2914` matches elements from ANY of the specified peer ASNs
+* **Negative filters**: Support for exclusion filters using `!` prefix
+  * Example: `-o '!13335'` excludes elements from AS13335
+  * Example: `-o '!13335,!15169'` excludes elements from AS13335 AND AS15169
+  * Note: Cannot mix positive and negative values in the same filter
+* Added validation for ASN format, prefix CIDR notation, and negation consistency
 
 * Added `--fields` (`-f`) option to `parse` and `search` commands for selecting output fields ([#99](https://github.com/bgpkit/monocle/issues/99), [#101](https://github.com/bgpkit/monocle/pull/101))
   * Choose which columns to display with comma-separated field names

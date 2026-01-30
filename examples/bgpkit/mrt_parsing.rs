@@ -45,14 +45,14 @@ fn main() -> anyhow::Result<()> {
 
     // Filter for a specific origin ASN
     let filters = ParseFilters {
-        origin_asn: Some(13335),
+        origin_asn: vec!["13335".to_string()],
         ..Default::default()
     };
     println!("   Filter by origin ASN 13335: {:?}", filters.origin_asn);
 
     // Filter for a specific prefix
     let filters = ParseFilters {
-        prefix: Some("1.1.1.0/24".to_string()),
+        prefix: vec!["1.1.1.0/24".to_string()],
         ..Default::default()
     };
     println!("   Filter by prefix: {:?}", filters.prefix);
@@ -66,7 +66,7 @@ fn main() -> anyhow::Result<()> {
 
     // Combined filters
     let filters = ParseFilters {
-        origin_asn: Some(15169),
+        origin_asn: vec!["15169".to_string()],
         elem_type: Some(ParseElemType::A),
         ..Default::default()
     };
@@ -166,7 +166,7 @@ fn main() -> anyhow::Result<()> {
     println!("   Parsing a remote MRT file...");
 
     let filters = ParseFilters {
-        origin_asn: Some(13335),
+        origin_asn: vec!["13335".to_string()],
         ..Default::default()
     };
     let url = "https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz";
@@ -206,14 +206,14 @@ fn main() -> anyhow::Result<()> {
 
     println!("\n   a) Find all announcements for a prefix:");
     let _filters = ParseFilters {
-        prefix: Some("8.8.8.0/24".to_string()),
+        prefix: vec!["8.8.8.0/24".to_string()],
         elem_type: Some(ParseElemType::A),
         ..Default::default()
     };
 
     println!("\n   b) Find withdrawals from a specific peer:");
     let _filters = ParseFilters {
-        peer_asn: Some(174),
+        peer_asn: vec!["174".to_string()],
         elem_type: Some(ParseElemType::W),
         ..Default::default()
     };
@@ -226,7 +226,7 @@ fn main() -> anyhow::Result<()> {
 
     println!("\n   d) Find routes originated by an AS:");
     let _filters = ParseFilters {
-        origin_asn: Some(13335),
+        origin_asn: vec!["13335".to_string()],
         ..Default::default()
     };
 
