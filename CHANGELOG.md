@@ -26,6 +26,13 @@ All notable changes to this project will be documented in this file.
   * Note: Cannot mix positive and negative values in the same filter
 * Added validation for ASN format, prefix CIDR notation, and negation consistency
 
+### Code Improvements
+
+* **Feature gate cleanup**: Simplified feature gating for the `database` module
+  * The entire `database` module is now gated at `lib.rs` level with `#[cfg(feature = "database")]`
+  * Removed redundant feature gates from internal submodules
+  * Added detailed feature documentation to `ARCHITECTURE.md` with use case scenarios
+
 * Added `--fields` (`-f`) option to `parse` and `search` commands for selecting output fields ([#99](https://github.com/bgpkit/monocle/issues/99), [#101](https://github.com/bgpkit/monocle/pull/101))
   * Choose which columns to display with comma-separated field names
   * Available fields: `type`, `timestamp`, `peer_ip`, `peer_asn`, `prefix`, `as_path`, `origin`, `next_hop`, `local_pref`, `med`, `communities`, `atomic`, `aggr_asn`, `aggr_ip`, `collector`

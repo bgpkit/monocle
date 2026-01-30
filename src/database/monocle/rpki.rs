@@ -890,10 +890,9 @@ fn ip_to_bytes(ip: IpAddr) -> [u8; 16] {
 
 /// Parse a prefix string and return (start_bytes, end_bytes, prefix_length)
 fn parse_prefix_to_range(prefix: &str) -> Result<([u8; 16], [u8; 16], u8)> {
-    use ipnet::IpNet;
-    use std::str::FromStr;
-
-    let net = IpNet::from_str(prefix).map_err(|e| anyhow!("Invalid prefix '{}': {}", prefix, e))?;
+    let net: ipnet::IpNet = prefix
+        .parse()
+        .map_err(|e| anyhow!("Invalid prefix '{}': {}", prefix, e))?;
 
     let start = ip_to_bytes(net.network());
     let end = ip_to_bytes(net.broadcast());
@@ -904,10 +903,9 @@ fn parse_prefix_to_range(prefix: &str) -> Result<([u8; 16], [u8; 16], u8)> {
 
 /// Parse prefix length from a prefix string
 fn parse_prefix_length(prefix: &str) -> Result<u8> {
-    use ipnet::IpNet;
-    use std::str::FromStr;
-
-    let net = IpNet::from_str(prefix).map_err(|e| anyhow!("Invalid prefix '{}': {}", prefix, e))?;
+    let net: ipnet::IpNet = prefix
+        .parse()
+        .map_err(|e| anyhow!("Invalid prefix '{}': {}", prefix, e))?;
 
     Ok(net.prefix_len())
 }

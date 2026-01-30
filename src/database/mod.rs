@@ -37,8 +37,8 @@
 //!
 //! # Feature Requirements
 //!
-//! - Core database types are always available
-//! - `MsgStore` requires the `lens-bgpkit` feature (depends on bgpkit_parser)
+//! - This module requires the `database` feature
+//! - `MsgStore` additionally requires the `lens-bgpkit` feature (depends on bgpkit_parser)
 //!
 //! # Usage
 //!
@@ -82,8 +82,8 @@
 //! ```
 
 pub mod core;
-pub mod monocle;
-pub mod session;
+mod monocle;
+mod session;
 
 // =============================================================================
 // SQLite Types (Primary Database Backend)
@@ -92,7 +92,7 @@ pub mod session;
 // SQLite connection and schema management
 pub use core::{DatabaseConn, SchemaDefinitions, SchemaManager, SchemaStatus, SCHEMA_VERSION};
 
-// Monocle database (main entry point for AS2Rel)
+// Monocle database (main entry point)
 pub use monocle::MonocleDatabase;
 
 // AS2Rel repository
@@ -110,8 +110,9 @@ pub use monocle::{
 
 // RPKI repository (SQLite-based cache)
 pub use monocle::{
-    RpkiAspaRecord, RpkiCacheMetadata, RpkiRepository, RpkiRoaRecord, RpkiValidationResult,
-    RpkiValidationState, DEFAULT_RPKI_CACHE_TTL,
+    RpkiAspaEnrichedRecord, RpkiAspaProviderEnriched, RpkiAspaRecord, RpkiCacheMetadata,
+    RpkiRepository, RpkiRoaRecord, RpkiValidationResult, RpkiValidationState,
+    DEFAULT_RPKI_CACHE_TTL,
 };
 
 // Pfx2as repository (SQLite-based cache)

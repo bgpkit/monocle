@@ -43,10 +43,10 @@
 //!
 //! The library is organized into the following modules:
 //!
-//! - **[`database`]**: All database functionality (always available)
+//! - **[`database`]**: Database functionality (requires `database` feature)
 //!   - `core`: SQLite connection management and schema definitions
 //!   - `session`: One-time storage (e.g., search results)
-//!   - `monocle`: Main monocle database (ASInfo, AS2Rel) and file caches
+//!   - `monocle`: Main monocle database (ASInfo, AS2Rel, RPKI, Pfx2as)
 //!
 //! - **[`lens`]**: High-level business logic (feature-gated)
 //!   - `time`: Time parsing and formatting (requires `lens-core`)
@@ -59,7 +59,7 @@
 //!   - `as2rel`: AS-level relationships (requires `lens-bgpkit`)
 //!   - `inspect`: Unified AS/prefix lookup (requires `lens-full`)
 //!
-//! - **[`config`]**: Configuration management
+//! - **[`config`]**: Configuration management (always available)
 //!
 //! # Quick Start Examples
 //!
@@ -128,7 +128,7 @@
 //!
 //! let lens = ParseLens::new();
 //! let filters = ParseFilters {
-//!     origin_asn: Some(13335),
+//!     origin_asn: vec!["13335".to_string()],
 //!     ..Default::default()
 //! };
 //!
@@ -163,6 +163,7 @@
 //! ```
 
 pub mod config;
+#[cfg(feature = "database")]
 pub mod database;
 
 // Lens module - feature gated
@@ -180,49 +181,21 @@ pub mod server;
 pub use config::MonocleConfig;
 
 // Shared database info types (used by config and database commands)
+#[cfg(feature = "database")]
+pub use config::get_data_source_info;
+#[cfg(feature = "database")]
+pub use config::get_sqlite_info;
 pub use config::{
-    format_size, get_cache_settings, get_data_source_info, get_sqlite_info, CacheSettings,
-    DataSource, DataSourceInfo, DataSourceStatus, SqliteDatabaseInfo,
+    format_size, get_cache_settings, CacheSettings, DataSource, DataSourceInfo, DataSourceStatus,
+    SqliteDatabaseInfo,
 };
 
 // =============================================================================
-// Database Module - Re-export commonly used types (always available)
+// Database Module - Re-export all public types
 // =============================================================================
 
-// Primary database type (SQLite)
-pub use database::MonocleDatabase;
-
-// Core database types
-pub use database::{DatabaseConn, SchemaDefinitions, SchemaManager, SchemaStatus, SCHEMA_VERSION};
-
-// AS2Rel repository
-pub use database::{
-    AggregatedRelationship, As2relEntry, As2relMeta, As2relRecord, As2relRepository,
-    AsConnectivitySummary, ConnectivityEntry, ConnectivityGroup, BGPKIT_AS2REL_URL,
-};
-
-// ASInfo repository
-pub use database::{
-    AsinfoAs2orgRecord, AsinfoCoreRecord, AsinfoFullRecord, AsinfoHegemonyRecord, AsinfoMetadata,
-    AsinfoPeeringdbRecord, AsinfoPopulationRecord, AsinfoRepository, AsinfoSchemaDefinitions,
-    AsinfoStoreCounts, JsonlRecord, ASINFO_DATA_URL, DEFAULT_ASINFO_TTL,
-};
-
-// RPKI repository
-pub use database::{
-    RpkiAspaRecord, RpkiCacheMetadata, RpkiRepository, RpkiRoaRecord, RpkiValidationResult,
-    RpkiValidationState, DEFAULT_RPKI_CACHE_TTL,
-};
-
-// Pfx2as repository
-pub use database::{
-    Pfx2asCacheDbMetadata, Pfx2asDbRecord, Pfx2asQueryResult, Pfx2asRepository,
-    Pfx2asSchemaDefinitions, ValidationStats, DEFAULT_PFX2AS_CACHE_TTL,
-};
-
-// Session types
-#[cfg(feature = "lens-bgpkit")]
-pub use database::MsgStore;
+#[cfg(feature = "database")]
+pub use database::*;
 
 // =============================================================================
 // Lens Module - Feature-gated exports
