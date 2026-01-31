@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -57,6 +57,12 @@ pub struct SearchArgs {
     /// Timestamp output format for non-JSON output (unix or rfc3339)
     #[clap(long, value_enum, default_value = "unix")]
     pub time_format: TimestampFormat,
+
+    /// Cache directory for downloaded MRT files.
+    /// Files are stored as {cache-dir}/{collector}/{path}.
+    /// If a file already exists in cache, it will be used instead of downloading.
+    #[clap(long)]
+    pub cache_dir: Option<PathBuf>,
 
     /// Filter by AS path regex string
     #[clap(flatten)]
@@ -123,6 +129,89 @@ impl FailedItem {
     }
 }
 
+/// Constructs the local cache path for a given URL and collector.
+///
+/// The path structure is: {cache_dir}/{collector}/{path_after_domain}
+///
+/// Examples:
+/// - RIPE RIS: https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz
+///   -> {cache_dir}/rrc00/2024.01/updates.20240101.0000.gz
+/// - RouteViews: http://archive.routeviews.org/route-views6/bgpdata/2024.01/UPDATES/updates.bz2
+///   -> {cache_dir}/route-views6/bgpdata/2024.01/UPDATES/updates.bz2
+fn url_to_cache_path(cache_dir: &Path, collector: &str, url: &str) -> Option<PathBuf> {
+    // Extract path from URL by finding the first '/' after the protocol
+    let path = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .and_then(|rest| rest.find('/').map(|idx| &rest[idx..]))?;
+
+    let path = path.trim_start_matches('/');
+
+    // Check if path starts with the collector
+    let relative_path = if path.starts_with(collector) {
+        path.to_string()
+    } else {
+        // Prepend collector to path
+        format!("{}/{}", collector, path)
+    };
+
+    Some(cache_dir.join(relative_path))
+}
+
+/// Downloads a file to the cache directory with .partial extension during download,
+/// then renames to the final path on success.
+fn download_to_cache(url: &str, cache_path: &Path) -> Result<(), anyhow::Error> {
+    // Create parent directories if they don't exist
+    if let Some(parent) = cache_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Build the .partial path
+    let partial_path = {
+        let file_name = cache_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+        cache_path.with_file_name(format!("{}.partial", file_name))
+    };
+
+    // Download to .partial file
+    oneio::download(url, partial_path.to_str().unwrap_or_default(), None)?;
+
+    // Rename .partial to final path
+    std::fs::rename(&partial_path, cache_path)?;
+
+    Ok(())
+}
+
+/// Validates that the cache directory is accessible (can be created and written to).
+/// Returns an error message if validation fails.
+fn validate_cache_dir(cache_dir: &Path) -> Result<(), String> {
+    // Try to create the directory if it doesn't exist
+    if let Err(e) = std::fs::create_dir_all(cache_dir) {
+        return Err(format!(
+            "Cannot create cache directory '{}': {}",
+            cache_dir.display(),
+            e
+        ));
+    }
+
+    // Check if we can write to the directory by creating a test file
+    let test_file = cache_dir.join(".monocle_cache_test");
+    if let Err(e) = std::fs::write(&test_file, b"test") {
+        return Err(format!(
+            "Cannot write to cache directory '{}': {}",
+            cache_dir.display(),
+            e
+        ));
+    }
+
+    // Clean up test file
+    let _ = std::fs::remove_file(&test_file);
+
+    Ok(())
+}
+
 pub fn run(args: SearchArgs, output_format: OutputFormat) {
     let SearchArgs {
         dry_run,
@@ -134,6 +223,7 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         order_by,
         order,
         time_format,
+        cache_dir,
         filters,
     } = args;
 
@@ -149,6 +239,14 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
     if let Err(e) = filters.validate() {
         eprintln!("ERROR: {e}");
         return;
+    }
+
+    // Validate cache directory access upfront if specified
+    if let Some(ref cache_dir) = cache_dir {
+        if let Err(e) = validate_cache_dir(cache_dir) {
+            eprintln!("ERROR: {e}");
+            std::process::exit(1);
+        }
     }
 
     let mut sqlite_path_str = "".to_string();
@@ -512,6 +610,7 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
 
         // Process this page's items using existing parallel logic
         let progress_sender_clone = progress_sender.clone();
+        let cache_dir_clone = cache_dir.clone();
 
         items.into_par_iter().for_each_with(
             (
@@ -523,17 +622,59 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
                 let url = item.url.clone();
                 let collector = item.collector_id.clone();
 
+                // Determine the file path to parse (local cache or remote URL)
+                let file_path = if let Some(ref cache_dir) = cache_dir_clone {
+                    let cache_path = match url_to_cache_path(cache_dir, &collector, &url) {
+                        Some(p) => p,
+                        None => {
+                            let error_msg = format!("Failed to construct cache path for {}", url);
+                            if let Ok(mut failed) = failed_items.lock() {
+                                failed.push(FailedItem::new(item, error_msg));
+                            }
+                            let _ = progress_sender.send(ProgressUpdate::FileComplete {
+                                message_count: 0,
+                                success: false,
+                            });
+                            return;
+                        }
+                    };
+
+                    // Check if file exists in cache, download if not
+                    if !cache_path.exists() {
+                        if let Err(e) = download_to_cache(&url, &cache_path) {
+                            let error_msg = format!("Failed to download {} to cache: {}", url, e);
+                            if let Ok(mut failed) = failed_items.lock() {
+                                failed.push(FailedItem::new(item, error_msg));
+                            }
+                            let _ = progress_sender.send(ProgressUpdate::FileComplete {
+                                message_count: 0,
+                                success: false,
+                            });
+                            return;
+                        }
+                    }
+                    cache_path.to_string_lossy().to_string()
+                } else {
+                    url.clone()
+                };
+
                 if !show_progress {
-                    info!("start parsing {}", url.as_str());
+                    info!("start parsing {}", file_path.as_str());
                 }
 
-                let parser = match filters.to_parser(url.as_str()) {
+                let parser = match filters.to_parser(file_path.as_str()) {
                     Ok(p) => p,
                     Err(e) => {
-                        let error_msg = format!("Failed to parse {}: {}", url.as_str(), e);
+                        let error_msg = format!("Failed to parse {}: {}", file_path.as_str(), e);
                         if !show_progress {
                             eprintln!("{}", error_msg);
                         }
+
+                        // If using cache and parse failed, delete the cached file (might be corrupted)
+                        if cache_dir_clone.is_some() {
+                            let _ = std::fs::remove_file(&file_path);
+                        }
+
                         // Store failed item for retry
                         if let Ok(mut failed) = failed_items.lock() {
                             failed.push(FailedItem::new(item, error_msg));
@@ -580,7 +721,7 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
                 }
 
                 if !show_progress {
-                    info!("finished parsing {}", url.as_str());
+                    info!("finished parsing {}", file_path.as_str());
                 }
             },
         );
@@ -660,16 +801,54 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
                 thread::sleep(delay);
                 total_retries += 1;
 
-                let parser = match filters.to_parser(failed_item.item.url.as_str()) {
-                    Ok(p) => p,
-                    Err(e) => {
+                // Determine file path (cache or remote URL)
+                let file_path = if let Some(ref cache_dir) = cache_dir {
+                    let cache_path = match url_to_cache_path(
+                        cache_dir,
+                        &failed_item.item.collector_id,
+                        &failed_item.item.url,
+                    ) {
+                        Some(p) => p,
+                        None => {
+                            let error_msg = format!(
+                                "Failed to construct cache path for {}",
+                                failed_item.item.url
+                            );
+                            failed_item.increment_attempt(error_msg);
+                            new_failures.push(failed_item);
+                            continue;
+                        }
+                    };
+
+                    // Delete any existing cached file (might be corrupted) and re-download
+                    let _ = std::fs::remove_file(&cache_path);
+                    if let Err(e) = download_to_cache(&failed_item.item.url, &cache_path) {
                         let error_msg = format!(
-                            "Retry failed to parse {}: {}",
-                            failed_item.item.url.as_str(),
-                            e
+                            "Retry failed to download {} to cache: {}",
+                            failed_item.item.url, e
                         );
                         if !show_progress {
                             warn!("{}", error_msg);
+                        }
+                        failed_item.increment_attempt(error_msg);
+                        new_failures.push(failed_item);
+                        continue;
+                    }
+                    cache_path.to_string_lossy().to_string()
+                } else {
+                    failed_item.item.url.clone()
+                };
+
+                let parser = match filters.to_parser(file_path.as_str()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let error_msg = format!("Retry failed to parse {}: {}", file_path, e);
+                        if !show_progress {
+                            warn!("{}", error_msg);
+                        }
+                        // Delete cached file on parse failure
+                        if cache_dir.is_some() {
+                            let _ = std::fs::remove_file(&file_path);
                         }
                         failed_item.increment_attempt(error_msg);
                         new_failures.push(failed_item);
@@ -748,5 +927,78 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
 
     if let Err(e) = progress_thread.join() {
         eprintln!("Progress thread failed: {:?}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_url_to_cache_path_ripe_ris() {
+        let cache_dir = PathBuf::from("/cache");
+        let url = "https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz";
+        let collector = "rrc00";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(
+            result,
+            Some(PathBuf::from(
+                "/cache/rrc00/2024.01/updates.20240101.0000.gz"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_url_to_cache_path_routeviews_main() {
+        let cache_dir = PathBuf::from("/cache");
+        // route-views2 uses /bgpdata/ path (collector not in URL path)
+        let url = "http://archive.routeviews.org/bgpdata/2024.01/UPDATES/updates.20240101.0000.bz2";
+        let collector = "route-views2";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(
+            result,
+            Some(PathBuf::from(
+                "/cache/route-views2/bgpdata/2024.01/UPDATES/updates.20240101.0000.bz2"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_url_to_cache_path_routeviews_named() {
+        let cache_dir = PathBuf::from("/cache");
+        // route-views6 has collector in URL path
+        let url = "http://archive.routeviews.org/route-views6/bgpdata/2024.01/UPDATES/updates.bz2";
+        let collector = "route-views6";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(
+            result,
+            Some(PathBuf::from(
+                "/cache/route-views6/bgpdata/2024.01/UPDATES/updates.bz2"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_url_to_cache_path_invalid_url() {
+        let cache_dir = PathBuf::from("/cache");
+        let url = "not-a-valid-url";
+        let collector = "rrc00";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_url_to_cache_path_ftp_url() {
+        let cache_dir = PathBuf::from("/cache");
+        // FTP URLs are not HTTP/HTTPS, should return None
+        let url = "ftp://example.com/data/file.gz";
+        let collector = "test";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(result, None);
     }
 }
