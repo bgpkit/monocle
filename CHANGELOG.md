@@ -16,6 +16,18 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+* **`--cache-dir`**: Added local caching support to the `search` command
+  * Download MRT files to a local directory before parsing
+  * Files are cached as `{cache-dir}/{collector}/{path}` (e.g., `cache/rrc00/2024.01/updates.20240101.0000.gz`)
+  * Cached files are reused on subsequent runs, avoiding redundant downloads
+  * Uses `.partial` extension during downloads to handle interrupted transfers
+  * Cache directory access is validated upfront before processing begins
+  * **Broker query caching**: When `--cache-dir` is specified, broker API query results are cached in SQLite
+    * Cache stored at `{cache-dir}/broker-cache.sqlite3`
+    * Only queries with end time >2 hours in the past are cached (recent data may still change)
+    * Subsequent identical queries use cached results, enabling offline operation
+    * Tested: run search once, disable network, run same search again - results returned from cache
+  * Example: `monocle search -t 2024-01-01 -d 1h --cache-dir /tmp/mrt-cache`
 * **Multi-value filters**: `parse` and `search` commands now support filtering by multiple values with OR logic
   * Example: `-o 13335,15169,8075` matches elements from ANY of the specified origin ASNs
   * Example: `-p 1.1.1.0/24,8.8.8.0/24` matches ANY of the specified prefixes
