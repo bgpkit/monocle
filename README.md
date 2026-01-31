@@ -1159,7 +1159,3 @@ Starting WebSocket server on 127.0.0.1:8080
 ➜  monocle server --address 0.0.0.0 --port 3000
 Starting WebSocket server on 0.0.0.0:3000
 ```
-
-## Built with ❤️ by BGPKIT Team
-
-<a href="https://bgpkit.com"><img src="https://bgpkit.com/Original%20Logo%20Cropped.png" alt="https://bgpkit.com/logo.png" width="200"/></a>
