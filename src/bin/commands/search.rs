@@ -212,6 +212,318 @@ fn validate_cache_dir(cache_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// =============================================================================
+// Broker Cache Module
+// =============================================================================
+
+mod broker_cache {
+    use bgpkit_broker::BrokerItem;
+    use rusqlite::{params, Connection};
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::path::Path;
+
+    /// Minimum age (in seconds) for query end time to be considered cacheable.
+    /// Queries with end_time within this window are always fetched fresh.
+    const CACHE_STALENESS_THRESHOLD_SECS: i64 = 2 * 60 * 60; // 2 hours
+
+    /// Opens or creates the broker cache database.
+    pub fn open_cache_db(cache_dir: &Path) -> Result<Connection, rusqlite::Error> {
+        let db_path = cache_dir.join("broker-cache.sqlite3");
+        let conn = Connection::open(&db_path)?;
+
+        // Create tables if they don't exist
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS broker_items (
+                id INTEGER PRIMARY KEY,
+                ts_start INTEGER NOT NULL,
+                ts_end INTEGER NOT NULL,
+                collector_id TEXT NOT NULL,
+                data_type TEXT NOT NULL,
+                url TEXT NOT NULL UNIQUE,
+                rough_size INTEGER NOT NULL,
+                exact_size INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_broker_items_time 
+                ON broker_items(ts_start, ts_end);
+            CREATE INDEX IF NOT EXISTS idx_broker_items_collector 
+                ON broker_items(collector_id);
+            CREATE INDEX IF NOT EXISTS idx_broker_items_data_type 
+                ON broker_items(data_type);
+
+            CREATE TABLE IF NOT EXISTS cached_queries (
+                id INTEGER PRIMARY KEY,
+                query_hash TEXT NOT NULL UNIQUE,
+                ts_start INTEGER NOT NULL,
+                ts_end INTEGER NOT NULL,
+                collector TEXT,
+                project TEXT,
+                data_type TEXT,
+                cached_at INTEGER NOT NULL
+            );
+            "#,
+        )?;
+
+        Ok(conn)
+    }
+
+    /// Computes a hash for the query parameters.
+    pub fn compute_query_hash(
+        ts_start: i64,
+        ts_end: i64,
+        collector: Option<&str>,
+        project: Option<&str>,
+        data_type: Option<&str>,
+    ) -> String {
+        let mut hasher = DefaultHasher::new();
+
+        // Round timestamps to nearest 5 minutes for better cache hits
+        let ts_start_rounded = (ts_start / 300) * 300;
+        let ts_end_rounded = (ts_end / 300) * 300;
+
+        ts_start_rounded.hash(&mut hasher);
+        ts_end_rounded.hash(&mut hasher);
+        collector.unwrap_or("*").hash(&mut hasher);
+        project.unwrap_or("*").hash(&mut hasher);
+        data_type.unwrap_or("*").hash(&mut hasher);
+
+        format!("{:016x}", hasher.finish())
+    }
+
+    /// Checks if the query end time is old enough to be cacheable.
+    pub fn is_cacheable_query(ts_end: i64) -> bool {
+        let now = chrono::Utc::now().timestamp();
+        (now - ts_end) >= CACHE_STALENESS_THRESHOLD_SECS
+    }
+
+    /// Checks if a query has been cached.
+    pub fn is_query_cached(conn: &Connection, query_hash: &str) -> bool {
+        conn.query_row(
+            "SELECT 1 FROM cached_queries WHERE query_hash = ?1",
+            params![query_hash],
+            |_| Ok(()),
+        )
+        .is_ok()
+    }
+
+    /// Retrieves cached broker items matching the query parameters.
+    pub fn get_cached_items(
+        conn: &Connection,
+        ts_start: i64,
+        ts_end: i64,
+        collector: Option<&str>,
+        project: Option<&str>,
+        data_type: Option<&str>,
+    ) -> Result<Vec<BrokerItem>, rusqlite::Error> {
+        // Build dynamic query based on filters
+        let mut sql = String::from(
+            "SELECT ts_start, ts_end, collector_id, data_type, url, rough_size, exact_size 
+             FROM broker_items 
+             WHERE ts_start >= ?1 AND ts_end <= ?2",
+        );
+        let mut param_idx = 3;
+
+        if collector.is_some() {
+            sql.push_str(&format!(" AND collector_id = ?{}", param_idx));
+            param_idx += 1;
+        }
+        if data_type.is_some() {
+            sql.push_str(&format!(" AND data_type = ?{}", param_idx));
+            // param_idx += 1; // Unused after this
+        }
+
+        sql.push_str(" ORDER BY ts_start, data_type, collector_id");
+
+        let mut stmt = conn.prepare(&sql)?;
+
+        // Build params dynamically
+        let rows = match (collector, data_type) {
+            (Some(c), Some(d)) => stmt.query_map(params![ts_start, ts_end, c, d], row_to_item)?,
+            (Some(c), None) => stmt.query_map(params![ts_start, ts_end, c], row_to_item)?,
+            (None, Some(d)) => stmt.query_map(params![ts_start, ts_end, d], row_to_item)?,
+            (None, None) => stmt.query_map(params![ts_start, ts_end], row_to_item)?,
+        };
+
+        // Note: project filter is not stored in broker_items, so we filter in memory if needed
+        let items: Vec<BrokerItem> = rows.filter_map(|r| r.ok()).collect();
+
+        // Filter by project if specified (project info would need to be derived from URL or collector)
+        // For now, we don't filter by project since it's implicit in collector_id
+        let _ = project; // Acknowledge unused parameter
+
+        Ok(items)
+    }
+
+    fn row_to_item(row: &rusqlite::Row) -> Result<BrokerItem, rusqlite::Error> {
+        let ts_start_secs: i64 = row.get(0)?;
+        let ts_end_secs: i64 = row.get(1)?;
+
+        // Convert timestamps to NaiveDateTime via DateTime
+        let ts_start = chrono::DateTime::from_timestamp(ts_start_secs, 0)
+            .map(|dt| dt.naive_utc())
+            .unwrap_or_default();
+        let ts_end = chrono::DateTime::from_timestamp(ts_end_secs, 0)
+            .map(|dt| dt.naive_utc())
+            .unwrap_or_default();
+
+        Ok(BrokerItem {
+            ts_start,
+            ts_end,
+            collector_id: row.get(2)?,
+            data_type: row.get(3)?,
+            url: row.get(4)?,
+            rough_size: row.get(5)?,
+            exact_size: row.get(6)?,
+        })
+    }
+
+    /// Stores broker items in the cache.
+    pub fn store_items(conn: &Connection, items: &[BrokerItem]) -> Result<(), rusqlite::Error> {
+        let mut stmt = conn.prepare(
+            "INSERT OR REPLACE INTO broker_items 
+             (ts_start, ts_end, collector_id, data_type, url, rough_size, exact_size)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+
+        for item in items {
+            stmt.execute(params![
+                item.ts_start.and_utc().timestamp(),
+                item.ts_end.and_utc().timestamp(),
+                &item.collector_id,
+                &item.data_type,
+                &item.url,
+                item.rough_size,
+                item.exact_size,
+            ])?;
+        }
+
+        Ok(())
+    }
+
+    /// Records that a query has been cached.
+    pub fn record_cached_query(
+        conn: &Connection,
+        query_hash: &str,
+        ts_start: i64,
+        ts_end: i64,
+        collector: Option<&str>,
+        project: Option<&str>,
+        data_type: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "INSERT OR REPLACE INTO cached_queries 
+             (query_hash, ts_start, ts_end, collector, project, data_type, cached_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                query_hash,
+                ts_start,
+                ts_end,
+                collector,
+                project,
+                data_type,
+                chrono::Utc::now().timestamp(),
+            ],
+        )?;
+
+        Ok(())
+    }
+}
+
+/// Fetches broker items, using cache if available and appropriate.
+/// Returns (items, used_cache) tuple.
+fn fetch_broker_items_cached(
+    filters: &SearchFilters,
+    cache_dir: Option<&Path>,
+) -> Result<(Vec<bgpkit_broker::BrokerItem>, bool), String> {
+    // Get time range from filters
+    let (ts_start, ts_end) = filters
+        .parse_filters
+        .parse_start_end_strings()
+        .map_err(|e| format!("Failed to parse time range: {}", e))?;
+
+    // Extract filter parameters
+    let collector = filters.collector.as_deref();
+    let project = filters.project.as_deref();
+    let data_type = match filters.dump_type {
+        monocle::lens::search::SearchDumpType::Updates => Some("updates"),
+        monocle::lens::search::SearchDumpType::Rib => Some("rib"),
+        monocle::lens::search::SearchDumpType::RibUpdates => None,
+    };
+
+    // Check if we should use cache
+    if let Some(cache_dir) = cache_dir {
+        let is_cacheable = broker_cache::is_cacheable_query(ts_end);
+
+        if is_cacheable {
+            // Try to open cache database
+            if let Ok(conn) = broker_cache::open_cache_db(cache_dir) {
+                let query_hash = broker_cache::compute_query_hash(
+                    ts_start, ts_end, collector, project, data_type,
+                );
+
+                // Check if query is cached
+                if broker_cache::is_query_cached(&conn, &query_hash) {
+                    // Fetch from cache
+                    match broker_cache::get_cached_items(
+                        &conn, ts_start, ts_end, collector, project, data_type,
+                    ) {
+                        Ok(items) if !items.is_empty() => {
+                            return Ok((items, true));
+                        }
+                        _ => {
+                            // Cache miss or empty - fall through to API query
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Query broker API
+    let broker = filters
+        .build_broker()
+        .map_err(|e| format!("Failed to build broker: {}", e))?;
+
+    let items = broker
+        .query()
+        .map_err(|e| format!("Failed to query broker: {}", e))?;
+
+    // Store in cache if appropriate
+    if let Some(cache_dir) = cache_dir {
+        let is_cacheable = broker_cache::is_cacheable_query(ts_end);
+
+        if is_cacheable {
+            if let Ok(conn) = broker_cache::open_cache_db(cache_dir) {
+                // Store items
+                if let Err(e) = broker_cache::store_items(&conn, &items) {
+                    // Log warning but don't fail
+                    tracing::warn!("Failed to cache broker items: {}", e);
+                }
+
+                // Record the query as cached
+                let query_hash = broker_cache::compute_query_hash(
+                    ts_start, ts_end, collector, project, data_type,
+                );
+                if let Err(e) = broker_cache::record_cached_query(
+                    &conn,
+                    &query_hash,
+                    ts_start,
+                    ts_end,
+                    collector,
+                    project,
+                    data_type,
+                ) {
+                    tracing::warn!("Failed to record cached query: {}", e);
+                }
+            }
+        }
+    }
+
+    Ok((items, false))
+}
+
 pub fn run(args: SearchArgs, output_format: OutputFormat) {
     let SearchArgs {
         dry_run,
@@ -276,13 +588,28 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
 
     if broker_files {
         // Output all matching broker files and exit without searching
-        let items = match base_broker.query() {
-            Ok(items) => items,
-            Err(e) => {
-                eprintln!("Failed to query broker: {}", e);
-                std::process::exit(1);
+        let (items, used_cache) = if cache_dir.is_some() {
+            match fetch_broker_items_cached(&filters, cache_dir.as_deref()) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!("Failed to query broker: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            // No cache_dir, query broker directly
+            match base_broker.query() {
+                Ok(items) => (items, false),
+                Err(e) => {
+                    eprintln!("Failed to query broker: {}", e);
+                    std::process::exit(1);
+                }
             }
         };
+
+        if used_cache {
+            info!("Using cached broker results ({} items)", items.len());
+        }
 
         match output_format {
             OutputFormat::Json => match serde_json::to_string(&items) {
@@ -567,20 +894,62 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
     let failed_items = Arc::new(Mutex::new(Vec::<FailedItem>::new()));
     let failed_items_clone = Arc::clone(&failed_items);
 
-    // Paginated processing loop
-    let mut page = 1i64;
-
-    loop {
-        let items = match base_broker.clone().page(page).query_single_page() {
-            Ok(items) => items,
+    // Only use broker cache when cache_dir is specified; otherwise use pagination
+    let (all_items, used_broker_cache) = if cache_dir.is_some() {
+        match fetch_broker_items_cached(&filters, cache_dir.as_deref()) {
+            Ok((items, used_cache)) => (Some(items), used_cache),
             Err(e) => {
-                eprintln!("Failed to fetch page {}: {}", page, e);
-                break;
+                // If cache fetch failed, log and continue with pagination
+                warn!("Broker cache query failed, using pagination: {}", e);
+                (None, false)
             }
+        }
+    } else {
+        // No cache_dir specified, use pagination (original behavior)
+        (None, false)
+    };
+
+    if used_broker_cache {
+        info!(
+            "Using cached broker results ({} items)",
+            all_items.as_ref().map(|v| v.len()).unwrap_or(0)
+        );
+    }
+
+    // Determine if we're using cached items or pagination
+    let use_pagination = all_items.is_none();
+    let mut page = 1i64;
+    let items_iter: Box<dyn Iterator<Item = Vec<bgpkit_broker::BrokerItem>>> =
+        if let Some(items) = all_items {
+            // Process all items in batches of 1000 (same as pagination page size)
+            let total_items = items.len();
+            let batches: Vec<Vec<bgpkit_broker::BrokerItem>> =
+                items.chunks(1000).map(|c| c.to_vec()).collect();
+            info!(
+                "Processing {} cached items in {} batches",
+                total_items,
+                batches.len()
+            );
+            Box::new(batches.into_iter())
+        } else {
+            // Use pagination iterator
+            Box::new(std::iter::from_fn({
+                let broker = base_broker.clone();
+                let mut current_page = 1i64;
+                move || {
+                    let items = broker.clone().page(current_page).query_single_page().ok()?;
+                    if items.is_empty() {
+                        return None;
+                    }
+                    current_page += 1;
+                    Some(items)
+                }
+            }))
         };
 
+    for items in items_iter {
         if items.is_empty() {
-            info!("Reached empty page {}, finishing", page);
+            info!("Reached empty batch, finishing");
             break;
         }
 
@@ -604,8 +973,12 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         }
 
         if !show_progress {
-            info!("Starting page {} ({} files){}", page, page_size, time_info);
-            info!("Processing page {} with {} items", page, page_size);
+            let source = if use_pagination { "page" } else { "batch" };
+            info!(
+                "Starting {} {} ({} files){}",
+                source, page, page_size, time_info
+            );
+            info!("Processing {} {} with {} items", source, page, page_size);
         }
 
         // Process this page's items using existing parallel logic
@@ -729,21 +1102,17 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         // Page processing complete - no need to update counters as they're updated in real-time
 
         page += 1;
-
-        // Early exit if partial page (last page)
-        if page_size < 1000 {
-            info!("Processed final page {} with {} items", page - 1, page_size);
-            break;
-        }
     }
 
     if let Some(pb) = pb {
-        let final_message = format!("Completed {} pages", page - 1);
+        let unit = if use_pagination { "pages" } else { "batches" };
+        let final_message = format!("Completed {} {}", page - 1, unit);
         pb.finish_with_message(final_message);
     }
 
     if !show_progress {
-        info!("Completed processing across {} pages", page - 1);
+        let unit = if use_pagination { "pages" } else { "batches" };
+        info!("Completed processing across {} {}", page - 1, unit);
     }
 
     // Retry phase for failed items
