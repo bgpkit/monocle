@@ -423,7 +423,7 @@ impl<'a> RpkiLens<'a> {
     /// If `no_fallback` is true and RTR fails, the function returns an error
     /// instead of falling back to Cloudflare.
     ///
-    /// Returns a tuple of (roa_count, aspa_count, roa_source_description).
+    /// Returns an `RpkiRefreshResult` containing ROA/ASPA counts and the ROA source description.
     pub fn refresh_with_rtr(
         &self,
         rtr_endpoint: Option<&str>,

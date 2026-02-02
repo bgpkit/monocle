@@ -277,6 +277,9 @@ impl<'a> RpkiRepository<'a> {
             return Ok(None);
         }
 
+        // Ensure migration has run to add source columns for older databases
+        self.migrate_add_source_columns();
+
         let result = self.conn.query_row(
             "SELECT updated_at, roa_count, aspa_count, roa_source, aspa_source FROM rpki_meta WHERE id = 1",
             [],
