@@ -13,6 +13,19 @@ pub struct MonocleConfig {
 
     /// TTL for Pfx2as cache in seconds (default: 24 hours)
     pub pfx2as_cache_ttl_secs: u64,
+
+    /// RTR server hostname (optional)
+    /// If set, ROAs will be fetched via RTR protocol instead of Cloudflare JSON API
+    pub rpki_rtr_host: Option<String>,
+
+    /// RTR server port (default: 8282)
+    pub rpki_rtr_port: u16,
+
+    /// RTR connection timeout in seconds (default: 10)
+    pub rpki_rtr_timeout_secs: u64,
+
+    /// If true, do not fall back to Cloudflare when RTR fails (default: false)
+    pub rpki_rtr_no_fallback: bool,
 }
 
 const EMPTY_CONFIG: &str = r#"### monocle configuration file
@@ -23,6 +36,15 @@ const EMPTY_CONFIG: &str = r#"### monocle configuration file
 ### cache TTL settings (in seconds)
 # rpki_cache_ttl_secs = 3600        # 1 hour
 # pfx2as_cache_ttl_secs = 86400     # 24 hours
+
+### RTR endpoint for ROA data (optional)
+### If set, ROAs will be fetched via RTR protocol instead of Cloudflare JSON API
+### ASPAs are always fetched from Cloudflare (RTR v1 doesn't support ASPA)
+# rpki_rtr_host = "rtr.rpki.cloudflare.com"
+# rpki_rtr_port = 8282
+# rpki_rtr_timeout_secs = 10
+### If true, error out instead of falling back to Cloudflare when RTR fails
+# rpki_rtr_no_fallback = false
 "#;
 
 impl Default for MonocleConfig {
@@ -35,6 +57,10 @@ impl Default for MonocleConfig {
             data_dir: format!("{}/.monocle", home_dir),
             rpki_cache_ttl_secs: 3600,    // 1 hour
             pfx2as_cache_ttl_secs: 86400, // 24 hours
+            rpki_rtr_host: None,
+            rpki_rtr_port: 8282,
+            rpki_rtr_timeout_secs: 10,
+            rpki_rtr_no_fallback: false,
         }
     }
 }
@@ -127,10 +153,29 @@ impl MonocleConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(86400);
 
+        // Parse RTR configuration
+        let rpki_rtr_host = config.get("rpki_rtr_host").cloned();
+        let rpki_rtr_port = config
+            .get("rpki_rtr_port")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(8282);
+        let rpki_rtr_timeout_secs = config
+            .get("rpki_rtr_timeout_secs")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10);
+        let rpki_rtr_no_fallback = config
+            .get("rpki_rtr_no_fallback")
+            .map(|s| s.to_lowercase() == "true")
+            .unwrap_or(false);
+
         Ok(MonocleConfig {
             data_dir,
             rpki_cache_ttl_secs,
             pfx2as_cache_ttl_secs,
+            rpki_rtr_host,
+            rpki_rtr_port,
+            rpki_rtr_timeout_secs,
+            rpki_rtr_no_fallback,
         })
     }
 
@@ -150,6 +195,23 @@ impl MonocleConfig {
         std::time::Duration::from_secs(self.pfx2as_cache_ttl_secs)
     }
 
+    /// Check if RTR endpoint is configured
+    pub fn has_rtr_endpoint(&self) -> bool {
+        self.rpki_rtr_host.is_some()
+    }
+
+    /// Get RTR endpoint as (host, port) tuple
+    pub fn rtr_endpoint(&self) -> Option<(String, u16)> {
+        self.rpki_rtr_host
+            .as_ref()
+            .map(|h| (h.clone(), self.rpki_rtr_port))
+    }
+
+    /// Get RTR timeout as Duration
+    pub fn rtr_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.rpki_rtr_timeout_secs)
+    }
+
     /// Display configuration summary
     pub fn summary(&self) -> String {
         let mut lines = vec![
@@ -158,6 +220,11 @@ impl MonocleConfig {
             format!("RPKI Cache TTL:     {} seconds", self.rpki_cache_ttl_secs),
             format!("Pfx2as Cache TTL:   {} seconds", self.pfx2as_cache_ttl_secs),
         ];
+
+        // Show RTR endpoint if configured
+        if let Some((host, port)) = self.rtr_endpoint() {
+            lines.push(format!("RTR Endpoint:       {}:{}", host, port));
+        }
 
         // Check if cache directories exist and show status
         let cache_dir = format!("{}/cache", self.data_dir.trim_end_matches('/'));
@@ -566,6 +633,10 @@ mod tests {
         let config = MonocleConfig::default();
         assert_eq!(config.rpki_cache_ttl_secs, 3600);
         assert_eq!(config.pfx2as_cache_ttl_secs, 86400);
+        assert_eq!(config.rpki_rtr_host, None);
+        assert_eq!(config.rpki_rtr_port, 8282);
+        assert_eq!(config.rpki_rtr_timeout_secs, 10);
+        assert!(!config.rpki_rtr_no_fallback);
     }
 
     #[test]
@@ -574,6 +645,10 @@ mod tests {
             data_dir: "/test/dir".to_string(),
             rpki_cache_ttl_secs: 3600,
             pfx2as_cache_ttl_secs: 86400,
+            rpki_rtr_host: None,
+            rpki_rtr_port: 8282,
+            rpki_rtr_timeout_secs: 10,
+            rpki_rtr_no_fallback: false,
         };
 
         assert_eq!(config.sqlite_path(), "/test/dir/monocle-data.sqlite3");
@@ -586,6 +661,10 @@ mod tests {
             data_dir: "/test".to_string(),
             rpki_cache_ttl_secs: 7200,
             pfx2as_cache_ttl_secs: 3600,
+            rpki_rtr_host: None,
+            rpki_rtr_port: 8282,
+            rpki_rtr_timeout_secs: 10,
+            rpki_rtr_no_fallback: false,
         };
 
         assert_eq!(
@@ -596,6 +675,31 @@ mod tests {
             config.pfx2as_cache_ttl(),
             std::time::Duration::from_secs(3600)
         );
+    }
+
+    #[test]
+    fn test_rtr_endpoint() {
+        // No RTR configured
+        let config = MonocleConfig::default();
+        assert!(!config.has_rtr_endpoint());
+        assert_eq!(config.rtr_endpoint(), None);
+
+        // RTR configured
+        let config = MonocleConfig {
+            data_dir: "/test".to_string(),
+            rpki_cache_ttl_secs: 3600,
+            pfx2as_cache_ttl_secs: 86400,
+            rpki_rtr_host: Some("rtr.example.com".to_string()),
+            rpki_rtr_port: 8282,
+            rpki_rtr_timeout_secs: 30,
+            rpki_rtr_no_fallback: false,
+        };
+        assert!(config.has_rtr_endpoint());
+        assert_eq!(
+            config.rtr_endpoint(),
+            Some(("rtr.example.com".to_string(), 8282))
+        );
+        assert_eq!(config.rtr_timeout(), std::time::Duration::from_secs(30));
     }
 
     #[test]

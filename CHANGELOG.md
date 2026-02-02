@@ -16,6 +16,20 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+* **RTR protocol support**: Added support for fetching ROAs via RTR (RPKI-to-Router) protocol
+  * Configure RTR endpoint in `~/.monocle/monocle.toml`:
+    ```toml
+    rpki_rtr_host = "rtr.rpki.cloudflare.com"
+    rpki_rtr_port = 8282
+    rpki_rtr_timeout_secs = 10
+    rpki_rtr_no_fallback = false
+    ```
+  * Or use environment variables: `MONOCLE_RPKI_RTR_HOST`, `MONOCLE_RPKI_RTR_PORT`, `MONOCLE_RPKI_RTR_TIMEOUT_SECS`, `MONOCLE_RPKI_RTR_NO_FALLBACK`
+  * Or use CLI flag for one-time override: `monocle config db-refresh --rpki --rtr-endpoint rtr.rpki.cloudflare.com:8282`
+  * ROAs are fetched via RTR, ASPAs always from Cloudflare (RTR v1 per RFC 8210 doesn't support ASPA)
+  * Automatic fallback to Cloudflare if RTR connection fails, with warning message (set `rpki_rtr_no_fallback = true` to disable fallback and error out instead)
+  * Connection timeout defaults to 10 seconds
+  * Supports RTR protocol version negotiation (v1 with v0 fallback)
 * **`--cache-dir`**: Added local caching support to the `search` command
   * Download MRT files to a local directory before parsing
   * Files are cached as `{cache-dir}/{collector}/{path}` (e.g., `cache/rrc00/2024.01/updates.20240101.0000.gz`)

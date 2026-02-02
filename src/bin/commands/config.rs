@@ -4,7 +4,7 @@ use monocle::config::{
     SqliteDatabaseInfo,
 };
 use monocle::database::{MonocleDatabase, Pfx2asDbRecord};
-use monocle::lens::rpki::commons::load_current_rpki;
+use monocle::lens::rpki::RpkiLens;
 use monocle::lens::utils::OutputFormat;
 use monocle::server::ServerConfig;
 use monocle::MonocleConfig;
@@ -44,6 +44,12 @@ pub enum ConfigCommands {
         /// Refresh pfx2as data
         #[clap(long)]
         pfx2as: bool,
+
+        /// RTR endpoint for fetching ROAs (format: host:port)
+        /// Overrides config file setting for this refresh only.
+        /// Example: --rtr-endpoint rtr.rpki.cloudflare.com:8282
+        #[clap(long, value_name = "HOST:PORT")]
+        rtr_endpoint: Option<String>,
     },
 
     /// Backup the database to a destination
@@ -107,7 +113,16 @@ pub fn run(config: &MonocleConfig, args: ConfigArgs, output_format: OutputFormat
             as2rel,
             rpki,
             pfx2as,
-        }) => run_db_refresh(config, asinfo, as2rel, rpki, pfx2as, output_format),
+            rtr_endpoint,
+        }) => run_db_refresh(
+            config,
+            asinfo,
+            as2rel,
+            rpki,
+            pfx2as,
+            rtr_endpoint,
+            output_format,
+        ),
         Some(ConfigCommands::DbBackup { destination }) => {
             run_db_backup(config, &destination, output_format)
         }
@@ -345,6 +360,7 @@ fn run_db_refresh(
     as2rel: bool,
     rpki: bool,
     pfx2as: bool,
+    rtr_endpoint: Option<String>,
     output_format: OutputFormat,
 ) {
     // If no specific flags are set, refresh all
@@ -369,7 +385,12 @@ fn run_db_refresh(
         sources
     };
 
-    refresh_sources(config, &sources_to_refresh, output_format);
+    refresh_sources(
+        config,
+        &sources_to_refresh,
+        rtr_endpoint.as_deref(),
+        output_format,
+    );
 }
 
 #[derive(Debug, Serialize)]
@@ -379,7 +400,12 @@ struct RefreshResult {
     duration_secs: f64,
 }
 
-fn refresh_sources(config: &MonocleConfig, sources: &[DataSource], output_format: OutputFormat) {
+fn refresh_sources(
+    config: &MonocleConfig,
+    sources: &[DataSource],
+    rtr_endpoint: Option<&str>,
+    output_format: OutputFormat,
+) {
     let sqlite_path = config.sqlite_path();
 
     // Open database
@@ -397,7 +423,7 @@ fn refresh_sources(config: &MonocleConfig, sources: &[DataSource], output_format
         eprintln!("[monocle] Refreshing {}...", source.name());
         let start = Instant::now();
 
-        let result = do_refresh(&db, source, config);
+        let result = do_refresh(&db, source, config, rtr_endpoint);
         let duration = start.elapsed().as_secs_f64();
 
         let result_str = match &result {
@@ -444,7 +470,8 @@ fn refresh_sources(config: &MonocleConfig, sources: &[DataSource], output_format
 fn do_refresh(
     db: &MonocleDatabase,
     source: &DataSource,
-    _config: &MonocleConfig,
+    config: &MonocleConfig,
+    rtr_endpoint: Option<&str>,
 ) -> Result<String, String> {
     match source {
         DataSource::Asinfo => {
@@ -467,44 +494,39 @@ fn do_refresh(
             Ok(format!("Stored {} relationship entries", count))
         }
         DataSource::Rpki => {
-            // Refresh from Cloudflare RPKI endpoint
-            let trie = load_current_rpki()
-                .map_err(|e| format!("Failed to load RPKI data from Cloudflare: {}", e))?;
+            // Determine RTR endpoint: CLI override > config > none
+            let effective_rtr_endpoint = if rtr_endpoint.is_some() {
+                rtr_endpoint.map(|s| s.to_string())
+            } else {
+                config
+                    .rtr_endpoint()
+                    .map(|(host, port)| format!("{}:{}", host, port))
+            };
 
-            // Convert to database format
-            let roas: Vec<monocle::database::RpkiRoaRecord> = trie
-                .trie
-                .iter()
-                .flat_map(|(prefix, roas)| {
-                    roas.iter()
-                        .map(move |roa| monocle::database::RpkiRoaRecord {
-                            prefix: prefix.to_string(),
-                            max_length: roa.max_length,
-                            origin_asn: roa.asn,
-                            ta: roa.rir.map(|r| format!("{:?}", r)).unwrap_or_default(),
-                        })
-                })
-                .collect();
+            if let Some(ref endpoint) = effective_rtr_endpoint {
+                eprintln!(
+                    "[monocle]   Using RTR endpoint: {} (connection timeout: {}s)",
+                    endpoint, config.rpki_rtr_timeout_secs
+                );
+            }
 
-            let aspas: Vec<monocle::database::RpkiAspaRecord> = trie
-                .aspas
-                .iter()
-                .map(|aspa| monocle::database::RpkiAspaRecord {
-                    customer_asn: aspa.customer_asn,
-                    provider_asns: aspa.providers.clone(),
-                })
-                .collect();
+            let lens = RpkiLens::new(db);
+            let result = lens
+                .refresh_with_rtr(
+                    effective_rtr_endpoint.as_deref(),
+                    config.rtr_timeout(),
+                    config.rpki_rtr_no_fallback,
+                )
+                .map_err(|e| format!("Failed to refresh RPKI data: {}", e))?;
 
-            let roa_count = roas.len();
-            let aspa_count = aspas.len();
-
-            db.rpki()
-                .store(&roas, &aspas)
-                .map_err(|e| format!("Failed to store RPKI data: {}", e))?;
+            // Display warning if there was a fallback
+            if let Some(ref warning) = result.warning {
+                eprintln!("[monocle]   WARNING: {}", warning);
+            }
 
             Ok(format!(
-                "Stored {} ROAs and {} ASPAs",
-                roa_count, aspa_count
+                "Stored {} ROAs (from {}), {} ASPAs (from Cloudflare)",
+                result.roa_count, result.roa_source, result.aspa_count
             ))
         }
         DataSource::Pfx2as => {
