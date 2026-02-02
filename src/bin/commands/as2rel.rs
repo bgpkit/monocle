@@ -198,14 +198,15 @@ pub fn run(
     let lens = As2relLens::new(&db);
 
     // Check if data needs to be initialized or updated automatically
-    if lens.needs_update() {
+    if let Some(reason) = lens.update_reason() {
         if no_refresh {
             eprintln!(
-                "[monocle] Warning: AS2rel data is empty or outdated. Results may be incomplete."
+                "[monocle] Warning: AS2rel {} Results may be incomplete.",
+                reason
             );
             eprintln!("[monocle]          Run without --no-refresh or use 'monocle config db-refresh --as2rel' to load data.");
         } else {
-            eprintln!("[monocle] AS2rel data is empty or outdated, updating now...");
+            eprintln!("[monocle] AS2rel {}, updating now...", reason);
 
             match lens.update() {
                 Ok(count) => {

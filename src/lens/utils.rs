@@ -355,6 +355,38 @@ where
 }
 
 // =============================================================================
+// Data Refresh Status
+// =============================================================================
+
+/// Reason why data needs to be refreshed
+///
+/// This enum provides specific information about why a data refresh is needed,
+/// allowing for more informative user messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshReason {
+    /// Data tables don't exist or are empty
+    Empty,
+    /// Data exists but has expired based on TTL
+    Outdated,
+}
+
+impl RefreshReason {
+    /// Get a human-readable description of the refresh reason
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Empty => "data is empty",
+            Self::Outdated => "data is outdated",
+        }
+    }
+}
+
+impl std::fmt::Display for RefreshReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.description())
+    }
+}
+
+// =============================================================================
 // Output Format and Display Utilities
 // =============================================================================
 

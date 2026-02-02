@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### Code Improvements
+
+* **Data refresh logging**: CLI now shows specific reason for data refresh ("data is empty" vs "data is outdated") instead of generic "empty or outdated" message
+
 ### Breaking Changes
 
 * **ParseFilters**: Changed filter field types to support multiple values with OR logic

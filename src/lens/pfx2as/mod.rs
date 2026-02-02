@@ -375,6 +375,27 @@ impl<'a> Pfx2asLens<'a> {
             .needs_refresh(crate::database::DEFAULT_PFX2AS_CACHE_TTL))
     }
 
+    /// Check why the cache needs refresh, if at all
+    ///
+    /// Returns `Some(RefreshReason)` if refresh is needed, `None` if data is current.
+    pub fn refresh_reason(&self) -> Result<Option<crate::lens::utils::RefreshReason>> {
+        use crate::lens::utils::RefreshReason;
+
+        let pfx2as = self.db.pfx2as();
+
+        // Check if empty first
+        if pfx2as.is_empty() {
+            return Ok(Some(RefreshReason::Empty));
+        }
+
+        // Check if outdated
+        if pfx2as.needs_refresh(crate::database::DEFAULT_PFX2AS_CACHE_TTL) {
+            return Ok(Some(RefreshReason::Outdated));
+        }
+
+        Ok(None)
+    }
+
     /// Get cache metadata
     pub fn get_metadata(&self) -> Result<Option<crate::database::Pfx2asCacheDbMetadata>> {
         self.db.pfx2as().get_metadata()

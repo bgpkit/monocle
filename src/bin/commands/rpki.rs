@@ -178,13 +178,19 @@ fn ensure_rpki_cache(
     lens: &RpkiLens,
     force_refresh: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let needs_refresh = force_refresh
-        || lens
-            .needs_refresh()
-            .map_err(|e| format!("Failed to check cache: {}", e))?;
+    // Check reason for refresh
+    let refresh_reason = lens
+        .refresh_reason()
+        .map_err(|e| format!("Failed to check cache: {}", e))?;
+
+    let needs_refresh = force_refresh || refresh_reason.is_some();
 
     if needs_refresh {
-        eprintln!("[monocle] Refreshing RPKI cache from Cloudflare...");
+        if force_refresh {
+            eprintln!("[monocle] Refreshing RPKI cache from Cloudflare...");
+        } else if let Some(reason) = refresh_reason {
+            eprintln!("[monocle] RPKI {}, refreshing from Cloudflare...", reason);
+        }
 
         let (roa_count, aspa_count) = lens
             .refresh()
