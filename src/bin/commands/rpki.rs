@@ -297,7 +297,8 @@ fn run_validate(
     // Display data source
     if let Ok(Some(meta)) = lens.get_metadata() {
         eprintln!(
-            "Data source: CLOUDFLARE (cached at {}, {} ROAs)",
+            "Data source: {} (cached at {}, {} ROAs)",
+            meta.format_source(),
             meta.updated_at.format("%Y-%m-%d %H:%M:%S UTC"),
             meta.roa_count
         );
@@ -604,7 +605,8 @@ fn run_roas_from_cache(
     // Display data source
     if let Ok(Some(meta)) = lens.get_metadata() {
         eprintln!(
-            "Data source: CLOUDFLARE (cached at {}, {} ROAs)",
+            "Data source: {} (cached at {}, {} ROAs)",
+            meta.format_source(),
             meta.updated_at.format("%Y-%m-%d %H:%M:%S UTC"),
             meta.roa_count
         );
@@ -940,7 +942,8 @@ fn run_aspas_from_cache(
     // Display data source
     if let Ok(Some(meta)) = lens.get_metadata() {
         eprintln!(
-            "Data source: CLOUDFLARE (cached at {}, {} ASPAs)",
+            "Data source: {} (cached at {}, {} ASPAs)",
+            meta.format_source(),
             meta.updated_at.format("%Y-%m-%d %H:%M:%S UTC"),
             meta.aspa_count
         );

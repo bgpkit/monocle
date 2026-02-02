@@ -97,6 +97,27 @@ pub struct RpkiCacheMetadata {
     pub updated_at: DateTime<Utc>,
     pub roa_count: u64,
     pub aspa_count: u64,
+    /// Source of ROA data (e.g., "Cloudflare" or "RTR (rtr.rpki.cloudflare.com:8282)")
+    pub roa_source: String,
+    /// Source of ASPA data (currently always "Cloudflare")
+    pub aspa_source: String,
+}
+
+impl RpkiCacheMetadata {
+    /// Format the data source information for display.
+    ///
+    /// Returns a single source name if ROA and ASPA sources are the same,
+    /// otherwise returns "ROAs from X, ASPAs from Y".
+    pub fn format_source(&self) -> String {
+        if self.roa_source == self.aspa_source {
+            self.roa_source.clone()
+        } else {
+            format!(
+                "ROAs from {}, ASPAs from {}",
+                self.roa_source, self.aspa_source
+            )
+        }
+    }
 }
 
 /// SQL schema definitions for RPKI tables
@@ -132,7 +153,9 @@ impl RpkiSchemaDefinitions {
             id INTEGER PRIMARY KEY CHECK (id = 1),
             updated_at INTEGER NOT NULL,
             roa_count INTEGER NOT NULL DEFAULT 0,
-            aspa_count INTEGER NOT NULL DEFAULT 0
+            aspa_count INTEGER NOT NULL DEFAULT 0,
+            roa_source TEXT NOT NULL DEFAULT 'Cloudflare',
+            aspa_source TEXT NOT NULL DEFAULT 'Cloudflare'
         );
     "#;
 
@@ -170,6 +193,9 @@ impl<'a> RpkiRepository<'a> {
             .execute(RpkiSchemaDefinitions::RPKI_META_TABLE, [])
             .map_err(|e| anyhow!("Failed to create rpki_meta table: {}", e))?;
 
+        // Migration: add source columns if they don't exist (for existing databases)
+        self.migrate_add_source_columns();
+
         for index_sql in RpkiSchemaDefinitions::RPKI_INDEXES {
             self.conn
                 .execute(index_sql, [])
@@ -177,6 +203,32 @@ impl<'a> RpkiRepository<'a> {
         }
 
         Ok(())
+    }
+
+    /// Migrate: add roa_source and aspa_source columns if they don't exist
+    fn migrate_add_source_columns(&self) {
+        // Check if columns exist by querying table info
+        let has_roa_source: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('rpki_meta') WHERE name='roa_source'",
+                [],
+                |row| row.get::<_, i32>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if !has_roa_source {
+            // Add the new columns with default values
+            let _ = self.conn.execute(
+                "ALTER TABLE rpki_meta ADD COLUMN roa_source TEXT NOT NULL DEFAULT 'Cloudflare'",
+                [],
+            );
+            let _ = self.conn.execute(
+                "ALTER TABLE rpki_meta ADD COLUMN aspa_source TEXT NOT NULL DEFAULT 'Cloudflare'",
+                [],
+            );
+        }
     }
 
     /// Check if RPKI tables exist
@@ -225,17 +277,24 @@ impl<'a> RpkiRepository<'a> {
             return Ok(None);
         }
 
+        // Ensure migration has run to add source columns for older databases
+        self.migrate_add_source_columns();
+
         let result = self.conn.query_row(
-            "SELECT updated_at, roa_count, aspa_count FROM rpki_meta WHERE id = 1",
+            "SELECT updated_at, roa_count, aspa_count, roa_source, aspa_source FROM rpki_meta WHERE id = 1",
             [],
             |row| {
                 let ts: i64 = row.get(0)?;
                 let roa_count: u64 = row.get(1)?;
                 let aspa_count: u64 = row.get(2)?;
+                let roa_source: String = row.get(3).unwrap_or_else(|_| "Cloudflare".to_string());
+                let aspa_source: String = row.get(4).unwrap_or_else(|_| "Cloudflare".to_string());
                 Ok(RpkiCacheMetadata {
                     updated_at: DateTime::from_timestamp(ts, 0).unwrap_or_default(),
                     roa_count,
                     aspa_count,
+                    roa_source,
+                    aspa_source,
                 })
             },
         );
@@ -274,7 +333,19 @@ impl<'a> RpkiRepository<'a> {
     /// - Disabled synchronous writes for performance
     /// - Memory-based journal mode
     /// - Single transaction for all inserts
-    pub fn store(&self, roas: &[RpkiRoaRecord], aspas: &[RpkiAspaRecord]) -> Result<()> {
+    ///
+    /// # Arguments
+    /// * `roas` - ROA records to store
+    /// * `aspas` - ASPA records to store
+    /// * `roa_source` - Source of ROA data (e.g., "Cloudflare" or "RTR (host:port)")
+    /// * `aspa_source` - Source of ASPA data (e.g., "Cloudflare")
+    pub fn store(
+        &self,
+        roas: &[RpkiRoaRecord],
+        aspas: &[RpkiAspaRecord],
+        roa_source: &str,
+        aspa_source: &str,
+    ) -> Result<()> {
         // Ensure schema exists
         self.initialize_schema()?;
 
@@ -333,8 +404,8 @@ impl<'a> RpkiRepository<'a> {
         // Update metadata
         let now = Utc::now().timestamp();
         self.conn.execute(
-            "INSERT OR REPLACE INTO rpki_meta (id, updated_at, roa_count, aspa_count) VALUES (1, ?1, ?2, ?3)",
-            params![now, roa_inserted, aspas.len()],
+            "INSERT OR REPLACE INTO rpki_meta (id, updated_at, roa_count, aspa_count, roa_source, aspa_source) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+            params![now, roa_inserted, aspas.len(), roa_source, aspa_source],
         )?;
 
         self.conn.execute("COMMIT", [])?;
@@ -951,7 +1022,7 @@ mod tests {
             },
         ];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         let retrieved = repo.get_all_roas().unwrap();
         assert_eq!(retrieved.len(), 2);
@@ -977,7 +1048,7 @@ mod tests {
             },
         ];
 
-        repo.store(&[], &aspas).unwrap();
+        repo.store(&[], &aspas, "Cloudflare", "Cloudflare").unwrap();
 
         let retrieved = repo.get_all_aspas().unwrap();
         assert_eq!(retrieved.len(), 2);
@@ -1004,7 +1075,7 @@ mod tests {
             ta: "apnic".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         let meta = repo.get_metadata().unwrap().unwrap();
         assert_eq!(meta.roa_count, 1);
@@ -1023,7 +1094,7 @@ mod tests {
             ta: "apnic".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         let (state, covering) = repo.validate("1.0.0.0/24", 13335).unwrap();
         assert_eq!(state, RpkiValidationState::Valid);
@@ -1042,7 +1113,7 @@ mod tests {
             ta: "apnic".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         // Wrong ASN
         let (state, _) = repo.validate("1.0.0.0/24", 99999).unwrap();
@@ -1061,7 +1132,7 @@ mod tests {
             ta: "apnic".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         // More specific than max_length allows
         let (state, _) = repo.validate("1.0.0.0/25", 13335).unwrap();
@@ -1080,7 +1151,7 @@ mod tests {
             ta: "apnic".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         // Prefix not covered by any ROA
         let (state, covering) = repo.validate("2.0.0.0/24", 13335).unwrap();
@@ -1101,7 +1172,7 @@ mod tests {
             ta: "apnic".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         // /25 is valid (within max_length)
         let (state, _) = repo.validate("1.0.0.0/25", 13335).unwrap();
@@ -1131,7 +1202,7 @@ mod tests {
             ta: "apnic".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         // Just stored, should not need refresh
         assert!(!repo.needs_refresh(DEFAULT_RPKI_CACHE_TTL));
@@ -1152,7 +1223,7 @@ mod tests {
             ta: "ripe".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         // Valid: exact match
         let (state, _) = repo.validate("2001:db8::/32", 64496).unwrap();
@@ -1183,7 +1254,7 @@ mod tests {
             ta: "apnic".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
         assert!(!repo.is_empty());
 
         repo.clear().unwrap();
@@ -1202,7 +1273,7 @@ mod tests {
             ta: "apnic".to_string(),
         }];
 
-        repo.store(&roas, &[]).unwrap();
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
 
         // Valid
         let result = repo.validate_detailed("1.0.0.0/24", 13335).unwrap();

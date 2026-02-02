@@ -293,7 +293,9 @@ mod tests {
             provider_asns: vec![64497, 64498],
         }];
 
-        db.rpki().store(&roas, &aspas).unwrap();
+        db.rpki()
+            .store(&roas, &aspas, "Cloudflare", "Cloudflare")
+            .unwrap();
 
         // Verify data is stored
         assert!(!db.rpki().is_empty());

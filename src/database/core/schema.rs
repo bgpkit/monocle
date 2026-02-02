@@ -126,7 +126,9 @@ impl SchemaDefinitions {
             id INTEGER PRIMARY KEY CHECK (id = 1),
             updated_at INTEGER NOT NULL,
             roa_count INTEGER NOT NULL DEFAULT 0,
-            aspa_count INTEGER NOT NULL DEFAULT 0
+            aspa_count INTEGER NOT NULL DEFAULT 0,
+            roa_source TEXT NOT NULL DEFAULT 'Cloudflare',
+            aspa_source TEXT NOT NULL DEFAULT 'Cloudflare'
         );
     "#;
 

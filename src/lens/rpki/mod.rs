@@ -4,6 +4,7 @@
 //! - ROA (Route Origin Authorization) lookup and validation
 //! - ASPA (Autonomous System Provider Authorization) data access
 //! - Historical RPKI data support via RIPE NCC and RPKIviews
+//! - RTR (RPKI-to-Router) protocol support for fetching ROAs
 //!
 //! The lens uses `RpkiRepository` for cached/current data operations,
 //! and bgpkit-commons for historical data loading (with date parameter).
@@ -12,9 +13,11 @@
 
 // Public modules (for advanced use cases like database refresh)
 pub mod commons;
+pub mod rtr;
 
 // Re-export types needed for external use (input/output structs)
 pub use commons::{RpkiAspaEntry, RpkiAspaProvider, RpkiAspaTableEntry, RpkiRoaEntry};
+pub use rtr::RtrClient;
 
 use crate::database::MonocleDatabase;
 use crate::lens::utils::option_u32_from_str;
@@ -125,6 +128,19 @@ pub struct RpkiAspaRecord {
     pub customer_asn: u32,
     /// List of authorized provider ASNs
     pub provider_asns: Vec<u32>,
+}
+
+/// Result of an RPKI cache refresh operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpkiRefreshResult {
+    /// Number of ROAs stored
+    pub roa_count: usize,
+    /// Number of ASPAs stored
+    pub aspa_count: usize,
+    /// Description of where ROAs were loaded from
+    pub roa_source: String,
+    /// Warning message if there was a fallback or other issue
+    pub warning: Option<String>,
 }
 
 // =============================================================================
@@ -385,35 +401,108 @@ impl<'a> RpkiLens<'a> {
     pub fn refresh(&self) -> Result<(usize, usize)> {
         let trie = commons::load_current_rpki()?;
 
-        // Extract ROAs from the trie - iterate through all prefixes
-        let mut roas: Vec<crate::database::RpkiRoaRecord> = Vec::new();
-        for (prefix, prefix_roas) in trie.trie.iter() {
-            for roa in prefix_roas {
-                roas.push(crate::database::RpkiRoaRecord {
-                    prefix: prefix.to_string(),
-                    max_length: roa.max_length,
-                    origin_asn: roa.asn,
-                    ta: roa.rir.map(|r| format!("{:?}", r)).unwrap_or_default(),
-                });
-            }
-        }
-
-        // Extract ASPAs
-        let aspas: Vec<_> = trie
-            .aspas
-            .iter()
-            .map(|a| crate::database::RpkiAspaRecord {
-                customer_asn: a.customer_asn,
-                provider_asns: a.providers.clone(),
-            })
-            .collect();
+        let roas = extract_roas_from_trie(&trie);
+        let aspas = extract_aspas_from_trie(&trie);
 
         let roa_count = roas.len();
         let aspa_count = aspas.len();
 
-        self.db.rpki().store(&roas, &aspas)?;
+        self.db
+            .rpki()
+            .store(&roas, &aspas, "Cloudflare", "Cloudflare")?;
 
         Ok((roa_count, aspa_count))
+    }
+
+    /// Refresh the cache with optional RTR endpoint for ROAs.
+    ///
+    /// If `rtr_endpoint` is provided (as "host:port" or "[ipv6]:port"), ROAs will be fetched via
+    /// RTR protocol. ASPAs are always fetched from Cloudflare since RTR v1
+    /// doesn't support ASPA.
+    ///
+    /// If `no_fallback` is true and RTR fails, the function returns an error
+    /// instead of falling back to Cloudflare.
+    ///
+    /// Returns an `RpkiRefreshResult` containing ROA/ASPA counts and the ROA source description.
+    pub fn refresh_with_rtr(
+        &self,
+        rtr_endpoint: Option<&str>,
+        rtr_timeout: std::time::Duration,
+        no_fallback: bool,
+    ) -> Result<RpkiRefreshResult> {
+        // Parse RTR endpoint if provided
+        let rtr_config = if let Some(endpoint) = rtr_endpoint {
+            parse_endpoint(endpoint)?
+        } else {
+            None
+        };
+
+        // Always load ASPAs from Cloudflare (RTR v1 doesn't support ASPA)
+        tracing::info!("Loading ASPAs from Cloudflare...");
+        let trie = commons::load_current_rpki()?;
+        let aspas = extract_aspas_from_trie(&trie);
+        let aspa_count = aspas.len();
+
+        // Load ROAs from RTR or Cloudflare
+        let (roas, roa_source, warning) = if let Some((host, port)) = rtr_config {
+            tracing::info!("Connecting to RTR server {}:{}...", host, port);
+
+            let client = rtr::RtrClient::new(host.clone(), port, rtr_timeout);
+
+            match client.fetch_roas() {
+                Ok(roas) => {
+                    tracing::info!(
+                        "Loaded {} ROAs from RTR server {}:{}",
+                        roas.len(),
+                        host,
+                        port
+                    );
+                    let source = format!("RTR ({}:{})", host, port);
+                    (roas, source, None)
+                }
+                Err(e) => {
+                    if no_fallback {
+                        return Err(anyhow::anyhow!(
+                            "RTR fetch from {}:{} failed: {}",
+                            host,
+                            port,
+                            e
+                        ));
+                    }
+                    let warning_msg = format!(
+                        "RTR fetch from {}:{} failed: {}. Falling back to Cloudflare.",
+                        host, port, e
+                    );
+                    tracing::warn!("{}", warning_msg);
+                    let roas = extract_roas_from_trie(&trie);
+                    (roas, "Cloudflare (fallback)".to_string(), Some(warning_msg))
+                }
+            }
+        } else {
+            tracing::info!("Loading ROAs from Cloudflare...");
+            let roas = extract_roas_from_trie(&trie);
+            (roas, "Cloudflare".to_string(), None)
+        };
+
+        let roa_count = roas.len();
+
+        // Store in database
+        self.db
+            .rpki()
+            .store(&roas, &aspas, &roa_source, "Cloudflare")?;
+        tracing::info!(
+            "Stored {} ROAs (from {}), {} ASPAs (from Cloudflare)",
+            roa_count,
+            roa_source,
+            aspa_count
+        );
+
+        Ok(RpkiRefreshResult {
+            roa_count,
+            aspa_count,
+            roa_source,
+            warning,
+        })
     }
 
     // =========================================================================
@@ -781,6 +870,66 @@ fn parse_prefix_length(prefix: &str) -> Result<u8> {
         .map_err(|e| anyhow::anyhow!("Invalid prefix length: {}", e))
 }
 
+/// Parse an endpoint string into (host, port).
+///
+/// Supports formats:
+/// - `host:port` - for hostnames and IPv4 addresses
+/// - `[ipv6]:port` - for IPv6 addresses (brackets required)
+fn parse_endpoint(endpoint: &str) -> Result<Option<(String, u16)>> {
+    // Handle IPv6 format: [host]:port
+    if let Some(bracket_end) = endpoint.find("]:") {
+        if endpoint.starts_with('[') {
+            let host = &endpoint[1..bracket_end];
+            let port_str = &endpoint[bracket_end + 2..];
+            let port = port_str
+                .parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("Invalid RTR port: {}", port_str))?;
+            return Ok(Some((host.to_string(), port)));
+        }
+    }
+
+    // Handle standard format: host:port (hostname or IPv4)
+    let parts: Vec<&str> = endpoint.rsplitn(2, ':').collect();
+    match parts.as_slice() {
+        [port_str, host] => {
+            let port = port_str
+                .parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("Invalid RTR port: {}", port_str))?;
+            Ok(Some((host.to_string(), port)))
+        }
+        _ => Err(anyhow::anyhow!(
+            "Invalid RTR endpoint format: '{}'. Expected host:port or [ipv6]:port",
+            endpoint
+        )),
+    }
+}
+
+/// Extract ROAs from an RpkiTrie into database records
+pub fn extract_roas_from_trie(trie: &RpkiTrie) -> Vec<crate::database::RpkiRoaRecord> {
+    trie.trie
+        .iter()
+        .flat_map(|(prefix, roas)| {
+            roas.iter().map(move |roa| crate::database::RpkiRoaRecord {
+                prefix: prefix.to_string(),
+                max_length: roa.max_length,
+                origin_asn: roa.asn,
+                ta: roa.rir.map(|r| format!("{:?}", r)).unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// Extract ASPAs from an RpkiTrie into database records
+pub fn extract_aspas_from_trie(trie: &RpkiTrie) -> Vec<crate::database::RpkiAspaRecord> {
+    trie.aspas
+        .iter()
+        .map(|a| crate::database::RpkiAspaRecord {
+            customer_asn: a.customer_asn,
+            provider_asns: a.providers.clone(),
+        })
+        .collect()
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -845,5 +994,27 @@ mod tests {
         assert_eq!(parse_prefix_length("10.0.0.0/8").unwrap(), 8);
         assert_eq!(parse_prefix_length("2001:db8::/32").unwrap(), 32);
         assert!(parse_prefix_length("invalid").is_err());
+    }
+
+    #[test]
+    fn test_parse_endpoint() {
+        // Standard hostname:port
+        let result = parse_endpoint("rtr.example.com:8282").unwrap();
+        assert_eq!(result, Some(("rtr.example.com".to_string(), 8282)));
+
+        // IPv4:port
+        let result = parse_endpoint("192.0.2.1:8282").unwrap();
+        assert_eq!(result, Some(("192.0.2.1".to_string(), 8282)));
+
+        // IPv6 with brackets
+        let result = parse_endpoint("[::1]:8282").unwrap();
+        assert_eq!(result, Some(("::1".to_string(), 8282)));
+
+        let result = parse_endpoint("[2001:db8::1]:323").unwrap();
+        assert_eq!(result, Some(("2001:db8::1".to_string(), 323)));
+
+        // Invalid formats
+        assert!(parse_endpoint("no-port").is_err());
+        assert!(parse_endpoint("host:notanumber").is_err());
     }
 }
