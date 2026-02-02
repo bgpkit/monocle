@@ -46,6 +46,27 @@ impl<'a> As2relLens<'a> {
         self.db.needs_as2rel_update()
     }
 
+    /// Check why the data needs update, if at all
+    ///
+    /// Returns `Some(RefreshReason)` if update is needed, `None` if data is current.
+    pub fn update_reason(&self) -> Option<crate::lens::utils::RefreshReason> {
+        use crate::lens::utils::RefreshReason;
+
+        let as2rel = self.db.as2rel();
+
+        // Check if empty first
+        if as2rel.is_empty() {
+            return Some(RefreshReason::Empty);
+        }
+
+        // Check if outdated (uses should_update which checks 7-day TTL)
+        if self.db.needs_as2rel_update() {
+            return Some(RefreshReason::Outdated);
+        }
+
+        None
+    }
+
     /// Update AS2Rel data from the default URL
     pub fn update(&self) -> Result<usize> {
         self.db.update_as2rel()

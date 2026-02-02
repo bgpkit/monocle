@@ -98,9 +98,9 @@ pub fn run(
 
     // Check if pfx2as data needs refresh
     if !no_refresh {
-        match lens.needs_refresh() {
-            Ok(true) => {
-                eprintln!("[monocle] Pfx2as data is empty or outdated, updating now...");
+        match lens.refresh_reason() {
+            Ok(Some(reason)) => {
+                eprintln!("[monocle] Pfx2as {}, updating now...", reason);
                 match lens.refresh(None) {
                     Ok(count) => {
                         eprintln!("[monocle] Pfx2as data updated: {} records loaded", count);
@@ -111,7 +111,7 @@ pub fn run(
                     }
                 }
             }
-            Ok(false) => {}
+            Ok(None) => {}
             Err(e) => {
                 eprintln!(
                     "[monocle] Warning: Could not check pfx2as data status: {}",
@@ -122,8 +122,8 @@ pub fn run(
 
         // Also ensure RPKI data is available for validation
         let rpki_lens = RpkiLens::new(&db);
-        if let Ok(true) = rpki_lens.needs_refresh() {
-            eprintln!("[monocle] RPKI data is empty or outdated, updating for validation...");
+        if let Ok(Some(reason)) = rpki_lens.refresh_reason() {
+            eprintln!("[monocle] RPKI {}, updating for validation...", reason);
             match rpki_lens.refresh() {
                 Ok((roa_count, aspa_count)) => {
                     eprintln!(
