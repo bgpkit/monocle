@@ -31,6 +31,25 @@ All notable changes to this project will be documented in this file.
     - Need only library/data access? Use `lib` (database + all lenses + display)
   * Display (tabled) now always included with `lib` feature
 
+* **Standardized database refresh API**: Consistent interface for all data sources
+  * New `RefreshResult` struct with `records_loaded`, `source`, `timestamp`, `details`
+  * Renamed methods for consistency:
+    - `bootstrap_asinfo()` → `refresh_asinfo()` (with deprecated alias)
+    - `update_as2rel()` → `refresh_as2rel()` (with deprecated alias)
+  * Added missing methods:
+    - `refresh_asinfo_from(path)` - Load ASInfo from custom path
+    - `refresh_rpki()` - Load RPKI data from records
+    - `refresh_pfx2as()` - Load Pfx2as data from records
+  * All repositories now use consistent `needs_*_refresh(ttl)` pattern
+  * Removed hardcoded TTL methods (`should_update()` from AS2Rel)
+  * All repositories have both URL and path loading methods
+
+* **Reorganized examples**: One example per lens with `_lens` suffix
+  * Flat directory structure: `examples/time_lens.rs`, `examples/rpki_lens.rs`, etc.
+  * Added new examples for IpLens, Pfx2asLens, As2relLens
+  * Removed verbose multi-example files
+  * All examples use `lib` feature exclusively
+
 ### New Features
 
 * **`monocle config sources`**: Shows staleness status based on TTL for all data sources

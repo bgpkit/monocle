@@ -158,7 +158,11 @@ mod tests {
 - Keep language factual and professional
 - Avoid words like "comprehensive", "extensive", "amazing", "powerful", "robust"
 - Use objective language: "Added X", "Fixed Y", "Updated Z"
-- Update CHANGELOG.md for fixes/features in "Unreleased changes" section
+- **Update CHANGELOG.md for every commit** - Add entries to "Unreleased changes" section for:
+  - Breaking changes
+  - New features
+  - Bug fixes
+  - Code improvements
 - When pushing commits, list all commits first using `git log --oneline origin/[branch]..HEAD` and ask for confirmation
 
 ## Common Patterns
