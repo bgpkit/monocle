@@ -22,16 +22,6 @@ required-features = ["cli"]
 # =============================================================================
 
 [[example]]
-name = "search_bgp_messages"
-path = "examples/bgpkit/search_bgp_messages.rs"
-required-features = ["lib"]
-
-[[example]]
-name = "ws_client_all"
-path = "examples/ws_client_all.rs"
-required-features = ["server"]
-
-[[example]]
 name = "time_parsing"
 path = "examples/standalone/time_parsing.rs"
 required-features = ["lib"]
@@ -42,18 +32,8 @@ path = "examples/standalone/output_formats.rs"
 required-features = ["lib"]
 
 [[example]]
-name = "database_basics"
-path = "examples/database/database_basics.rs"
-required-features = ["lib"]
-
-[[example]]
-name = "as2rel_queries"
-path = "examples/database/as2rel_queries.rs"
-required-features = ["lib"]
-
-[[example]]
-name = "pfx2as_search"
-path = "examples/database/pfx2as_search.rs"
+name = "database"
+path = "examples/database/database.rs"
 required-features = ["lib"]
 
 [[example]]
@@ -72,14 +52,19 @@ path = "examples/bgpkit/mrt_parsing.rs"
 required-features = ["lib"]
 
 [[example]]
-name = "inspect_unified"
-path = "examples/full/inspect_unified.rs"
+name = "search_bgp_messages"
+path = "examples/bgpkit/search_bgp_messages.rs"
 required-features = ["lib"]
 
 [[example]]
-name = "progress_callbacks"
-path = "examples/full/progress_callbacks.rs"
+name = "inspect"
+path = "examples/full/inspect.rs"
 required-features = ["lib"]
+
+[[example]]
+name = "ws_client_all"
+path = "examples/ws_client_all.rs"
+required-features = ["server"]
 
 [features]
 default = ["cli"]
