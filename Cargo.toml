@@ -18,47 +18,57 @@ path = "src/bin/monocle.rs"
 required-features = ["cli"]
 
 # =============================================================================
-# Examples
+# Examples - One per lens
 # =============================================================================
 
 [[example]]
-name = "time_parsing"
-path = "examples/standalone/time_parsing.rs"
+name = "time_lens"
+path = "examples/time_lens.rs"
 required-features = ["lib"]
 
 [[example]]
-name = "output_formats"
-path = "examples/standalone/output_formats.rs"
+name = "country_lens"
+path = "examples/country_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "ip_lens"
+path = "examples/ip_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "parse_lens"
+path = "examples/parse_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "search_lens"
+path = "examples/search_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "rpki_lens"
+path = "examples/rpki_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "pfx2as_lens"
+path = "examples/pfx2as_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "as2rel_lens"
+path = "examples/as2rel_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "inspect_lens"
+path = "examples/inspect_lens.rs"
 required-features = ["lib"]
 
 [[example]]
 name = "database"
-path = "examples/database/database.rs"
-required-features = ["lib"]
-
-[[example]]
-name = "country_lookup"
-path = "examples/bgpkit/country_lookup.rs"
-required-features = ["lib"]
-
-[[example]]
-name = "rpki_validation"
-path = "examples/bgpkit/rpki_validation.rs"
-required-features = ["lib"]
-
-[[example]]
-name = "mrt_parsing"
-path = "examples/bgpkit/mrt_parsing.rs"
-required-features = ["lib"]
-
-[[example]]
-name = "search_bgp_messages"
-path = "examples/bgpkit/search_bgp_messages.rs"
-required-features = ["lib"]
-
-[[example]]
-name = "inspect"
-path = "examples/full/inspect.rs"
+path = "examples/database.rs"
 required-features = ["lib"]
 
 [[example]]

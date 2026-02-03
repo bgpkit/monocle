@@ -1,64 +1,58 @@
 # Monocle Examples
 
-Practical examples demonstrating how to use monocle as a library.
+Practical examples demonstrating monocle's lens-based API. Each lens has one example showing its primary use case.
 
 ## Quick Start
-
-All examples use the `lib` feature:
 
 ```bash
 cargo run --example <name> --features lib
 ```
 
-## Examples
+## Lens Examples
 
-### Basic Utilities
+| Example | Lens | Description |
+|---------|------|-------------|
+| `time_lens` | TimeLens | Parse timestamps from various formats |
+| `country_lens` | CountryLens | Country code/name lookup |
+| `ip_lens` | IpLens | IP address information (ASN, RPKI, geolocation) |
+| `parse_lens` | ParseLens | Parse MRT files with filters |
+| `search_lens` | SearchLens | Search BGP messages via broker |
+| `rpki_lens` | RpkiLens | RPKI validation for prefixes |
+| `pfx2as_lens` | Pfx2asLens | Prefix-to-ASN mapping lookups |
+| `as2rel_lens` | As2relLens | AS-level relationship queries |
+| `inspect_lens` | InspectLens | Unified AS/prefix inspection |
 
-- **`time_parsing`** - Parse timestamps from various formats
-- **`output_formats`** - Work with OutputFormat enum
+## Other Examples
 
-### Database Operations
+| Example | Description |
+|---------|-------------|
+| `database` | Low-level database operations |
+| `ws_client_all` | WebSocket client demo |
 
-- **`database`** - Basic database operations and queries
+## Usage
 
-### BGP Operations
+All examples use the `lib` feature:
 
-- **`country_lookup`** - Country code/name lookup
-- **`rpki_validation`** - RPKI validation for prefixes
-- **`mrt_parsing`** - Parse MRT files with filters
-- **`search_bgp_messages`** - Search BGP messages via broker
+```bash
+# Time parsing
+cargo run --example time_lens --features lib
 
-### Unified Inspection
+# RPKI validation
+cargo run --example rpki_lens --features lib
 
-- **`inspect`** - Combined AS/prefix information lookup
+# Unified inspection
+cargo run --example inspect_lens --features lib
+```
 
-### WebSocket Client
-
-- **`ws_client_all`** - WebSocket client demo (requires `cli` feature)
-
-## Feature Guide
-
-- **`lib`** - Library only (all examples above)
-- **`server`** - Library + WebSocket server
-- **`cli`** - Everything including CLI binary
-
-## Common Patterns
+## Common Pattern
 
 ```rust
-// Database operations
 use monocle::database::MonocleDatabase;
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
-let rels = db.as2rel().search_asn(13335)?;
+use monocle::lens::rpki::{RpkiLens, RpkiValidationArgs};
 
-// RPKI validation
-use monocle::lens::rpki::RpkiLens;
+let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 let lens = RpkiLens::new(&db);
 let result = lens.validate("1.1.1.0/24", 13335)?;
-
-// Unified inspection
-use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
-let lens = InspectLens::new(&db, &config);
-let result = lens.query_as_asn(&["13335".to_string()], &options)?;
 ```
 
 See individual example files for complete working code.
