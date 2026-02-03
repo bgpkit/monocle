@@ -531,7 +531,7 @@ fn do_update(
         DataSource::Asinfo => {
             // Use the database's bootstrap_asinfo method with the passed db connection
             let counts = db
-                .bootstrap_asinfo()
+                .refresh_asinfo()
                 .map_err(|e| format!("Failed to refresh asinfo: {}", e))?;
 
             Ok(format!(
@@ -542,7 +542,7 @@ fn do_update(
         DataSource::As2rel => {
             // Use the database's update_as2rel method with the passed db connection
             let count = db
-                .update_as2rel()
+                .refresh_as2rel()
                 .map_err(|e| format!("Failed to refresh as2rel: {}", e))?;
 
             Ok(format!("Stored {} relationship entries", count))

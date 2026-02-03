@@ -274,7 +274,7 @@ impl WsMethod for DatabaseRefreshHandler {
 
         let (message, count) = match source.as_str() {
             "as2rel" => {
-                let count = db.update_as2rel().map_err(|e| {
+                let count = db.refresh_as2rel().map_err(|e| {
                     WsError::operation_failed(format!("AS2Rel refresh failed: {}", e))
                 })?;
                 (
@@ -331,7 +331,7 @@ impl WsMethod for DatabaseRefreshHandler {
                 let mut messages = Vec::new();
 
                 // AS2Rel
-                match db.update_as2rel() {
+                match db.refresh_as2rel() {
                     Ok(count) => messages.push(format!("AS2Rel: {} entries", count)),
                     Err(e) => messages.push(format!("AS2Rel: failed - {}", e)),
                 }

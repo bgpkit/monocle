@@ -148,7 +148,7 @@ impl<'a> InspectLens<'a> {
 
     /// Check if data needs to be bootstrapped
     pub fn needs_bootstrap(&self) -> bool {
-        self.db.needs_asinfo_bootstrap()
+        self.db.needs_asinfo_refresh(self.asinfo_ttl())
     }
 
     /// Check if data needs refresh
@@ -163,13 +163,13 @@ impl<'a> InspectLens<'a> {
     /// Bootstrap ASInfo data from the default URL
     pub fn bootstrap(&self) -> Result<AsinfoStoreCounts> {
         info!("Bootstrapping ASInfo data...");
-        self.db.bootstrap_asinfo()
+        self.db.refresh_asinfo()
     }
 
     /// Refresh ASInfo data (same as bootstrap, but logs differently)
     pub fn refresh(&self) -> Result<AsinfoStoreCounts> {
         info!("Refreshing ASInfo data...");
-        self.db.bootstrap_asinfo()
+        self.db.refresh_asinfo()
     }
 
     /// Ensure all required data sources are available, refreshing if needed
@@ -189,7 +189,7 @@ impl<'a> InspectLens<'a> {
         if self.db.asinfo().is_empty() {
             eprintln!("[monocle] Loading ASInfo data (AS names, organizations, PeeringDB)...");
             info!("ASInfo data is empty, bootstrapping...");
-            match self.db.bootstrap_asinfo() {
+            match self.db.refresh_asinfo() {
                 Ok(counts) => {
                     summary.add(
                         "asinfo",
@@ -213,7 +213,7 @@ impl<'a> InspectLens<'a> {
         } else if self.db.needs_asinfo_refresh(self.asinfo_ttl()) {
             eprintln!("[monocle] Refreshing ASInfo data (AS names, organizations, PeeringDB)...");
             info!("ASInfo data is stale, refreshing...");
-            match self.db.bootstrap_asinfo() {
+            match self.db.refresh_asinfo() {
                 Ok(counts) => {
                     summary.add(
                         "asinfo",
@@ -240,7 +240,7 @@ impl<'a> InspectLens<'a> {
         if self.db.as2rel().is_empty() {
             eprintln!("[monocle] Loading AS2Rel data (AS relationships)...");
             info!("AS2Rel data is empty, loading...");
-            match self.db.update_as2rel() {
+            match self.db.refresh_as2rel() {
                 Ok(count) => {
                     summary.add(
                         "as2rel",
@@ -261,7 +261,7 @@ impl<'a> InspectLens<'a> {
         } else if self.db.needs_as2rel_refresh(self.as2rel_ttl()) {
             eprintln!("[monocle] Refreshing AS2Rel data (AS relationships)...");
             info!("AS2Rel data is stale, refreshing...");
-            match self.db.update_as2rel() {
+            match self.db.refresh_as2rel() {
                 Ok(count) => {
                     summary.add(
                         "as2rel",
@@ -383,7 +383,7 @@ impl<'a> InspectLens<'a> {
         if sections.contains(&InspectDataSection::Basic) {
             if self.db.asinfo().is_empty() {
                 eprintln!("[monocle] Loading ASInfo data (AS names, organizations, PeeringDB)...");
-                match self.db.bootstrap_asinfo() {
+                match self.db.refresh_asinfo() {
                     Ok(counts) => {
                         summary.add(
                             "asinfo",
@@ -408,7 +408,7 @@ impl<'a> InspectLens<'a> {
                 eprintln!(
                     "[monocle] Refreshing ASInfo data (AS names, organizations, PeeringDB)..."
                 );
-                match self.db.bootstrap_asinfo() {
+                match self.db.refresh_asinfo() {
                     Ok(counts) => {
                         summary.add(
                             "asinfo",
@@ -436,7 +436,7 @@ impl<'a> InspectLens<'a> {
         if sections.contains(&InspectDataSection::Connectivity) {
             if self.db.as2rel().is_empty() {
                 eprintln!("[monocle] Loading AS2Rel data (AS relationships)...");
-                match self.db.update_as2rel() {
+                match self.db.refresh_as2rel() {
                     Ok(count) => {
                         summary.add(
                             "as2rel",
@@ -456,7 +456,7 @@ impl<'a> InspectLens<'a> {
                 }
             } else if self.db.needs_as2rel_refresh(self.as2rel_ttl()) {
                 eprintln!("[monocle] Refreshing AS2Rel data (AS relationships)...");
-                match self.db.update_as2rel() {
+                match self.db.refresh_as2rel() {
                     Ok(count) => {
                         summary.add(
                             "as2rel",

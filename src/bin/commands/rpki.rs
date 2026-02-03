@@ -225,7 +225,7 @@ fn ensure_asinfo_for_aspa(
         }
         eprintln!("[monocle] Loading ASInfo data for AS name enrichment...");
         let counts = db
-            .bootstrap_asinfo()
+            .refresh_asinfo()
             .map_err(|e| format!("Failed to load ASInfo data: {}", e))?;
         eprintln!(
             "[monocle] Loaded {} core, {} as2org records",

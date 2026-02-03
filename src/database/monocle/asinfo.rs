@@ -436,6 +436,35 @@ impl<'a> AsinfoRepository<'a> {
         self.store_from_jsonl(&records, url)
     }
 
+    /// Load from local file path and store (convenience wrapper)
+    pub fn load_from_path(&self, path: &str) -> Result<AsinfoStoreCounts> {
+        info!("Loading ASInfo data from {}", path);
+
+        let file =
+            std::fs::File::open(path).map_err(|e| anyhow!("Failed to open ASInfo file: {}", e))?;
+
+        let buf_reader = std::io::BufReader::new(file);
+        let mut records = Vec::new();
+
+        for (line_num, line) in buf_reader.lines().enumerate() {
+            let line = line.map_err(|e| anyhow!("Failed to read line {}: {}", line_num + 1, e))?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            match serde_json::from_str::<JsonlRecord>(&line) {
+                Ok(record) => records.push(record),
+                Err(e) => {
+                    // Log warning but continue processing
+                    tracing::warn!("Failed to parse line {}: {}", line_num + 1, e);
+                }
+            }
+        }
+
+        info!("Parsed {} records from JSONL", records.len());
+        self.store_from_jsonl(&records, path)
+    }
+
     /// Clear all asinfo tables
     pub fn clear(&self) -> Result<()> {
         self.conn

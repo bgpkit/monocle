@@ -83,12 +83,12 @@ impl<'a> As2relLens<'a> {
 
     /// Update AS2Rel data from the default URL
     pub fn update(&self) -> Result<usize> {
-        self.db.update_as2rel()
+        self.db.refresh_as2rel()
     }
 
     /// Update AS2Rel data from a custom path
     pub fn update_from(&self, path: &str) -> Result<usize> {
-        self.db.update_as2rel_from(path)
+        self.db.refresh_as2rel_from(path)
     }
 
     /// Get the maximum peers count (for percentage calculation)

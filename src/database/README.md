@@ -88,8 +88,8 @@ use monocle::database::MonocleDatabase;
 let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 
 // Bootstrap ASInfo data if needed
-if db.needs_asinfo_bootstrap() {
-    let count = db.bootstrap_asinfo()?;
+if db.needs_asinfo_refresh(Duration::from_secs(7 * 24 * 60 * 60)) {
+    let count = db.refresh_asinfo()?;
     println!("Loaded {} ASes", count);
 }
 

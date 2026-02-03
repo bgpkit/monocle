@@ -12,9 +12,6 @@ use tracing::info;
 /// Default URL for AS2Rel data
 pub const BGPKIT_AS2REL_URL: &str = "https://data.bgpkit.com/as2rel/as2rel-latest.json.bz2";
 
-/// Seven days in seconds (for staleness check)
-const SEVEN_DAYS_SECS: u64 = 7 * 24 * 60 * 60;
-
 /// Repository for AS2Rel data operations
 ///
 /// Provides methods for querying and updating AS-level relationship data
@@ -123,25 +120,6 @@ impl<'a> As2relRepository<'a> {
             .query_row("SELECT COUNT(*) FROM as2rel", [], |row| row.get(0))
             .map_err(|e| anyhow!("Failed to get relationship count: {}", e))?;
         Ok(count)
-    }
-
-    /// Check if the data should be updated (empty or older than 7 days)
-    pub fn should_update(&self) -> bool {
-        if self.is_empty() {
-            return true;
-        }
-
-        // Check if data is older than 7 days
-        match self.get_meta() {
-            Ok(Some(meta)) => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                now.saturating_sub(meta.last_updated) > SEVEN_DAYS_SECS
-            }
-            _ => true,
-        }
     }
 
     /// Check if data needs refresh based on configurable TTL
@@ -1011,12 +989,12 @@ mod tests {
     }
 
     #[test]
-    fn test_should_update() {
+    fn test_needs_refresh() {
         let db = setup_test_db();
         let repo = As2relRepository::new(&db.conn);
 
-        // Empty database should need update
-        assert!(repo.should_update());
+        // Empty database should need refresh
+        assert!(repo.needs_refresh(std::time::Duration::from_secs(7 * 24 * 60 * 60)));
 
         // Insert data with old timestamp
         db.conn
@@ -1033,7 +1011,7 @@ mod tests {
             )
             .unwrap();
 
-        // Old data should need update
-        assert!(repo.should_update());
+        // Old data should need refresh
+        assert!(repo.needs_refresh(std::time::Duration::from_secs(7 * 24 * 60 * 60)));
     }
 }
