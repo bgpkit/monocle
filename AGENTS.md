@@ -161,7 +161,6 @@ mod tests {
 - Avoid words like "comprehensive", "extensive", "amazing", "powerful", "robust"
 - Use objective language: "Added X", "Fixed Y", "Updated Z"
 - Update CHANGELOG.md for fixes/features in "Unreleased changes" section
-- When changing `lib.rs` docs, run: `cargo readme > README.md`
 - When pushing commits, list all commits first using `git log --oneline origin/[branch]..HEAD` and ask for confirmation
 
 ## Common Patterns
