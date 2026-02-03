@@ -25,8 +25,13 @@ fn main() -> anyhow::Result<()> {
     println!("1. Repository status (in-memory database):");
     let db = MonocleDatabase::open_in_memory()?;
     let pfx2as = db.pfx2as();
+    use std::time::Duration;
+    let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours
     println!("   Repository is empty: {}", pfx2as.is_empty());
-    println!("   Needs refresh: {}", db.needs_pfx2as_refresh());
+    println!(
+        "   Needs refresh (24h TTL): {}",
+        db.needs_pfx2as_refresh(ttl)
+    );
 
     // Example 2: Understanding the data model
     println!("\n2. Pfx2as data model:");

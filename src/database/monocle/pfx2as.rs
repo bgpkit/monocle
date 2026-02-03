@@ -17,15 +17,16 @@
 //! - **Covered prefixes**: Find all prefixes covered by the query prefix
 
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::time::Duration;
 use tracing::info;
 
-/// Default TTL for Pfx2as cache (24 hours)
-pub const DEFAULT_PFX2AS_CACHE_TTL: Duration = Duration::hours(24);
+/// Default TTL for Pfx2as cache (7 days)
+pub const DEFAULT_PFX2AS_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Pfx2as record for database storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,7 +188,7 @@ impl<'a> Pfx2asRepository<'a> {
     }
 
     /// Check if the cache needs refresh based on TTL
-    pub fn needs_refresh(&self, ttl: Duration) -> bool {
+    pub fn needs_refresh(&self, ttl: std::time::Duration) -> bool {
         if !self.tables_exist() || self.is_empty() {
             return true;
         }
@@ -195,7 +196,7 @@ impl<'a> Pfx2asRepository<'a> {
         match self.get_metadata() {
             Ok(Some(meta)) => {
                 let age = Utc::now().signed_duration_since(meta.updated_at);
-                age > ttl
+                age.num_seconds() >= ttl.as_secs() as i64
             }
             _ => true,
         }
@@ -936,7 +937,7 @@ mod tests {
         assert!(!repo.needs_refresh(DEFAULT_PFX2AS_CACHE_TTL));
 
         // With 0 TTL, should need refresh
-        assert!(repo.needs_refresh(Duration::zero()));
+        assert!(repo.needs_refresh(Duration::ZERO));
     }
 
     #[test]

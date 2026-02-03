@@ -17,14 +17,15 @@
 //! - **NotFound**: No covering ROA exists for the prefix
 
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::time::Duration;
 use tracing::info;
 
-/// Default TTL for RPKI cache (24 hours)
-pub const DEFAULT_RPKI_CACHE_TTL: Duration = Duration::hours(24);
+/// Default TTL for RPKI cache (7 days)
+pub const DEFAULT_RPKI_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// RPKI validation state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,7 +258,7 @@ impl<'a> RpkiRepository<'a> {
     }
 
     /// Check if the cache needs refresh (expired or empty)
-    pub fn needs_refresh(&self, ttl: Duration) -> bool {
+    pub fn needs_refresh(&self, ttl: std::time::Duration) -> bool {
         if !self.tables_exist() || self.is_empty() {
             return true;
         }
@@ -265,7 +266,8 @@ impl<'a> RpkiRepository<'a> {
         match self.get_metadata() {
             Ok(Some(meta)) => {
                 let now = Utc::now();
-                now.signed_duration_since(meta.updated_at) > ttl
+                let age = now.signed_duration_since(meta.updated_at);
+                age.num_seconds() >= ttl.as_secs() as i64
             }
             _ => true,
         }
@@ -1208,7 +1210,7 @@ mod tests {
         assert!(!repo.needs_refresh(DEFAULT_RPKI_CACHE_TTL));
 
         // With zero TTL, should need refresh
-        assert!(repo.needs_refresh(Duration::zero()));
+        assert!(repo.needs_refresh(Duration::ZERO));
     }
 
     #[test]

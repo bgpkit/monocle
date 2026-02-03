@@ -387,6 +387,123 @@ impl std::fmt::Display for RefreshReason {
 }
 
 // =============================================================================
+// Cache TTL Configuration
+// =============================================================================
+
+use std::time::Duration;
+
+/// Default TTL for all caches (7 days in seconds)
+pub const DEFAULT_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// Configuration for cache time-to-live (TTL) settings
+///
+/// This struct encapsulates TTL values for all data sources, providing a clean
+/// interface for configuring cache expiration across the application.
+///
+/// # Example
+///
+/// ```rust
+/// use monocle::lens::utils::CacheTtlConfig;
+/// use std::time::Duration;
+///
+/// // Use default 7-day TTL for all sources
+/// let config = CacheTtlConfig::default();
+///
+/// // Custom TTLs
+/// let config = CacheTtlConfig::new()
+///     .with_asinfo(Duration::from_secs(3600))  // 1 hour
+///     .with_rpki(Duration::from_secs(86400));  // 1 day
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheTtlConfig {
+    /// TTL for ASInfo data (AS names, organizations, PeeringDB)
+    pub asinfo: Duration,
+    /// TTL for AS2Rel data (AS relationships)
+    pub as2rel: Duration,
+    /// TTL for RPKI data (ROAs, ASPAs)
+    pub rpki: Duration,
+    /// TTL for Pfx2as data (prefix-to-ASN mappings)
+    pub pfx2as: Duration,
+}
+
+impl Default for CacheTtlConfig {
+    fn default() -> Self {
+        let default_ttl = Duration::from_secs(DEFAULT_CACHE_TTL_SECS);
+        Self {
+            asinfo: default_ttl,
+            as2rel: default_ttl,
+            rpki: default_ttl,
+            pfx2as: default_ttl,
+        }
+    }
+}
+
+impl CacheTtlConfig {
+    /// Create a new CacheTtlConfig with default 7-day TTL for all sources
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set all TTLs to the same value
+    pub fn with_all(mut self, ttl: Duration) -> Self {
+        self.asinfo = ttl;
+        self.as2rel = ttl;
+        self.rpki = ttl;
+        self.pfx2as = ttl;
+        self
+    }
+
+    /// Set the ASInfo TTL
+    pub fn with_asinfo(mut self, ttl: Duration) -> Self {
+        self.asinfo = ttl;
+        self
+    }
+
+    /// Set the AS2Rel TTL
+    pub fn with_as2rel(mut self, ttl: Duration) -> Self {
+        self.as2rel = ttl;
+        self
+    }
+
+    /// Set the RPKI TTL
+    pub fn with_rpki(mut self, ttl: Duration) -> Self {
+        self.rpki = ttl;
+        self
+    }
+
+    /// Set the Pfx2as TTL
+    pub fn with_pfx2as(mut self, ttl: Duration) -> Self {
+        self.pfx2as = ttl;
+        self
+    }
+
+    /// Create from individual Duration values
+    pub fn from_durations(
+        asinfo: Duration,
+        as2rel: Duration,
+        rpki: Duration,
+        pfx2as: Duration,
+    ) -> Self {
+        Self {
+            asinfo,
+            as2rel,
+            rpki,
+            pfx2as,
+        }
+    }
+
+    /// Create from seconds values
+    pub fn from_secs(asinfo: u64, as2rel: u64, rpki: u64, pfx2as: u64) -> Self {
+        Self {
+            asinfo: Duration::from_secs(asinfo),
+            as2rel: Duration::from_secs(as2rel),
+            rpki: Duration::from_secs(rpki),
+            pfx2as: Duration::from_secs(pfx2as),
+        }
+    }
+}
+
+// =============================================================================
 // Output Format and Display Utilities
 // =============================================================================
 

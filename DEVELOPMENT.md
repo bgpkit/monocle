@@ -70,7 +70,7 @@ src/
     ├── monocle.rs            # CLI entry point
     └── commands/             # CLI command handlers
         ├── as2rel.rs
-        ├── config.rs         # Config display + db-refresh, db-backup, db-sources
+        ├── config.rs         # Config display + update, backup, sources
         ├── country.rs
         ├── inspect.rs        # Unified AS/prefix inspection (replaces whois, pfx2as)
         ├── ip.rs

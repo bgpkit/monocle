@@ -141,9 +141,9 @@ impl MonocleDatabase {
         self.asinfo().is_empty()
     }
 
-    /// Check if the ASInfo data needs refresh
-    pub fn needs_asinfo_refresh(&self) -> bool {
-        self.asinfo().needs_refresh(DEFAULT_ASINFO_TTL)
+    /// Check if the ASInfo data needs refresh with given TTL
+    pub fn needs_asinfo_refresh(&self, ttl: std::time::Duration) -> bool {
+        self.asinfo().needs_refresh(ttl)
     }
 
     /// Bootstrap ASInfo data from the default URL
@@ -153,9 +153,9 @@ impl MonocleDatabase {
         self.asinfo().load_from_url(ASINFO_DATA_URL)
     }
 
-    /// Check if the AS2Rel data needs to be updated
-    pub fn needs_as2rel_update(&self) -> bool {
-        self.as2rel().should_update()
+    /// Check if the AS2Rel data needs refresh with given TTL
+    pub fn needs_as2rel_refresh(&self, ttl: std::time::Duration) -> bool {
+        self.as2rel().needs_refresh(ttl)
     }
 
     /// Update AS2Rel data from the default URL
@@ -172,23 +172,13 @@ impl MonocleDatabase {
         self.as2rel().load_from_path(path)
     }
 
-    /// Check if the RPKI cache needs refresh
-    pub fn needs_rpki_refresh(&self) -> bool {
-        self.rpki().needs_refresh(DEFAULT_RPKI_CACHE_TTL)
-    }
-
-    /// Check if the RPKI cache needs refresh with custom TTL
-    pub fn needs_rpki_refresh_with_ttl(&self, ttl: chrono::Duration) -> bool {
+    /// Check if the RPKI cache needs refresh with given TTL
+    pub fn needs_rpki_refresh(&self, ttl: std::time::Duration) -> bool {
         self.rpki().needs_refresh(ttl)
     }
 
-    /// Check if the Pfx2as cache needs refresh
-    pub fn needs_pfx2as_refresh(&self) -> bool {
-        self.pfx2as().needs_refresh(DEFAULT_PFX2AS_CACHE_TTL)
-    }
-
-    /// Check if the Pfx2as cache needs refresh with custom TTL
-    pub fn needs_pfx2as_refresh_with_ttl(&self, ttl: chrono::Duration) -> bool {
+    /// Check if the Pfx2as cache needs refresh with given TTL
+    pub fn needs_pfx2as_refresh(&self, ttl: std::time::Duration) -> bool {
         self.pfx2as().needs_refresh(ttl)
     }
 
@@ -221,13 +211,6 @@ mod tests {
 
         // Should have empty repositories
         assert!(db.as2rel().is_empty());
-    }
-
-    #[test]
-    fn test_needs_bootstrap() {
-        let db = MonocleDatabase::open_in_memory().unwrap();
-
-        assert!(db.needs_as2rel_update());
     }
 
     #[test]
@@ -341,18 +324,6 @@ mod tests {
         assert_eq!(stats.valid, 2);
         assert_eq!(stats.unknown, 1);
         assert_eq!(stats.invalid, 0);
-    }
-
-    #[test]
-    fn test_needs_refresh_flags() {
-        let db = MonocleDatabase::open_in_memory().unwrap();
-
-        // Empty databases should need refresh
-        assert!(db.needs_asinfo_bootstrap());
-        assert!(db.needs_asinfo_refresh());
-        assert!(db.needs_as2rel_update());
-        assert!(db.needs_rpki_refresh());
-        assert!(db.needs_pfx2as_refresh());
     }
 
     #[test]

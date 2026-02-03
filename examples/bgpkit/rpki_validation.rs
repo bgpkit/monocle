@@ -32,8 +32,10 @@ fn main() -> anyhow::Result<()> {
 
     // Example 1: Check cache status
     println!("1. Cache status:");
+    use std::time::Duration;
+    let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours
     println!("   Cache is empty: {:?}", lens.is_empty()?);
-    println!("   Needs refresh: {:?}", lens.needs_refresh()?);
+    println!("   Needs refresh (24h TTL): {:?}", lens.needs_refresh(ttl)?);
 
     // Example 2: Refresh RPKI cache (fetch from Cloudflare)
     println!("\n2. Refreshing RPKI cache from Cloudflare...");
@@ -230,7 +232,7 @@ fn main() -> anyhow::Result<()> {
 
     // Example 12: Best practices
     println!("\n12. Best practices:");
-    println!("   - Check needs_refresh() and refresh cache periodically (24h default TTL)");
+    println!("   - Check needs_refresh(ttl) and refresh cache periodically");
     println!("   - Use validate() for single prefix-ASN validation");
     println!("   - Use get_covering_roas() to understand why validation failed");
     println!("   - Cache the RpkiLens instance - it reuses the database connection");

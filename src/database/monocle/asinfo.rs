@@ -482,7 +482,7 @@ impl<'a> AsinfoRepository<'a> {
             Ok(Some(meta)) => {
                 let now = chrono::Utc::now().timestamp();
                 let age = now - meta.last_updated;
-                age > ttl.as_secs() as i64
+                age >= ttl.as_secs() as i64
             }
             _ => true,
         }

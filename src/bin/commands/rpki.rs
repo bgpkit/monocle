@@ -6,6 +6,7 @@ use monocle::lens::rpki::{
     RpkiRoaLookupArgs, RpkiViewsCollectorOption,
 };
 use monocle::lens::utils::OutputFormat;
+use monocle::MonocleConfig;
 use std::collections::HashSet;
 use tabled::settings::object::Columns;
 use tabled::settings::width::Width;
@@ -76,16 +77,21 @@ pub enum RpkiCommands {
     },
 }
 
-pub fn run(commands: RpkiCommands, output_format: OutputFormat, data_dir: &str, no_refresh: bool) {
+pub fn run(
+    commands: RpkiCommands,
+    output_format: OutputFormat,
+    config: &MonocleConfig,
+    no_update: bool,
+) {
     match commands {
         RpkiCommands::Validate { resources, refresh } => {
-            let effective_refresh = if no_refresh && refresh {
-                eprintln!("[monocle] Warning: --refresh ignored because --no-refresh is set");
+            let effective_refresh = if no_update && refresh {
+                eprintln!("[monocle] Warning: --refresh ignored because --no-update is set");
                 false
             } else {
                 refresh
             };
-            run_validate(resources, effective_refresh, output_format, data_dir)
+            run_validate(resources, effective_refresh, output_format, config)
         }
         RpkiCommands::Roas {
             resources,
@@ -94,8 +100,8 @@ pub fn run(commands: RpkiCommands, output_format: OutputFormat, data_dir: &str, 
             collector,
             refresh,
         } => {
-            let effective_refresh = if no_refresh && refresh {
-                eprintln!("[monocle] Warning: --refresh ignored because --no-refresh is set");
+            let effective_refresh = if no_update && refresh {
+                eprintln!("[monocle] Warning: --refresh ignored because --no-update is set");
                 false
             } else {
                 refresh
@@ -107,8 +113,8 @@ pub fn run(commands: RpkiCommands, output_format: OutputFormat, data_dir: &str, 
                 collector,
                 effective_refresh,
                 output_format,
-                data_dir,
-                no_refresh,
+                config,
+                no_update,
             )
         }
         RpkiCommands::Aspas {
@@ -119,8 +125,8 @@ pub fn run(commands: RpkiCommands, output_format: OutputFormat, data_dir: &str, 
             collector,
             refresh,
         } => {
-            let effective_refresh = if no_refresh && refresh {
-                eprintln!("[monocle] Warning: --refresh ignored because --no-refresh is set");
+            let effective_refresh = if no_update && refresh {
+                eprintln!("[monocle] Warning: --refresh ignored because --no-update is set");
                 false
             } else {
                 refresh
@@ -133,8 +139,8 @@ pub fn run(commands: RpkiCommands, output_format: OutputFormat, data_dir: &str, 
                 collector,
                 effective_refresh,
                 output_format,
-                data_dir,
-                no_refresh,
+                config,
+                no_update,
             )
         }
     }
@@ -177,10 +183,11 @@ enum ResourceType {
 fn ensure_rpki_cache(
     lens: &RpkiLens,
     force_refresh: bool,
+    ttl: std::time::Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check reason for refresh
     let refresh_reason = lens
-        .refresh_reason()
+        .refresh_reason(ttl)
         .map_err(|e| format!("Failed to check cache: {}", e))?;
 
     let needs_refresh = force_refresh || refresh_reason.is_some();
@@ -208,12 +215,12 @@ fn ensure_rpki_cache(
 /// Ensure ASInfo data is available for enriching ASPA output
 fn ensure_asinfo_for_aspa(
     db: &MonocleDatabase,
-    no_refresh: bool,
+    no_update: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if db.asinfo().is_empty() {
-        if no_refresh {
+        if no_update {
             eprintln!("[monocle] Warning: ASInfo data is empty. AS names will not be shown.");
-            eprintln!("[monocle]          Run without --no-refresh or use 'monocle config db-refresh --asinfo' to load data.");
+            eprintln!("[monocle]          Run without --no-update or use 'monocle config update --asinfo' to load data.");
             return Ok(());
         }
         eprintln!("[monocle] Loading ASInfo data for AS name enrichment...");
@@ -232,7 +239,7 @@ fn run_validate(
     resources: Vec<String>,
     refresh: bool,
     output_format: OutputFormat,
-    data_dir: &str,
+    config: &MonocleConfig,
 ) {
     if resources.len() != 2 {
         eprintln!(
@@ -286,7 +293,7 @@ fn run_validate(
     };
 
     // Open database and create lens
-    let db = match MonocleDatabase::open_in_dir(data_dir) {
+    let db = match MonocleDatabase::open_in_dir(&config.data_dir) {
         Ok(db) => db,
         Err(e) => {
             eprintln!("ERROR: Failed to open database: {}", e);
@@ -295,7 +302,7 @@ fn run_validate(
     };
 
     let lens = RpkiLens::new(&db);
-    if let Err(e) = ensure_rpki_cache(&lens, refresh) {
+    if let Err(e) = ensure_rpki_cache(&lens, refresh, config.rpki_cache_ttl()) {
         eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
         return;
     }
@@ -434,8 +441,8 @@ fn run_roas(
     collector: String,
     refresh: bool,
     output_format: OutputFormat,
-    data_dir: &str,
-    no_refresh: bool,
+    config: &MonocleConfig,
+    no_update: bool,
 ) {
     // Parse date if provided
     let (parsed_date, date_str) = match &date {
@@ -448,7 +455,7 @@ fn run_roas(
         },
         None => {
             // For current data (no date), use SQLite cache
-            run_roas_from_cache(resources, refresh, output_format, data_dir, no_refresh);
+            run_roas_from_cache(resources, refresh, output_format, config, no_update);
             return;
         }
     };
@@ -478,7 +485,7 @@ fn run_roas(
     }
 
     // For historical data, we need a database reference but won't use its cache
-    let db = match MonocleDatabase::open_in_dir(data_dir) {
+    let db = match MonocleDatabase::open_in_dir(&config.data_dir) {
         Ok(db) => db,
         Err(e) => {
             eprintln!("ERROR: Failed to open database: {}", e);
@@ -588,11 +595,11 @@ fn run_roas_from_cache(
     resources: Vec<String>,
     refresh: bool,
     output_format: OutputFormat,
-    data_dir: &str,
-    no_refresh: bool,
+    config: &MonocleConfig,
+    no_update: bool,
 ) {
     // Open database and create lens
-    let db = match MonocleDatabase::open_in_dir(data_dir) {
+    let db = match MonocleDatabase::open_in_dir(&config.data_dir) {
         Ok(db) => db,
         Err(e) => {
             eprintln!("ERROR: Failed to open database: {}", e);
@@ -601,8 +608,8 @@ fn run_roas_from_cache(
     };
 
     let lens = RpkiLens::new(&db);
-    if !no_refresh {
-        if let Err(e) = ensure_rpki_cache(&lens, refresh) {
+    if !no_update {
+        if let Err(e) = ensure_rpki_cache(&lens, refresh, config.rpki_cache_ttl()) {
             eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
             return;
         }
@@ -841,8 +848,8 @@ fn run_aspas(
     collector: String,
     refresh: bool,
     output_format: OutputFormat,
-    data_dir: &str,
-    no_refresh: bool,
+    config: &MonocleConfig,
+    no_update: bool,
 ) {
     // Parse date if provided
     let (parsed_date, date_str) = match &date {
@@ -860,8 +867,8 @@ fn run_aspas(
                 provider,
                 refresh,
                 output_format,
-                data_dir,
-                no_refresh,
+                config,
+                no_update,
             );
             return;
         }
@@ -877,7 +884,7 @@ fn run_aspas(
     eprintln!("{}", source_display);
 
     // For historical data, we need a database reference but won't use its cache
-    let db = match MonocleDatabase::open_in_dir(data_dir) {
+    let db = match MonocleDatabase::open_in_dir(&config.data_dir) {
         Ok(db) => db,
         Err(e) => {
             eprintln!("ERROR: Failed to open database: {}", e);
@@ -919,11 +926,11 @@ fn run_aspas_from_cache(
     provider: Option<u32>,
     refresh: bool,
     output_format: OutputFormat,
-    data_dir: &str,
-    no_refresh: bool,
+    config: &MonocleConfig,
+    no_update: bool,
 ) {
     // Open database and create lens
-    let db = match MonocleDatabase::open_in_dir(data_dir) {
+    let db = match MonocleDatabase::open_in_dir(&config.data_dir) {
         Ok(db) => db,
         Err(e) => {
             eprintln!("ERROR: Failed to open database: {}", e);
@@ -932,14 +939,14 @@ fn run_aspas_from_cache(
     };
 
     // Ensure ASInfo data is available for AS name enrichment
-    if let Err(e) = ensure_asinfo_for_aspa(&db, no_refresh) {
+    if let Err(e) = ensure_asinfo_for_aspa(&db, no_update) {
         eprintln!("ERROR: {}", e);
         return;
     }
 
     let lens = RpkiLens::new(&db);
-    if !no_refresh {
-        if let Err(e) = ensure_rpki_cache(&lens, refresh) {
+    if !no_update {
+        if let Err(e) = ensure_rpki_cache(&lens, refresh, config.rpki_cache_ttl()) {
             eprintln!("ERROR: Failed to refresh RPKI cache: {}", e);
             return;
         }

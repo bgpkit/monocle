@@ -72,7 +72,9 @@
 //! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 //!
 //! // Check if AS2Rel data needs update
-//! if db.needs_as2rel_update() {
+//! use std::time::Duration;
+//! let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours
+//! if db.needs_as2rel_refresh(ttl) {
 //!     let count = db.update_as2rel()?;
 //!     println!("Loaded {} relationships", count);
 //! }

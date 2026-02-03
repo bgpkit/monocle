@@ -141,7 +141,7 @@ src/
     ├── monocle.rs            # CLI entry point
     └── commands/             # Command handlers (thin wrappers around lenses)
         ├── as2rel.rs
-        ├── config.rs         # Config display + db-refresh, db-backup, db-sources
+        ├── config.rs         # Config display + update, backup, sources
         ├── country.rs
         ├── inspect.rs        # Unified inspect command (replaces whois, pfx2as)
         ├── ip.rs

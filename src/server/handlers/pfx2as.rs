@@ -95,7 +95,7 @@ impl WsMethod for Pfx2asLookupHandler {
 
         // Do all DB work before any await to avoid Send issues with rusqlite::Connection
         let response: Pfx2asLookupResponse = {
-            let db = MonocleDatabase::open_in_dir(&ctx.data_dir)
+            let db = MonocleDatabase::open_in_dir(ctx.data_dir())
                 .map_err(|e| WsError::internal(format!("Failed to open database: {}", e)))?;
 
             let repo = db.pfx2as();

@@ -81,7 +81,7 @@ pub fn run(
     config: &MonocleConfig,
     args: InspectArgs,
     output_format: OutputFormat,
-    no_refresh: bool,
+    no_update: bool,
 ) {
     let sqlite_path = config.sqlite_path();
 
@@ -94,12 +94,12 @@ pub fn run(
         }
     };
 
-    let lens = InspectLens::new(&db);
+    let lens = InspectLens::new(&db, config);
 
     // Handle explicit update request (force refresh all)
     if args.update {
-        if no_refresh {
-            eprintln!("[monocle] Warning: --update ignored because --no-refresh is set");
+        if no_update {
+            eprintln!("[monocle] Warning: --update ignored because --no-update is set");
         } else {
             eprintln!("[monocle] Updating all data sources...");
             match lens.ensure_data_available() {
@@ -131,8 +131,8 @@ pub fn run(
     let required_sections = determine_required_sections(&args, &options, &lens);
 
     // Ensure only the required data sources are available (auto-refresh if empty or expired)
-    // Skip if --no-refresh is set
-    if !no_refresh {
+    // Skip if --no-update is set
+    if !no_update {
         match lens.ensure_data_for_sections(&required_sections) {
             Ok(summary) => {
                 // Print messages about any data that was refreshed

@@ -31,12 +31,27 @@ fn main() -> anyhow::Result<()> {
     println!("   RPKI is empty: {}", db.rpki().is_empty());
     println!("   Pfx2as is empty: {}", db.pfx2as().is_empty());
 
-    // Example 3: Check if updates are needed
-    println!("\n3. Checking update status:");
+    // Example 3: Check if updates are needed (with TTL)
+    println!("\n3. Checking update status (with configurable TTL):");
+    use std::time::Duration;
+    let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours
     println!("   Needs ASInfo bootstrap: {}", db.needs_asinfo_bootstrap());
-    println!("   Needs AS2Rel update: {}", db.needs_as2rel_update());
-    println!("   Needs RPKI refresh: {}", db.needs_rpki_refresh());
-    println!("   Needs Pfx2as refresh: {}", db.needs_pfx2as_refresh());
+    println!(
+        "   Needs ASInfo refresh (24h TTL): {}",
+        db.needs_asinfo_refresh(ttl)
+    );
+    println!(
+        "   Needs AS2Rel refresh (24h TTL): {}",
+        db.needs_as2rel_refresh(ttl)
+    );
+    println!(
+        "   Needs RPKI refresh (24h TTL): {}",
+        db.needs_rpki_refresh(ttl)
+    );
+    println!(
+        "   Needs Pfx2as refresh (24h TTL): {}",
+        db.needs_pfx2as_refresh(ttl)
+    );
 
     // Example 4: Working with metadata
     println!("\n4. Working with metadata:");

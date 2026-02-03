@@ -117,7 +117,7 @@ impl WsMethod for RpkiValidateHandler {
         // values across an `.await`. Do all DB work first, then await only to send.
         let response = {
             // Open the database
-            let db = MonocleDatabase::open_in_dir(&ctx.data_dir).map_err(|e| {
+            let db = MonocleDatabase::open_in_dir(ctx.data_dir()).map_err(|e| {
                 WsError::operation_failed(format!("Failed to open database: {}", e))
             })?;
 
@@ -289,7 +289,7 @@ impl WsMethod for RpkiRoasHandler {
         // Do all DB work before any `.await`.
         let response = {
             // DB-first: query local database only.
-            let db = MonocleDatabase::open_in_dir(&ctx.data_dir).map_err(|e| {
+            let db = MonocleDatabase::open_in_dir(ctx.data_dir()).map_err(|e| {
                 WsError::operation_failed(format!("Failed to open database: {}", e))
             })?;
 
@@ -445,7 +445,7 @@ impl WsMethod for RpkiAspasHandler {
         // Do all DB work before any `.await`.
         let response = {
             // DB-first: query local database only.
-            let db = MonocleDatabase::open_in_dir(&ctx.data_dir).map_err(|e| {
+            let db = MonocleDatabase::open_in_dir(ctx.data_dir()).map_err(|e| {
                 WsError::operation_failed(format!("Failed to open database: {}", e))
             })?;
 

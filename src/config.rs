@@ -4,14 +4,24 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Default TTL for all data sources: 7 days in seconds
+pub const DEFAULT_CACHE_TTL_SECS: u64 = 604800;
+
+#[derive(Clone)]
 pub struct MonocleConfig {
     /// Path to the directory to hold Monocle's data
     pub data_dir: String,
 
-    /// TTL for RPKI cache in seconds (default: 1 hour)
+    /// TTL for ASInfo cache in seconds (default: 7 days)
+    pub asinfo_cache_ttl_secs: u64,
+
+    /// TTL for AS2Rel cache in seconds (default: 7 days)
+    pub as2rel_cache_ttl_secs: u64,
+
+    /// TTL for RPKI cache in seconds (default: 7 days)
     pub rpki_cache_ttl_secs: u64,
 
-    /// TTL for Pfx2as cache in seconds (default: 24 hours)
+    /// TTL for Pfx2as cache in seconds (default: 7 days)
     pub pfx2as_cache_ttl_secs: u64,
 
     /// RTR server hostname (optional)
@@ -34,8 +44,11 @@ const EMPTY_CONFIG: &str = r#"### monocle configuration file
 # data_dir = "~/.monocle"
 
 ### cache TTL settings (in seconds)
-# rpki_cache_ttl_secs = 3600        # 1 hour
-# pfx2as_cache_ttl_secs = 86400     # 24 hours
+### all data sources default to 7 days (604800 seconds)
+# asinfo_cache_ttl_secs = 604800
+# as2rel_cache_ttl_secs = 604800
+# rpki_cache_ttl_secs = 604800
+# pfx2as_cache_ttl_secs = 604800
 
 ### RTR endpoint for ROA data (optional)
 ### If set, ROAs will be fetched via RTR protocol instead of Cloudflare JSON API
@@ -55,8 +68,10 @@ impl Default for MonocleConfig {
 
         Self {
             data_dir: format!("{}/.monocle", home_dir),
-            rpki_cache_ttl_secs: 3600,    // 1 hour
-            pfx2as_cache_ttl_secs: 86400, // 24 hours
+            asinfo_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
+            as2rel_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
+            rpki_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
+            pfx2as_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
             rpki_rtr_host: None,
             rpki_rtr_port: 8282,
             rpki_rtr_timeout_secs: 10,
@@ -141,17 +156,29 @@ impl MonocleConfig {
             }
         };
 
-        // Parse RPKI cache TTL (default: 1 hour)
+        // Parse ASInfo cache TTL (default: 7 days)
+        let asinfo_cache_ttl_secs = config
+            .get("asinfo_cache_ttl_secs")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_CACHE_TTL_SECS);
+
+        // Parse AS2Rel cache TTL (default: 7 days)
+        let as2rel_cache_ttl_secs = config
+            .get("as2rel_cache_ttl_secs")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_CACHE_TTL_SECS);
+
+        // Parse RPKI cache TTL (default: 7 days)
         let rpki_cache_ttl_secs = config
             .get("rpki_cache_ttl_secs")
             .and_then(|s| s.parse().ok())
-            .unwrap_or(3600);
+            .unwrap_or(DEFAULT_CACHE_TTL_SECS);
 
-        // Parse Pfx2as cache TTL (default: 24 hours)
+        // Parse Pfx2as cache TTL (default: 7 days)
         let pfx2as_cache_ttl_secs = config
             .get("pfx2as_cache_ttl_secs")
             .and_then(|s| s.parse().ok())
-            .unwrap_or(86400);
+            .unwrap_or(DEFAULT_CACHE_TTL_SECS);
 
         // Parse RTR configuration
         let rpki_rtr_host = config.get("rpki_rtr_host").cloned();
@@ -170,6 +197,8 @@ impl MonocleConfig {
 
         Ok(MonocleConfig {
             data_dir,
+            asinfo_cache_ttl_secs,
+            as2rel_cache_ttl_secs,
             rpki_cache_ttl_secs,
             pfx2as_cache_ttl_secs,
             rpki_rtr_host,
@@ -183,6 +212,16 @@ impl MonocleConfig {
     pub fn sqlite_path(&self) -> String {
         let data_dir = self.data_dir.trim_end_matches('/');
         format!("{}/monocle-data.sqlite3", data_dir)
+    }
+
+    /// Get ASInfo cache TTL as Duration
+    pub fn asinfo_cache_ttl(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.asinfo_cache_ttl_secs)
+    }
+
+    /// Get AS2Rel cache TTL as Duration
+    pub fn as2rel_cache_ttl(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.as2rel_cache_ttl_secs)
     }
 
     /// Get RPKI cache TTL as Duration
@@ -217,6 +256,8 @@ impl MonocleConfig {
         let mut lines = vec![
             format!("Data Directory:     {}", self.data_dir),
             format!("SQLite Path:        {}", self.sqlite_path()),
+            format!("ASInfo Cache TTL:   {} seconds", self.asinfo_cache_ttl_secs),
+            format!("AS2Rel Cache TTL:   {} seconds", self.as2rel_cache_ttl_secs),
             format!("RPKI Cache TTL:     {} seconds", self.rpki_cache_ttl_secs),
             format!("Pfx2as Cache TTL:   {} seconds", self.pfx2as_cache_ttl_secs),
         ];
@@ -263,6 +304,11 @@ pub struct DataSourceInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_updated: Option<String>,
     pub status: DataSourceStatus,
+    /// Whether this data source currently needs to be refreshed (stale or empty)
+    pub is_stale: bool,
+    /// Configured TTL in seconds (None for sources that don't expire)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
 }
 
 /// Status of a data source
@@ -320,6 +366,8 @@ pub struct SqliteDatabaseInfo {
 /// Cache settings
 #[derive(Debug, Serialize, Clone)]
 pub struct CacheSettings {
+    pub asinfo_ttl_secs: u64,
+    pub as2rel_ttl_secs: u64,
     pub rpki_ttl_secs: u64,
     pub pfx2as_ttl_secs: u64,
 }
@@ -530,6 +578,8 @@ pub fn get_sqlite_info(config: &MonocleConfig) -> SqliteDatabaseInfo {
 /// Get cache settings
 pub fn get_cache_settings(config: &MonocleConfig) -> CacheSettings {
     CacheSettings {
+        asinfo_ttl_secs: config.asinfo_cache_ttl_secs,
+        as2rel_ttl_secs: config.as2rel_cache_ttl_secs,
         rpki_ttl_secs: config.rpki_cache_ttl_secs,
         pfx2as_ttl_secs: config.pfx2as_cache_ttl_secs,
     }
@@ -538,7 +588,18 @@ pub fn get_cache_settings(config: &MonocleConfig) -> CacheSettings {
 /// Get detailed information about all data sources
 #[cfg(feature = "database")]
 pub fn get_data_source_info(config: &MonocleConfig) -> Vec<DataSourceInfo> {
+    use crate::database::MonocleDatabase;
+    use std::time::Duration;
+
     let sqlite_info = get_sqlite_info(config);
+    let sqlite_path = config.sqlite_path();
+
+    // Try to open the database to check staleness
+    let db = if sqlite_info.exists {
+        MonocleDatabase::open(&sqlite_path).ok()
+    } else {
+        None
+    };
 
     let mut sources = Vec::new();
 
@@ -548,12 +609,19 @@ pub fn get_data_source_info(config: &MonocleConfig) -> Vec<DataSourceInfo> {
         Some(_) => DataSourceStatus::Empty,
         None => DataSourceStatus::NotInitialized,
     };
+    let asinfo_ttl = Duration::from_secs(config.asinfo_cache_ttl_secs);
+    let asinfo_is_stale = db
+        .as_ref()
+        .map(|d| d.asinfo().needs_refresh(asinfo_ttl))
+        .unwrap_or(true);
     sources.push(DataSourceInfo {
         name: DataSource::Asinfo.name().to_string(),
         description: DataSource::Asinfo.description().to_string(),
         record_count: sqlite_info.asinfo_count,
         last_updated: sqlite_info.asinfo_last_updated.clone(),
         status: asinfo_status,
+        is_stale: asinfo_is_stale,
+        ttl_secs: Some(config.asinfo_cache_ttl_secs),
     });
 
     // AS2Rel
@@ -562,15 +630,22 @@ pub fn get_data_source_info(config: &MonocleConfig) -> Vec<DataSourceInfo> {
         Some(_) => DataSourceStatus::Empty,
         None => DataSourceStatus::NotInitialized,
     };
+    let as2rel_ttl = Duration::from_secs(config.as2rel_cache_ttl_secs);
+    let as2rel_is_stale = db
+        .as_ref()
+        .map(|d| d.as2rel().needs_refresh(as2rel_ttl))
+        .unwrap_or(true);
     sources.push(DataSourceInfo {
         name: DataSource::As2rel.name().to_string(),
         description: DataSource::As2rel.description().to_string(),
         record_count: sqlite_info.as2rel_count,
         last_updated: sqlite_info.as2rel_last_updated.clone(),
         status: as2rel_status,
+        is_stale: as2rel_is_stale,
+        ttl_secs: Some(config.as2rel_cache_ttl_secs),
     });
 
-    // RPKI (combined ROA + ASPA count for record_count, but we'll show details separately)
+    // RPKI
     let rpki_total = match (sqlite_info.rpki_roa_count, sqlite_info.rpki_aspa_count) {
         (Some(roa), Some(aspa)) => Some(roa + aspa),
         (Some(roa), None) => Some(roa),
@@ -582,12 +657,19 @@ pub fn get_data_source_info(config: &MonocleConfig) -> Vec<DataSourceInfo> {
         Some(_) => DataSourceStatus::Empty,
         None => DataSourceStatus::NotInitialized,
     };
+    let rpki_ttl = Duration::from_secs(config.rpki_cache_ttl_secs);
+    let rpki_is_stale = db
+        .as_ref()
+        .map(|d| d.rpki().needs_refresh(rpki_ttl))
+        .unwrap_or(true);
     sources.push(DataSourceInfo {
         name: DataSource::Rpki.name().to_string(),
         description: DataSource::Rpki.description().to_string(),
         record_count: rpki_total,
         last_updated: sqlite_info.rpki_last_updated.clone(),
         status: rpki_status,
+        is_stale: rpki_is_stale,
+        ttl_secs: Some(config.rpki_cache_ttl_secs),
     });
 
     // Pfx2as
@@ -596,12 +678,19 @@ pub fn get_data_source_info(config: &MonocleConfig) -> Vec<DataSourceInfo> {
         Some(_) => DataSourceStatus::Empty,
         None => DataSourceStatus::NotInitialized,
     };
+    let pfx2as_ttl = Duration::from_secs(config.pfx2as_cache_ttl_secs);
+    let pfx2as_is_stale = db
+        .as_ref()
+        .map(|d| d.pfx2as().needs_refresh(pfx2as_ttl))
+        .unwrap_or(true);
     sources.push(DataSourceInfo {
         name: DataSource::Pfx2as.name().to_string(),
         description: DataSource::Pfx2as.description().to_string(),
         record_count: sqlite_info.pfx2as_count,
         last_updated: sqlite_info.pfx2as_last_updated.clone(),
         status: pfx2as_status,
+        is_stale: pfx2as_is_stale,
+        ttl_secs: Some(config.pfx2as_cache_ttl_secs),
     });
 
     sources
@@ -631,8 +720,10 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = MonocleConfig::default();
-        assert_eq!(config.rpki_cache_ttl_secs, 3600);
-        assert_eq!(config.pfx2as_cache_ttl_secs, 86400);
+        assert_eq!(config.asinfo_cache_ttl_secs, DEFAULT_CACHE_TTL_SECS); // 7 days
+        assert_eq!(config.as2rel_cache_ttl_secs, DEFAULT_CACHE_TTL_SECS); // 7 days
+        assert_eq!(config.rpki_cache_ttl_secs, DEFAULT_CACHE_TTL_SECS); // 7 days
+        assert_eq!(config.pfx2as_cache_ttl_secs, DEFAULT_CACHE_TTL_SECS); // 7 days
         assert_eq!(config.rpki_rtr_host, None);
         assert_eq!(config.rpki_rtr_port, 8282);
         assert_eq!(config.rpki_rtr_timeout_secs, 10);
@@ -643,6 +734,8 @@ mod tests {
     fn test_paths() {
         let config = MonocleConfig {
             data_dir: "/test/dir".to_string(),
+            asinfo_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
+            as2rel_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
             rpki_cache_ttl_secs: 3600,
             pfx2as_cache_ttl_secs: 86400,
             rpki_rtr_host: None,
@@ -659,6 +752,8 @@ mod tests {
     fn test_ttl_durations() {
         let config = MonocleConfig {
             data_dir: "/test".to_string(),
+            asinfo_cache_ttl_secs: 1000,
+            as2rel_cache_ttl_secs: 2000,
             rpki_cache_ttl_secs: 7200,
             pfx2as_cache_ttl_secs: 3600,
             rpki_rtr_host: None,
@@ -667,6 +762,14 @@ mod tests {
             rpki_rtr_no_fallback: false,
         };
 
+        assert_eq!(
+            config.asinfo_cache_ttl(),
+            std::time::Duration::from_secs(1000)
+        );
+        assert_eq!(
+            config.as2rel_cache_ttl(),
+            std::time::Duration::from_secs(2000)
+        );
         assert_eq!(
             config.rpki_cache_ttl(),
             std::time::Duration::from_secs(7200)
@@ -687,6 +790,8 @@ mod tests {
         // RTR configured
         let config = MonocleConfig {
             data_dir: "/test".to_string(),
+            asinfo_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
+            as2rel_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
             rpki_cache_ttl_secs: 3600,
             pfx2as_cache_ttl_secs: 86400,
             rpki_rtr_host: Some("rtr.example.com".to_string()),

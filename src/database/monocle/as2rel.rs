@@ -144,6 +144,25 @@ impl<'a> As2relRepository<'a> {
         }
     }
 
+    /// Check if data needs refresh based on configurable TTL
+    pub fn needs_refresh(&self, ttl: std::time::Duration) -> bool {
+        if self.is_empty() {
+            return true;
+        }
+
+        match self.get_meta() {
+            Ok(Some(meta)) => {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let age = now.saturating_sub(meta.last_updated);
+                age >= ttl.as_secs()
+            }
+            _ => true,
+        }
+    }
+
     /// Get metadata about the AS2Rel data
     pub fn get_meta(&self) -> Result<Option<As2relMeta>> {
         let result = self.conn.query_row(

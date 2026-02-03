@@ -41,9 +41,9 @@ struct Cli {
     #[clap(long, global = true)]
     json: bool,
 
-    /// Disable automatic data refresh (use existing cached data only)
+    /// Disable automatic database updates (use existing cached data only)
     #[clap(long, global = true)]
-    no_refresh: bool,
+    no_update: bool,
 
     #[clap(subcommand)]
     command: Commands,
@@ -182,10 +182,14 @@ fn main() {
             // binary as the entrypoint, but compile this arm only when `server` is enabled.
             #[cfg(feature = "cli")]
             {
-                let data_dir = args.data_dir.unwrap_or_else(|| config.data_dir.clone());
+                // Create context from config, optionally overriding the data directory
+                let mut server_config = config.clone();
+                if let Some(data_dir) = args.data_dir {
+                    server_config.data_dir = data_dir;
+                }
 
                 let router = monocle::server::create_router();
-                let context = monocle::server::WsContext::new(data_dir);
+                let context = monocle::server::WsContext::from_config(server_config);
 
                 let mut server_config = monocle::server::ServerConfig::default()
                     .with_address(args.address)
@@ -231,19 +235,19 @@ fn main() {
         }
 
         Commands::Inspect(args) => {
-            commands::inspect::run(&config, args, output_format, cli.no_refresh)
+            commands::inspect::run(&config, args, output_format, cli.no_update)
         }
         Commands::Time(args) => commands::time::run(args, output_format),
         Commands::Country(args) => commands::country::run(args, output_format),
         Commands::Rpki { commands } => {
-            commands::rpki::run(commands, output_format, &config.data_dir, cli.no_refresh)
+            commands::rpki::run(commands, output_format, &config, cli.no_update)
         }
         Commands::Ip(args) => commands::ip::run(args, output_format),
         Commands::As2rel(args) => {
-            commands::as2rel::run(&config, args, output_format, cli.no_refresh)
+            commands::as2rel::run(&config, args, output_format, cli.no_update)
         }
         Commands::Pfx2as(args) => {
-            commands::pfx2as::run(&config, args, output_format, cli.no_refresh)
+            commands::pfx2as::run(&config, args, output_format, cli.no_update)
         }
         Commands::Config(args) => commands::config::run(&config, args, output_format),
     }

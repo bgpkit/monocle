@@ -29,8 +29,13 @@ fn main() -> anyhow::Result<()> {
     // Example 1: Check repository status
     println!("1. Repository status:");
     let as2rel = db.as2rel();
+    use std::time::Duration;
+    let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours
     println!("   Repository is empty: {}", as2rel.is_empty());
-    println!("   Needs update: {}", db.needs_as2rel_update());
+    println!(
+        "   Needs refresh (24h TTL): {}",
+        db.needs_as2rel_refresh(ttl)
+    );
     println!("   Data source URL: {}", BGPKIT_AS2REL_URL);
 
     // Example 2: Understanding the data model
@@ -80,8 +85,10 @@ fn main() -> anyhow::Result<()> {
     println!("   c) Query using the methods shown above");
     println!("\n   Example code:");
     println!("   ```rust");
+    println!("   use std::time::Duration;");
     println!("   let db = MonocleDatabase::open_in_dir(\"~/.monocle\")?;");
-    println!("   if db.needs_as2rel_update() {{");
+    println!("   let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours");
+    println!("   if db.needs_as2rel_refresh(ttl) {{");
     println!("       let count = db.update_as2rel()?;");
     println!("       println!(\"Loaded {{}} relationships\", count);");
     println!("   }}");
@@ -119,7 +126,7 @@ fn main() -> anyhow::Result<()> {
 
     // Example 8: Best practices
     println!("\n8. Best practices:");
-    println!("   - Check needs_as2rel_update() before querying to ensure fresh data");
+    println!("   - Check needs_as2rel_refresh(ttl) before querying to ensure fresh data");
     println!("   - Use search_asn_with_names() to get human-readable results");
     println!("   - Cache max_peers_count for percentage calculations");
     println!("   - For bulk operations, use get_connectivity_summary()");

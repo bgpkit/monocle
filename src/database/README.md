@@ -100,7 +100,9 @@ for r in results {
 }
 
 // Update AS2Rel data
-if db.needs_as2rel_update() {
+use std::time::Duration;
+let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours
+if db.needs_as2rel_refresh(ttl) {
     let count = db.update_as2rel()?;
     println!("Loaded {} relationships", count);
 }
@@ -144,7 +146,7 @@ let pfx2as = db.pfx2as();
 
 // Check if refresh is needed
 if pfx2as.needs_refresh(DEFAULT_PFX2AS_CACHE_TTL)? {
-    // Refresh via CLI: monocle config db-refresh pfx2as
+    // Refresh via CLI: monocle config update --pfx2as
     // Or via WebSocket: database.refresh with source: "pfx2as"
 }
 

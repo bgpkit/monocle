@@ -15,6 +15,8 @@ use std::sync::Arc;
 // Context
 // =============================================================================
 
+use crate::config::MonocleConfig;
+
 /// WebSocket context providing access to shared resources
 ///
 /// This context is passed to all handlers and provides access to:
@@ -24,27 +26,25 @@ use std::sync::Arc;
 /// - Rate limiting state
 #[derive(Clone)]
 pub struct WsContext {
-    /// Path to the monocle data directory
-    pub data_dir: String,
+    /// Monocle configuration (includes data_dir and cache TTLs)
+    pub config: MonocleConfig,
 }
 
 impl WsContext {
-    /// Create a new WebSocket context
-    ///
-    /// Note: transport policy (message size, timeouts, concurrency limits) is owned by `ServerConfig`
-    /// and enforced in the connection loop / dispatcher layer.
-    pub fn new(data_dir: String) -> Self {
-        Self { data_dir }
+    /// Create a new WebSocket context from MonocleConfig
+    pub fn from_config(config: MonocleConfig) -> Self {
+        Self { config }
+    }
+
+    /// Get the data directory path
+    pub fn data_dir(&self) -> &str {
+        &self.config.data_dir
     }
 }
 
 impl Default for WsContext {
     fn default() -> Self {
-        let home_dir = dirs::home_dir()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string());
-
-        Self::new(format!("{}/.monocle", home_dir))
+        Self::from_config(MonocleConfig::default())
     }
 }
 
@@ -251,13 +251,14 @@ mod tests {
     #[test]
     fn test_ws_context_default() {
         let ctx = WsContext::default();
-        assert!(ctx.data_dir.contains(".monocle"));
+        assert!(ctx.data_dir().contains(".monocle"));
     }
 
     #[test]
-    fn test_ws_context_new() {
-        let ctx = WsContext::new("/tmp/test".to_string());
-        assert_eq!(ctx.data_dir, "/tmp/test");
+    fn test_ws_context_from_config() {
+        let config = MonocleConfig::default();
+        let ctx = WsContext::from_config(config.clone());
+        assert_eq!(ctx.data_dir(), &config.data_dir);
     }
 
     #[test]

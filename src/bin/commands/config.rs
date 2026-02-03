@@ -1,3 +1,4 @@
+use chrono_humanize::HumanTime;
 use clap::{Args, Subcommand};
 use monocle::config::{
     format_size, get_data_source_info, get_sqlite_info, DataSource, DataSourceStatus,
@@ -11,6 +12,19 @@ use monocle::MonocleConfig;
 use serde::Serialize;
 use std::path::Path;
 use std::time::Instant;
+
+/// Convert a timestamp string like "2024-01-15 10:30:00 UTC" to relative time like "2 hours ago"
+fn to_relative_time(timestamp_str: &str) -> String {
+    // Parse the timestamp string format: "YYYY-MM-DD HH:MM:SS UTC"
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S UTC")
+    {
+        let dt = naive.and_utc();
+        HumanTime::from(dt).to_string()
+    } else {
+        // If parsing fails, return the original string
+        timestamp_str.to_string()
+    }
+}
 
 /// Arguments for the Config command
 #[derive(Args)]
@@ -27,50 +41,61 @@ pub struct ConfigArgs {
 #[derive(Subcommand)]
 #[allow(clippy::enum_variant_names)]
 pub enum ConfigCommands {
-    /// Refresh data source(s)
-    DbRefresh {
-        /// Refresh asinfo data
+    /// Update data source(s)
+    Update {
+        /// Update asinfo data
         #[clap(long)]
         asinfo: bool,
 
-        /// Refresh as2rel data
+        /// Update as2rel data
         #[clap(long)]
         as2rel: bool,
 
-        /// Refresh RPKI data
+        /// Update RPKI data
         #[clap(long)]
         rpki: bool,
 
-        /// Refresh pfx2as data
+        /// Update pfx2as data
         #[clap(long)]
         pfx2as: bool,
 
         /// RTR endpoint for fetching ROAs (format: host:port)
-        /// Overrides config file setting for this refresh only.
+        /// Overrides config file setting for this update only.
         /// Example: --rtr-endpoint rtr.rpki.cloudflare.com:8282
         #[clap(long, value_name = "HOST:PORT")]
         rtr_endpoint: Option<String>,
     },
 
     /// Backup the database to a destination
-    DbBackup {
+    Backup {
         /// Destination path for the backup
         #[clap(value_name = "DEST")]
         destination: String,
     },
 
     /// List available data sources and their status
-    DbSources,
+    Sources,
 }
 
 #[derive(Debug, Serialize)]
 struct ConfigInfo {
     config_file: String,
     data_dir: String,
+    cache_ttl: CacheTtlConfig,
     database: SqliteDatabaseInfo,
     server_defaults: ServerDefaults,
     #[serde(skip_serializing_if = "Option::is_none")]
+    rtr_endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     files: Option<Vec<FileInfo>>,
+}
+
+#[derive(Debug, Serialize)]
+struct CacheTtlConfig {
+    asinfo_secs: u64,
+    as2rel_secs: u64,
+    rpki_secs: u64,
+    pfx2as_secs: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,13 +133,13 @@ struct FileInfo {
 pub fn run(config: &MonocleConfig, args: ConfigArgs, output_format: OutputFormat) {
     match args.command {
         None => run_status(config, args.verbose, output_format),
-        Some(ConfigCommands::DbRefresh {
+        Some(ConfigCommands::Update {
             asinfo,
             as2rel,
             rpki,
             pfx2as,
             rtr_endpoint,
-        }) => run_db_refresh(
+        }) => run_update(
             config,
             asinfo,
             as2rel,
@@ -123,10 +148,10 @@ pub fn run(config: &MonocleConfig, args: ConfigArgs, output_format: OutputFormat
             rtr_endpoint,
             output_format,
         ),
-        Some(ConfigCommands::DbBackup { destination }) => {
-            run_db_backup(config, &destination, output_format)
+        Some(ConfigCommands::Backup { destination }) => {
+            run_backup(config, &destination, output_format)
         }
-        Some(ConfigCommands::DbSources) => run_db_sources(config, output_format),
+        Some(ConfigCommands::Sources) => run_sources(config, output_format),
     }
 }
 
@@ -148,8 +173,15 @@ fn run_status(config: &MonocleConfig, verbose: bool, output_format: OutputFormat
     let config_info = ConfigInfo {
         config_file,
         data_dir: config.data_dir.clone(),
+        cache_ttl: CacheTtlConfig {
+            asinfo_secs: config.asinfo_cache_ttl_secs,
+            as2rel_secs: config.as2rel_cache_ttl_secs,
+            rpki_secs: config.rpki_cache_ttl_secs,
+            pfx2as_secs: config.pfx2as_cache_ttl_secs,
+        },
         database: database_info,
         server_defaults,
+        rtr_endpoint: config.rtr_endpoint().map(|(h, p)| format!("{}:{}", h, p)),
         files,
     };
 
@@ -209,6 +241,28 @@ fn print_config_table(info: &ConfigInfo, verbose: bool) {
     println!("General:");
     println!("  Config file:    {}", info.config_file);
     println!("  Data dir:       {}", info.data_dir);
+    println!();
+
+    println!("Cache TTL:");
+    println!(
+        "  ASInfo:         {}",
+        format_duration(info.cache_ttl.asinfo_secs)
+    );
+    println!(
+        "  AS2Rel:         {}",
+        format_duration(info.cache_ttl.as2rel_secs)
+    );
+    println!(
+        "  RPKI:           {}",
+        format_duration(info.cache_ttl.rpki_secs)
+    );
+    println!(
+        "  Pfx2as:         {}",
+        format_duration(info.cache_ttl.pfx2as_secs)
+    );
+    if let Some(ref endpoint) = info.rtr_endpoint {
+        println!("  RTR endpoint:   {}", endpoint);
+    }
     println!();
 
     println!("Database:");
@@ -346,15 +400,15 @@ fn print_config_table(info: &ConfigInfo, verbose: bool) {
     eprintln!("  Use --verbose (-v) to see all files in the data directory");
     eprintln!("  Use --format json for machine-readable output");
     eprintln!("  Edit ~/.monocle/monocle.toml to customize settings");
-    eprintln!("  Use 'monocle config db-sources' to see data source status");
-    eprintln!("  Use 'monocle config db-refresh' to refresh data sources");
+    eprintln!("  Use 'monocle config sources' to see data source status");
+    eprintln!("  Use 'monocle config update' to update data sources");
 }
 
 // =============================================================================
-// db-refresh subcommand
+// update subcommand
 // =============================================================================
 
-fn run_db_refresh(
+fn run_update(
     config: &MonocleConfig,
     asinfo: bool,
     as2rel: bool,
@@ -363,10 +417,10 @@ fn run_db_refresh(
     rtr_endpoint: Option<String>,
     output_format: OutputFormat,
 ) {
-    // If no specific flags are set, refresh all
-    let refresh_all = !asinfo && !as2rel && !rpki && !pfx2as;
+    // If no specific flags are set, update all
+    let update_all = !asinfo && !as2rel && !rpki && !pfx2as;
 
-    let sources_to_refresh: Vec<DataSource> = if refresh_all {
+    let sources_to_update: Vec<DataSource> = if update_all {
         DataSource::all()
     } else {
         let mut sources = Vec::new();
@@ -385,22 +439,22 @@ fn run_db_refresh(
         sources
     };
 
-    refresh_sources(
+    update_sources(
         config,
-        &sources_to_refresh,
+        &sources_to_update,
         rtr_endpoint.as_deref(),
         output_format,
     );
 }
 
 #[derive(Debug, Serialize)]
-struct RefreshResult {
+struct UpdateResult {
     source: String,
     result: String,
     duration_secs: f64,
 }
 
-fn refresh_sources(
+fn update_sources(
     config: &MonocleConfig,
     sources: &[DataSource],
     rtr_endpoint: Option<&str>,
@@ -420,10 +474,10 @@ fn refresh_sources(
     let mut results = Vec::new();
 
     for source in sources {
-        eprintln!("[monocle] Refreshing {}...", source.name());
+        eprintln!("[monocle] Updating {}...", source.name());
         let start = Instant::now();
 
-        let result = do_refresh(&db, source, config, rtr_endpoint);
+        let result = do_update(&db, source, config, rtr_endpoint);
         let duration = start.elapsed().as_secs_f64();
 
         let result_str = match &result {
@@ -437,7 +491,7 @@ fn refresh_sources(
             }
         };
 
-        results.push(RefreshResult {
+        results.push(UpdateResult {
             source: source.name().to_string(),
             result: result_str,
             duration_secs: duration,
@@ -463,11 +517,11 @@ fn refresh_sources(
         }
     } else {
         eprintln!();
-        eprintln!("[monocle] Refresh completed.");
+        eprintln!("[monocle] Update completed.");
     }
 }
 
-fn do_refresh(
+fn do_update(
     db: &MonocleDatabase,
     source: &DataSource,
     config: &MonocleConfig,
@@ -603,10 +657,10 @@ fn do_refresh(
 }
 
 // =============================================================================
-// db-backup subcommand
+// backup subcommand
 // =============================================================================
 
-fn run_db_backup(config: &MonocleConfig, destination: &str, output_format: OutputFormat) {
+fn run_backup(config: &MonocleConfig, destination: &str, output_format: OutputFormat) {
     let sqlite_path = config.sqlite_path();
     let dest_path = Path::new(destination);
 
@@ -672,10 +726,10 @@ fn run_db_backup(config: &MonocleConfig, destination: &str, output_format: Outpu
 }
 
 // =============================================================================
-// db-sources subcommand
+// sources subcommand
 // =============================================================================
 
-fn run_db_sources(config: &MonocleConfig, output_format: OutputFormat) {
+fn run_sources(config: &MonocleConfig, output_format: OutputFormat) {
     let sources = get_data_source_info(config);
 
     if output_format.is_json() {
@@ -695,10 +749,10 @@ fn run_db_sources(config: &MonocleConfig, output_format: OutputFormat) {
         println!("Data Sources:");
         println!();
         println!(
-            "  {:<15} {:<45} {:<15} Last Updated",
-            "Name", "Description", "Status"
+            "  {:<12} {:<15} {:<10} Last Updated",
+            "Name", "Status", "Stale"
         );
-        println!("  {}", "-".repeat(95));
+        println!("  {}", "-".repeat(60));
 
         for source in &sources {
             let status_str = match source.status {
@@ -713,19 +767,76 @@ fn run_db_sources(config: &MonocleConfig, output_format: OutputFormat) {
                 DataSourceStatus::NotInitialized => "not initialized".to_string(),
             };
 
-            let updated_str = source.last_updated.as_deref().unwrap_or("-");
+            let updated_str = source
+                .last_updated
+                .as_deref()
+                .map(to_relative_time)
+                .unwrap_or_else(|| "-".to_string());
+
+            let stale_str = if source.is_stale { "yes" } else { "no" };
 
             println!(
-                "  {:<15} {:<45} {:<15} {}",
-                source.name, source.description, status_str, updated_str
+                "  {:<12} {:<15} {:<10} {}",
+                source.name, status_str, stale_str, updated_str
             );
+        }
+
+        // Configuration section
+        println!();
+        println!("Configuration:");
+        println!(
+            "  ASInfo cache TTL: {}",
+            format_duration(config.asinfo_cache_ttl_secs)
+        );
+        println!(
+            "  AS2Rel cache TTL: {}",
+            format_duration(config.as2rel_cache_ttl_secs)
+        );
+        println!(
+            "  RPKI cache TTL:   {}",
+            format_duration(config.rpki_cache_ttl_secs)
+        );
+        println!(
+            "  Pfx2as cache TTL: {}",
+            format_duration(config.pfx2as_cache_ttl_secs)
+        );
+        if let Some((host, port)) = config.rtr_endpoint() {
+            println!("  RTR endpoint:     {}:{}", host, port);
         }
 
         println!();
         println!("Usage:");
-        println!("  monocle config db-refresh              Refresh all data sources");
-        println!("  monocle config db-refresh --rpki       Refresh only RPKI data");
-        println!("  monocle config db-refresh --asinfo     Refresh only ASInfo data");
-        println!("  monocle config db-backup <path>        Backup database to path");
+        println!("  monocle config update              Update all data sources");
+        println!("  monocle config update --rpki       Update only RPKI data");
+        println!("  monocle config update --asinfo     Update only ASInfo data");
+        println!("  monocle config backup <path>       Backup database to path");
+    }
+}
+
+/// Format duration in seconds to human-readable string
+fn format_duration(secs: u64) -> String {
+    if secs >= 86400 {
+        let days = secs / 86400;
+        if days == 1 {
+            "1 day".to_string()
+        } else {
+            format!("{} days", days)
+        }
+    } else if secs >= 3600 {
+        let hours = secs / 3600;
+        if hours == 1 {
+            "1 hour".to_string()
+        } else {
+            format!("{} hours", hours)
+        }
+    } else if secs >= 60 {
+        let mins = secs / 60;
+        if mins == 1 {
+            "1 minute".to_string()
+        } else {
+            format!("{} minutes", mins)
+        }
+    } else {
+        format!("{} seconds", secs)
     }
 }

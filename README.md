@@ -1064,10 +1064,10 @@ Show monocle configuration, data paths, and database management
 Usage: monocle config [OPTIONS] [COMMAND]
 
 Commands:
-  db-refresh  Refresh data source(s)
-  db-backup   Backup the database to a destination
-  db-sources  List available data sources and their status
-  help        Print this message or the help of the given subcommand(s)
+  update   Update data source(s)
+  backup   Backup the database to a destination
+  sources  List available data sources and their status
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
       --debug            Print debug information
@@ -1093,18 +1093,18 @@ SQLite Database: ~/.monocle/monocle-data.sqlite3
   RPKI: 784188 ROAs, 388 ASPAs (updated 2 hours ago)
   Pfx2as: 1000000 prefixes
 
-# Refresh all data sources
-➜  monocle config db-refresh --all
+# Update all data sources
+➜  monocle config update
 
-# Refresh a specific source
-➜  monocle config db-refresh asinfo
-➜  monocle config db-refresh rpki
+# Update a specific source
+➜  monocle config update --asinfo
+➜  monocle config update --rpki
 
 # Backup the database
-➜  monocle config db-backup ~/monocle-backup.sqlite3
+➜  monocle config backup ~/monocle-backup.sqlite3
 
 # List available data sources
-➜  monocle config db-sources
+➜  monocle config sources
 ```
 
 ### `monocle server`

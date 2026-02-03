@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### Breaking Changes
+
+* **CLI flag renamed**: `--no-refresh` renamed to `--no-update` for consistency with "update" terminology
+  * Old: `monocle --no-refresh <command>`
+  * New: `monocle --no-update <command>`
+  
+* **Config subcommands renamed**: Removed `db-` prefix from config subcommands for cleaner syntax
+  * `monocle config db-refresh` → `monocle config update`
+  * `monocle config db-backup` → `monocle config backup`
+  * `monocle config db-sources` → `monocle config sources`
+  
+* **Configurable TTL for all data sources**: All data sources now have configurable cache TTL with 7-day default
+  * Added `asinfo_cache_ttl_secs` config option (default: 7 days)
+  * Added `as2rel_cache_ttl_secs` config option (default: 7 days)
+  * Changed `rpki_cache_ttl_secs` default from 1 hour to 7 days
+  * Changed `pfx2as_cache_ttl_secs` default from 24 hours to 7 days
+  * Configure via `~/.monocle/monocle.toml` or environment variables (`MONOCLE_ASINFO_CACHE_TTL_SECS`, etc.)
+
+### New Features
+
+* **`monocle config sources`**: Shows staleness status based on TTL for all data sources
+  * "Stale" column shows whether each source needs updating based on its configured TTL
+  * Configuration section shows current TTL values for all sources
+
+### Bug Fixes
+
+* Avoid creating a new SQLite database when `monocle config sources` inspects staleness
+
 ### Code Improvements
 
 * **Data refresh logging**: CLI now shows specific reason for data refresh ("data is empty" vs "data is outdated") instead of generic "empty or outdated" message

@@ -27,16 +27,18 @@
 //!
 //! ```rust,ignore
 //! use monocle::server::{create_router, WsContext, ServerConfig};
+//! use monocle::config::MonocleConfig;
 //!
 //! // Create the router with all handlers registered
 //! let router = create_router();
 //!
-//! // Create context
-//! let context = WsContext::new("~/.monocle".to_string());
+//! // Create context from config
+//! let config = MonocleConfig::new(&None)?;
+//! let context = WsContext::from_config(config);
 //!
 //! // Start the server
-//! let config = ServerConfig::default();
-//! start_server(router, context, config).await?;
+//! let server_config = ServerConfig::default();
+//! start_server(router, context, server_config).await?;
 //! ```
 
 pub mod handler;

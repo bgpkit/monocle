@@ -21,6 +21,7 @@
 //! Note: This example requires network access to fetch data on first run.
 //! It may take a minute to bootstrap all data sources.
 
+use monocle::config::MonocleConfig;
 use monocle::database::MonocleDatabase;
 use monocle::lens::inspect::{
     InspectDataSection, InspectDisplayConfig, InspectLens, InspectQueryOptions,
@@ -34,7 +35,8 @@ fn main() -> anyhow::Result<()> {
     // In production, use MonocleDatabase::open_in_dir("~/.monocle")
     println!("Creating database...");
     let db = MonocleDatabase::open_in_memory()?;
-    let lens = InspectLens::new(&db);
+    let config = MonocleConfig::default();
+    let lens = InspectLens::new(&db, &config);
 
     // Example 1: Check data availability
     println!("\n1. Data availability:");

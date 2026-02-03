@@ -97,9 +97,11 @@ See the main [README](../README.md) for dependency configuration with version nu
 
 ```rust
 use monocle::database::MonocleDatabase;
+use std::time::Duration;
 
 let db = MonocleDatabase::open_in_dir("~/.monocle")?;
-if db.needs_as2rel_update() {
+let ttl = Duration::from_secs(24 * 60 * 60); // 24 hours
+if db.needs_as2rel_refresh(ttl) {
     db.update_as2rel()?;
 }
 let rels = db.as2rel().search_asn(13335)?;
