@@ -10,23 +10,23 @@ You can run these examples using `cargo run --example <name>`.
 
 ```bash
 # Standalone utilities
-cargo run --release --example time_parsing --features lens-core
-cargo run --release --example output_formats --features lens-core
+cargo run --release --example time_parsing --features lib
+cargo run --release --example output_formats --features lib
 
 # Database operations
-cargo run --release --example database_basics --features database
-cargo run --release --example as2rel_queries --features database
-cargo run --release --example pfx2as_search --features lens-bgpkit
+cargo run --release --example database_basics --features lib
+cargo run --release --example as2rel_queries --features lib
+cargo run --release --example pfx2as_search --features lib
 
 # BGP operations
-cargo run --release --example country_lookup --features lens-bgpkit
-cargo run --release --example rpki_validation --features lens-bgpkit
-cargo run --release --example mrt_parsing --features lens-bgpkit
-cargo run --release --example search_bgp_messages --features lens-bgpkit
+cargo run --release --example country_lookup --features lib
+cargo run --release --example rpki_validation --features lib
+cargo run --release --example mrt_parsing --features lib
+cargo run --release --example search_bgp_messages --features lib
 
 # Full functionality
-cargo run --release --example inspect_unified --features lens-full
-cargo run --release --example progress_callbacks --features lens-full
+cargo run --release --example inspect_unified --features lib
+cargo run --release --example progress_callbacks --features lib
 
 # WebSocket Client (requires running server)
 # cargo run --example ws_client_all --features cli
@@ -34,37 +34,34 @@ cargo run --release --example progress_callbacks --features lens-full
 
 ## Feature Tiers
 
-Monocle uses a layered feature system:
+Monocle uses a simplified 3-feature system:
 
 | Feature | Description | Key Dependencies |
 |---------|-------------|------------------|
-| `database` | SQLite database operations | `rusqlite`, `oneio`, `ipnet` |
-| `lens-core` | Standalone utilities (TimeLens) | `chrono-humanize`, `dateparser` |
-| `lens-bgpkit` | BGP-related lenses | `bgpkit-*`, `rayon`, `tabled` |
-| `lens-full` | All lenses including InspectLens | All above |
-| `display` | Table formatting | `tabled` (included in lens-bgpkit) |
-| `cli` | Full CLI binary | All above + `clap`, `axum` |
+| `lib` | Complete library (database + all lenses + display) | `bgpkit-*`, `rusqlite`, `rayon`, `tabled` |
+| `server` | WebSocket server (implies lib) | `axum`, `tokio` |
+| `cli` | Full CLI binary (implies lib and server) | `clap` + all above |
 
 ## Examples by Feature
 
-### Standalone Examples (`lens-core`)
+### Standalone Examples (`lib`)
 
-Minimal dependencies - no bgpkit-* crates required.
+Minimal dependencies - time parsing and output formatting utilities.
 
 **Files:**
 - `standalone/time_parsing.rs` - Parse timestamps, convert formats
 - `standalone/output_formats.rs` - Work with OutputFormat enum
 
-### Database Examples (`database`)
+### Database Examples (`lib`)
 
-SQLite operations without lens overhead.
+SQLite operations with database repositories.
 
 **Files:**
 - `database/database_basics.rs` - MonocleDatabase, schema management
 - `database/as2rel_queries.rs` - Query AS-level relationships
-- `database/pfx2as_search.rs` - Prefix-to-ASN mapping and search (requires `lens-bgpkit`)
+- `database/pfx2as_search.rs` - Prefix-to-ASN mapping and search
 
-### BGPKIT Examples (`lens-bgpkit`)
+### BGPKIT Examples (`lib`)
 
 Full BGP functionality with bgpkit-* integration.
 
@@ -74,7 +71,7 @@ Full BGP functionality with bgpkit-* integration.
 - `bgpkit/mrt_parsing.rs` - Parse MRT files with filters
 - `bgpkit/search_bgp_messages.rs` - Search BGP announcement messages (Real-world example)
 
-### Full Examples (`lens-full`)
+### Full Examples (`lib`)
 
 All lenses including unified inspection.
 
@@ -82,12 +79,12 @@ All lenses including unified inspection.
 - `full/inspect_unified.rs` - InspectLens for unified lookups
 - `full/progress_callbacks.rs` - Progress tracking for GUI/CLI
 
-### CLI/Server Examples (`cli`)
+### CLI/Server Examples (`cli`, `server`)
 
-Examples requiring the full CLI/Server feature set.
+Examples requiring the CLI or Server feature set.
 
 **Files:**
-- `ws_client_all.rs` - WebSocket client demonstrating all API methods
+- `ws_client_all.rs` - WebSocket client demonstrating all API methods (requires `cli`)
 
 ## Using in Your Project
 

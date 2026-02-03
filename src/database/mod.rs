@@ -122,8 +122,8 @@ pub use monocle::{
 };
 
 // Session types (SQLite-based for search result exports)
-// Requires lens-bgpkit feature because MsgStore depends on bgpkit_parser::BgpElem
-#[cfg(feature = "lens-bgpkit")]
+// Requires lib feature because MsgStore depends on bgpkit_parser::BgpElem
+#[cfg(feature = "lib")]
 pub use session::MsgStore;
 
 // =============================================================================

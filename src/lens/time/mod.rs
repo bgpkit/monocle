@@ -93,8 +93,7 @@ where
 // =============================================================================
 
 /// Represents a parsed BGP time with multiple format representations
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "display", derive(tabled::Tabled))]
+#[derive(Debug, Clone, Serialize, Deserialize, tabled::Tabled)]
 pub struct TimeBgpTime {
     /// Unix timestamp in seconds
     pub unix: i64,
@@ -281,17 +280,9 @@ impl TimeLens {
     pub fn format_results(&self, results: &[TimeBgpTime], format: &TimeOutputFormat) -> String {
         match format {
             TimeOutputFormat::Table => {
-                #[cfg(feature = "display")]
-                {
-                    use tabled::settings::Style;
-                    use tabled::Table;
-                    Table::new(results).with(Style::rounded()).to_string()
-                }
-                #[cfg(not(feature = "display"))]
-                {
-                    // Fall back to JSON when display feature is not enabled
-                    serde_json::to_string_pretty(results).unwrap_or_default()
-                }
+                use tabled::settings::Style;
+                use tabled::Table;
+                Table::new(results).with(Style::rounded()).to_string()
             }
             TimeOutputFormat::Rfc3339 => results
                 .iter()

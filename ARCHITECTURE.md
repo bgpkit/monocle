@@ -319,115 +319,79 @@ The CLI should not duplicate core logic. It should:
 
 ## Feature Flags
 
-Monocle supports conditional compilation via Cargo features, organized in tiers:
+Monocle supports conditional compilation via Cargo features with a simplified three-tier structure:
 
 ### Feature Hierarchy
 
 ```
 cli (default)
- └── lens-full
-      └── lens-bgpkit
-           ├── lens-core
-           │    └── database
-           └── display
+ ├── server
+ │    └── lib
+ └── lib
 ```
 
 ### Feature Descriptions
 
 | Feature | Description | Key Dependencies |
 |---------|-------------|------------------|
-| `database` | SQLite database operations, data loading from URLs | `rusqlite`, `oneio`, `ipnet` |
-| `lens-core` | Standalone lenses (TimeLens, OutputFormat) | `chrono-humanize`, `dateparser`, `humantime` |
-| `lens-bgpkit` | BGP-related lenses (Parse, Search, RPKI, Country, etc.) | `bgpkit-parser`, `bgpkit-broker`, `bgpkit-commons`, `rayon` |
-| `lens-full` | All lenses including InspectLens | (same as lens-bgpkit) |
-| `display` | Table formatting with tabled | `tabled`, `json_to_table` |
-| `cli` | Full CLI binary with WebSocket server | `clap`, `axum`, `tokio`, `indicatif` |
+| `lib` | Complete library: database + all lenses + display | `rusqlite`, `bgpkit-parser`, `bgpkit-broker`, `tabled`, etc. |
+| `server` | WebSocket server (implies `lib`) | `axum`, `tokio`, `serde_json` |
+| `cli` | Full CLI binary with progress bars (implies `lib` and `server`) | `clap`, `indicatif` |
 
 ### Use Case Scenarios
 
-#### Scenario 1: Minimal Library - Database Only
-**Features**: `database`
+#### Scenario 1: Library Only
+**Features**: `lib`
 
-Use when you only need to:
-- Access the MonocleDatabase directly
-- Query ASInfo, AS2Rel, RPKI, or Pfx2as repositories
-- Load data from URLs into the database
+Use when building applications that need:
+- Database operations (SQLite, data loading)
+- All lenses (TimeLens, ParseLens, SearchLens, RPKI, Country, InspectLens, etc.)
+- Table formatting with tabled
 
 ```toml
-monocle = { version = "1.0", default-features = false, features = ["database"] }
+monocle = { version = "1.0", default-features = false, features = ["lib"] }
 ```
 
 ```rust
 use monocle::database::MonocleDatabase;
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
-let asinfo = db.asinfo().get_by_asn(13335)?;
-```
-
-#### Scenario 2: Time Utilities Only
-**Features**: `lens-core`
-
-Use when you need:
-- Time parsing from human-readable strings
-- Duration calculations
-- Output formatting utilities
-
-```toml
-monocle = { version = "1.0", default-features = false, features = ["lens-core"] }
-```
-
-```rust
-use monocle::lens::time::{TimeLens, TimeParseArgs};
-let lens = TimeLens::new();
-let result = lens.parse(&TimeParseArgs::new("2 hours ago"))?;
-```
-
-#### Scenario 3: BGP Operations Without CLI
-**Features**: `lens-bgpkit`
-
-Use when building applications that need:
-- MRT file parsing
-- BGP message search via bgpkit-broker
-- RPKI validation
-- Country lookups
-- AS relationship queries
-
-```toml
-monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
-```
-
-```rust
-use monocle::lens::parse::{ParseLens, ParseFilters};
-let lens = ParseLens::new();
-let filters = ParseFilters {
-    origin_asn: vec!["13335".to_string()],
-    ..Default::default()
-};
-let elems = lens.parse(&filters, "path/to/file.mrt")?;
-```
-
-#### Scenario 4: Full Library Without CLI
-**Features**: `lens-full` (or `lens-full,display` for table formatting)
-
-Use when building applications that need all lens functionality including the unified InspectLens:
-
-```toml
-monocle = { version = "1.0", default-features = false, features = ["lens-full", "display"] }
-```
-
-```rust
 use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
+
 let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 let lens = InspectLens::new(&db);
 let result = lens.query("AS13335", &InspectQueryOptions::default())?;
 ```
 
-#### Scenario 5: CLI Binary (Default)
+#### Scenario 2: Library with WebSocket Server
+**Features**: `server`
+
+Use when building applications that need:
+- Everything in `lib`
+- WebSocket server for remote API access
+
+```toml
+monocle = { version = "1.0", default-features = false, features = ["server"] }
+```
+
+```rust
+use monocle::server::start_server;
+
+// Start WebSocket server on default port
+start_server("127.0.0.1:3000").await?;
+```
+
+#### Scenario 3: CLI Binary (Default)
 **Features**: `cli` (default)
 
 The full CLI binary with all features, WebSocket server, and terminal UI:
 
 ```toml
 monocle = "1.0"
+```
+
+Or explicitly:
+
+```toml
+monocle = { version = "1.0", features = ["cli"] }
 ```
 
 ### Valid Feature Combinations
@@ -437,23 +401,16 @@ All of these combinations compile successfully:
 | Combination | Use Case |
 |-------------|----------|
 | (none) | Config types only, no functionality |
-| `database` | Database access without lenses |
-| `lens-core` | Time utilities + database |
-| `lens-bgpkit` | Full BGP operations |
-| `lens-full` | All lenses |
-| `display` | Table formatting only (rarely used alone) |
-| `database,display` | Database + table output |
-| `lens-core,display` | Time utilities + table output |
+| `lib` | Full library functionality |
+| `server` | Library + WebSocket server |
 | `cli` | Full CLI (includes everything) |
 
 ### Feature Dependencies
 
 When you enable a higher-tier feature, lower-tier features are automatically included:
 
-- `lens-core` → automatically enables `database`
-- `lens-bgpkit` → automatically enables `lens-core`, `database`, `display`
-- `lens-full` → automatically enables `lens-bgpkit`
-- `cli` → automatically enables `lens-full`, `display`
+- `server` → automatically enables `lib`
+- `cli` → automatically enables `lib` and `server`
 
 ## Related Documents
 

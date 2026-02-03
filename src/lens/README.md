@@ -19,56 +19,53 @@ lens/
 ├── README.md           # This document
 ├── utils.rs            # OutputFormat + formatting helpers
 │
-├── time/               # Time parsing / formatting (lens-core)
+├── time/               # Time parsing / formatting
 │   └── mod.rs
 │
-├── country.rs          # Country lookup (lens-bgpkit)
-├── ip/                 # IP information lookups (lens-bgpkit)
+├── country/            # Country lookup (lib)
+├── ip/                 # IP information lookups
 │   └── mod.rs
-├── parse/              # MRT parsing + progress callbacks (lens-bgpkit)
+├── parse/              # MRT parsing + progress callbacks
 │   └── mod.rs
-├── search/             # Search across public MRT files (lens-bgpkit)
+├── search/             # Search across public MRT files
 │   ├── mod.rs
 │   └── query_builder.rs
-├── rpki/               # RPKI operations (lens-bgpkit)
+├── rpki/               # RPKI operations
 │   ├── mod.rs
 │   └── commons.rs
-├── pfx2as/             # Prefix→AS mapping types (lens-bgpkit)
+├── pfx2as/             # Prefix→AS mapping types
 │   └── mod.rs
-├── as2rel/             # AS relationship lookups (lens-bgpkit)
+├── as2rel/             # AS relationship lookups
 │   ├── mod.rs
 │   ├── args.rs
 │   └── types.rs
 │
-└── inspect/            # Unified AS/prefix inspection (lens-full)
+└── inspect/            # Unified AS/prefix inspection
     ├── mod.rs          # InspectLens implementation
     └── types.rs        # Result types, section selection
 ```
 
 ---
 
-## Feature Tiers
+## Feature Requirements
 
-Lenses are organized by feature requirements:
-
-| Feature | Lenses | Key Dependencies |
-|---------|--------|------------------|
-| `lens-core` | `TimeLens` | chrono, dateparser |
-| `lens-bgpkit` | `CountryLens`, `IpLens`, `ParseLens`, `SearchLens`, `RpkiLens`, `Pfx2asLens`, `As2relLens` | bgpkit-*, rayon, tabled |
-| `lens-full` | `InspectLens` | All above |
-
-Library users can select minimal features:
+All lenses are available with the `lib` feature, which is the default for library usage:
 
 ```toml
-# Time parsing only
-monocle = { version = "1.0", default-features = false, features = ["lens-core"] }
-
-# BGP operations without CLI
-monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
-
-# All lenses including InspectLens
-monocle = { version = "1.0", default-features = false, features = ["lens-full"] }
+# Library usage (all lenses + database)
+monocle = { version = "1.0", default-features = false, features = ["lib"] }
 ```
+
+The `lib` feature includes:
+- `TimeLens` - Time parsing and formatting
+- `CountryLens` - Country code/name lookup
+- `IpLens` - IP information lookup
+- `ParseLens` - MRT file parsing
+- `SearchLens` - BGP message search across MRT files
+- `RpkiLens` - RPKI validation
+- `Pfx2asLens` - Prefix-to-AS mapping
+- `As2relLens` - AS relationship lookups
+- `InspectLens` - Unified AS/prefix inspection
 
 ---
 
@@ -176,7 +173,7 @@ These lenses do not require a persistent database reference:
 
 > Note: code below is intentionally example-focused; check the module docs / rustdoc for exact function signatures where needed.
 
-### TimeLens (lens-core)
+### TimeLens
 
 ```rust,ignore
 use monocle::lens::time::{TimeLens, TimeParseArgs};
@@ -193,7 +190,7 @@ let out = OutputFormat::Table.format(&results);
 println!("{}", out);
 ```
 
-### InspectLens (lens-full, database-backed)
+### InspectLens (database-backed)
 
 ```rust,ignore
 use monocle::database::MonocleDatabase;
@@ -219,7 +216,7 @@ for r in results {
 }
 ```
 
-### As2relLens (lens-bgpkit, database-backed)
+### As2relLens (database-backed)
 
 ```rust,ignore
 use monocle::database::MonocleDatabase;
@@ -240,7 +237,7 @@ let results = lens.search(&args)?;
 println!("{}", OutputFormat::Table.format(&results));
 ```
 
-### SearchLens with progress (lens-bgpkit)
+### SearchLens with progress
 
 ```rust,ignore
 use monocle::lens::search::{SearchLens, SearchFilters, SearchProgress};
@@ -277,10 +274,10 @@ For a detailed contributor walkthrough, see `DEVELOPMENT.md`. In short:
    - `<NewLens>Result` (output)
    - `<NewLens>Lens` (operations)
 3. Add feature gate in `src/lens/mod.rs`:
-   ```rust
-   #[cfg(feature = "lens-bgpkit")]  // or appropriate feature
-   pub mod newlens;
-   ```
+    ```rust
+    #[cfg(feature = "lib")]
+    pub mod newlens;
+    ```
 4. Wire into (optional):
    - CLI command module under `src/bin/commands/`
    - WebSocket handler under `src/server/handlers/`

@@ -5,7 +5,7 @@
 //!
 //! # Feature Requirements
 //!
-//! This module requires the `lens-bgpkit` feature.
+//! This module requires the `lib` feature.
 //!
 //! # Example
 //!
@@ -64,8 +64,7 @@ impl CountryData {
 // =============================================================================
 
 /// A country entry with code and name
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "display", derive(tabled::Tabled))]
+#[derive(Debug, Clone, Serialize, Deserialize, tabled::Tabled)]
 pub struct CountryEntry {
     /// ISO 3166-1 alpha-2 country code
     pub code: String,
@@ -273,30 +272,14 @@ impl CountryLens {
 
         match format {
             CountryOutputFormat::Table => {
-                #[cfg(feature = "display")]
-                {
-                    use tabled::settings::Style;
-                    use tabled::Table;
-                    Table::new(results).with(Style::rounded()).to_string()
-                }
-                #[cfg(not(feature = "display"))]
-                {
-                    // Fall back to Simple format
-                    self.format_results(results, &CountryOutputFormat::Simple)
-                }
+                use tabled::settings::Style;
+                use tabled::Table;
+                Table::new(results).with(Style::rounded()).to_string()
             }
             CountryOutputFormat::Markdown => {
-                #[cfg(feature = "display")]
-                {
-                    use tabled::settings::Style;
-                    use tabled::Table;
-                    Table::new(results).with(Style::markdown()).to_string()
-                }
-                #[cfg(not(feature = "display"))]
-                {
-                    // Fall back to Simple format
-                    self.format_results(results, &CountryOutputFormat::Simple)
-                }
+                use tabled::settings::Style;
+                use tabled::Table;
+                Table::new(results).with(Style::markdown()).to_string()
             }
             CountryOutputFormat::Json => serde_json::to_string_pretty(results).unwrap_or_default(),
             CountryOutputFormat::Simple => results

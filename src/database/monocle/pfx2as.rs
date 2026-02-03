@@ -29,8 +29,7 @@ use tracing::info;
 pub const DEFAULT_PFX2AS_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Pfx2as record for database storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "display", derive(tabled::Tabled))]
+#[derive(Debug, Clone, Serialize, Deserialize, tabled::Tabled)]
 pub struct Pfx2asDbRecord {
     /// IP prefix string (e.g., "1.1.1.0/24")
     pub prefix: String,

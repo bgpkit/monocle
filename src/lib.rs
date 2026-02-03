@@ -63,7 +63,7 @@
 //!
 //! # Quick Start Examples
 //!
-//! ## Database Operations (feature = "database")
+//! ## Database Operations (feature = "lib")
 //!
 //! ```rust,ignore
 //! use monocle::database::MonocleDatabase;
@@ -86,7 +86,7 @@
 //! }
 //! ```
 //!
-//! ## Time Parsing (feature = "lens-core")
+//! ## Time Parsing (feature = "lib")
 //!
 //! ```rust,ignore
 //! use monocle::lens::time::{TimeLens, TimeParseArgs};
@@ -103,7 +103,7 @@
 //! }
 //! ```
 //!
-//! ## RPKI Validation (feature = "lens-bgpkit")
+//! ## RPKI Validation (feature = "lib")
 //!
 //! ```rust,ignore
 //! use monocle::database::MonocleDatabase;
@@ -122,7 +122,7 @@
 //! println!("{}: {}", result.state, result.reason);
 //! ```
 //!
-//! ## MRT Parsing with Progress (feature = "lens-bgpkit")
+//! ## MRT Parsing with Progress (feature = "lib")
 //!
 //! ```rust,ignore
 //! use monocle::lens::parse::{ParseLens, ParseFilters, ParseProgress};
@@ -143,7 +143,7 @@
 //! let elems = lens.parse_with_progress(&filters, "path/to/file.mrt", Some(callback))?;
 //! ```
 //!
-//! ## Unified Inspection (feature = "lens-full")
+//! ## Unified Inspection (feature = "lib")
 //!
 //! ```rust,ignore
 //! use monocle::database::MonocleDatabase;
@@ -165,15 +165,15 @@
 //! ```
 
 pub mod config;
-#[cfg(feature = "database")]
+#[cfg(feature = "lib")]
 pub mod database;
 
-// Lens module - feature gated
-#[cfg(any(feature = "lens-core", feature = "lens-bgpkit", feature = "lens-full"))]
+// Lens module - requires lib feature
+#[cfg(feature = "lib")]
 pub mod lens;
 
-// Server module - requires CLI feature
-#[cfg(feature = "cli")]
+// Server module - requires server feature
+#[cfg(feature = "server")]
 pub mod server;
 
 // =============================================================================
@@ -183,9 +183,9 @@ pub mod server;
 pub use config::MonocleConfig;
 
 // Shared database info types (used by config and database commands)
-#[cfg(feature = "database")]
+#[cfg(feature = "lib")]
 pub use config::get_data_source_info;
-#[cfg(feature = "database")]
+#[cfg(feature = "lib")]
 pub use config::get_sqlite_info;
 pub use config::{
     format_size, get_cache_settings, CacheSettings, DataSource, DataSourceInfo, DataSourceStatus,
@@ -196,22 +196,22 @@ pub use config::{
 // Database Module - Re-export all public types
 // =============================================================================
 
-#[cfg(feature = "database")]
+#[cfg(feature = "lib")]
 pub use database::*;
 
 // =============================================================================
 // Lens Module - Feature-gated exports
 // =============================================================================
 
-// Output format utilities (lens-core)
-#[cfg(any(feature = "lens-core", feature = "lens-bgpkit", feature = "lens-full"))]
+// Output format utilities (lib feature)
+#[cfg(feature = "lib")]
 pub use lens::utils::OutputFormat;
 
 // =============================================================================
-// Server Module (WebSocket API) - requires "cli" feature
+// Server Module (WebSocket API) - requires "server" feature
 // =============================================================================
 
-#[cfg(feature = "cli")]
+#[cfg(feature = "server")]
 pub use server::{
     create_router, start_server, Dispatcher, OperationRegistry, Router, ServerConfig, ServerState,
     WsContext, WsError, WsMethod, WsRequest, WsResult, WsSink,

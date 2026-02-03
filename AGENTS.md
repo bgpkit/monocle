@@ -90,17 +90,15 @@ Use conditional compilation for feature-specific code:
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 pub struct MyArgs { ... }
 
-#[cfg_attr(feature = "display", derive(tabled::Tabled))]
+// Display (tabled) is always available with lib feature
+#[derive(tabled::Tabled)]
 pub struct MyResult { ... }
 ```
 
-Feature tiers (each includes the previous):
-- `database`: SQLite operations only
-- `lens-core`: Standalone lenses (TimeLens)
-- `lens-bgpkit`: BGP-related lenses
-- `lens-full`: All lenses including InspectLens
-- `display`: Table formatting with tabled
-- `cli`: Full CLI binary with server support
+Feature flags (3 simple options):
+- `lib`: Complete library (database + all lenses + display)
+- `server`: WebSocket server (implies lib)
+- `cli`: Full CLI binary (implies lib and server)
 
 ## Project Structure
 

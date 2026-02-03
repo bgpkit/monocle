@@ -395,61 +395,35 @@ impl<'a> As2relLens<'a> {
                 serde_json::to_string_pretty(&output).unwrap_or_default()
             }
             As2relOutputFormat::Pretty => {
-                #[cfg(feature = "display")]
-                {
-                    use tabled::settings::Style;
-                    use tabled::Table;
-                    if show_name {
-                        let results_with_name: Vec<_> = results
-                            .iter()
-                            .cloned()
-                            .map(|r| r.with_name(truncate_names))
-                            .collect();
-                        Table::new(&results_with_name)
-                            .with(Style::rounded())
-                            .to_string()
-                    } else {
-                        Table::new(results).with(Style::rounded()).to_string()
-                    }
-                }
-                #[cfg(not(feature = "display"))]
-                {
-                    // Fall back to JSON when display feature is not enabled
-                    self.format_results(
-                        results,
-                        &As2relOutputFormat::Json,
-                        show_name,
-                        truncate_names,
-                    )
+                use tabled::settings::Style;
+                use tabled::Table;
+                if show_name {
+                    let results_with_name: Vec<_> = results
+                        .iter()
+                        .cloned()
+                        .map(|r| r.with_name(truncate_names))
+                        .collect();
+                    Table::new(&results_with_name)
+                        .with(Style::rounded())
+                        .to_string()
+                } else {
+                    Table::new(results).with(Style::rounded()).to_string()
                 }
             }
             As2relOutputFormat::Markdown => {
-                #[cfg(feature = "display")]
-                {
-                    use tabled::settings::Style;
-                    use tabled::Table;
-                    if show_name {
-                        let results_with_name: Vec<_> = results
-                            .iter()
-                            .cloned()
-                            .map(|r| r.with_name(truncate_names))
-                            .collect();
-                        Table::new(&results_with_name)
-                            .with(Style::markdown())
-                            .to_string()
-                    } else {
-                        Table::new(results).with(Style::markdown()).to_string()
-                    }
-                }
-                #[cfg(not(feature = "display"))]
-                {
-                    // Fall back to JSON when display feature is not enabled
-                    self.format_results(
-                        results,
-                        &As2relOutputFormat::Json,
-                        show_name,
-                        truncate_names,
-                    )
+                use tabled::settings::Style;
+                use tabled::Table;
+                if show_name {
+                    let results_with_name: Vec<_> = results
+                        .iter()
+                        .cloned()
+                        .map(|r| r.with_name(truncate_names))
+                        .collect();
+                    Table::new(&results_with_name)
+                        .with(Style::markdown())
+                        .to_string()
+                } else {
+                    Table::new(results).with(Style::markdown()).to_string()
                 }
             }
         }

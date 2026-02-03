@@ -433,7 +433,7 @@ impl std::fmt::Display for DataSource {
 }
 
 /// Get SQLite database information
-#[cfg(feature = "database")]
+#[cfg(feature = "lib")]
 pub fn get_sqlite_info(config: &MonocleConfig) -> SqliteDatabaseInfo {
     use crate::database::{MonocleDatabase, SchemaManager, SchemaStatus, SCHEMA_VERSION};
 
@@ -586,7 +586,7 @@ pub fn get_cache_settings(config: &MonocleConfig) -> CacheSettings {
 }
 
 /// Get detailed information about all data sources
-#[cfg(feature = "database")]
+#[cfg(feature = "lib")]
 pub fn get_data_source_info(config: &MonocleConfig) -> Vec<DataSourceInfo> {
     use crate::database::MonocleDatabase;
     use std::time::Duration;

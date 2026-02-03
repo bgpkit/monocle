@@ -50,8 +50,7 @@ impl std::fmt::Display for RpkiValidationState {
 }
 
 /// Detailed validation result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "display", derive(tabled::Tabled))]
+#[derive(Debug, Clone, Serialize, Deserialize, tabled::Tabled)]
 pub struct RpkiValidationResult {
     pub prefix: String,
     pub asn: u32,
@@ -60,8 +59,7 @@ pub struct RpkiValidationResult {
 }
 
 /// ROA record for database storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "display", derive(tabled::Tabled))]
+#[derive(Debug, Clone, Serialize, Deserialize, tabled::Tabled)]
 pub struct RpkiRoaRecord {
     pub prefix: String,
     pub max_length: u8,
