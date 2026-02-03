@@ -6,7 +6,12 @@
 //!
 //! # Feature Requirements
 //!
-//! All lenses require the `lib` feature to be enabled:
+//! All lenses require the `lib` feature to be enabled.
+//!
+//! **Quick Guide:**
+//! - Need the CLI binary? Use `cli` feature (includes everything)
+//! - Need WebSocket server without CLI? Use `server` feature (includes lib)
+//! - Need only library/data access? Use `lib` feature (this module)
 //!
 //! | Lens | Description | Dependencies |
 //! |------|-------------|--------------|

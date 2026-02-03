@@ -330,6 +330,11 @@ cli (default)
  └── lib
 ```
 
+**Quick Guide:**
+- **Need the CLI binary?** Use `cli` (includes everything)
+- **Need WebSocket server without CLI?** Use `server` (includes lib)
+- **Need only library/data access?** Use `lib` (database + all lenses + display)
+
 ### Feature Descriptions
 
 | Feature | Description | Key Dependencies |

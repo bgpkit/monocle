@@ -42,6 +42,11 @@ Monocle uses a simplified 3-feature system:
 | `server` | WebSocket server (implies lib) | `axum`, `tokio` |
 | `cli` | Full CLI binary (implies lib and server) | `clap` + all above |
 
+**Quick Guide:**
+- **Need the CLI binary?** Use `cli` feature (includes everything)
+- **Need WebSocket server without CLI?** Use `server` feature (includes lib)
+- **Need only library/data access?** Use `lib` feature (all examples below)
+
 ## Examples by Feature
 
 ### Standalone Examples (`lib`)

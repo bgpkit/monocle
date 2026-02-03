@@ -22,6 +22,15 @@ All notable changes to this project will be documented in this file.
   * Changed `pfx2as_cache_ttl_secs` default from 24 hours to 7 days
   * Configure via `~/.monocle/monocle.toml` or environment variables (`MONOCLE_ASINFO_CACHE_TTL_SECS`, etc.)
 
+* **Simplified feature flags**: Replaced 6-tier feature system with 3 clear features
+  * Old: `database`, `lens-core`, `lens-bgpkit`, `lens-full`, `display`, `cli`
+  * New: `lib`, `server`, `cli`
+  * Quick guide:
+    - Need CLI binary? Use `cli` (includes everything)
+    - Need WebSocket server without CLI? Use `server` (includes lib)
+    - Need only library/data access? Use `lib` (database + all lenses + display)
+  * Display (tabled) now always included with `lib` feature
+
 ### New Features
 
 * **`monocle config sources`**: Shows staleness status based on TTL for all data sources
