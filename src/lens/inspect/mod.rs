@@ -1072,7 +1072,7 @@ impl<'a> InspectLens<'a> {
         // Use the repository's get_connectivity_summary method
         let asinfo = self.db.asinfo();
         let name_lookup =
-            |asns: &[u32]| -> HashMap<u32, String> { asinfo.lookup_names_batch(asns) };
+            |asns: &[u32]| -> HashMap<u32, String> { asinfo.lookup_preferred_names_batch(asns) };
 
         let summary = match as2rel.get_connectivity_summary(asn, max_neighbors, name_lookup) {
             Ok(Some(s)) => s,
@@ -1137,22 +1137,25 @@ impl<'a> InspectLens<'a> {
                         .get_core(aspa_record.customer_asn)
                         .ok()
                         .flatten()
-                        .map(|r| (Some(r.name), Some(r.country)))
+                        .map(|r| {
+                            (
+                                self.db.asinfo().lookup_preferred_name(r.asn),
+                                Some(r.country),
+                            )
+                        })
                         .unwrap_or((None, None));
 
                     // Get providers with names
+                    let provider_names = self
+                        .db
+                        .asinfo()
+                        .lookup_preferred_names_batch(&aspa_record.provider_asns);
                     let providers: Vec<AspaProvider> = aspa_record
                         .provider_asns
                         .iter()
-                        .map(|asn| {
-                            let name = self
-                                .db
-                                .asinfo()
-                                .get_core(*asn)
-                                .ok()
-                                .flatten()
-                                .map(|r| r.name);
-                            AspaProvider { asn: *asn, name }
+                        .map(|asn| AspaProvider {
+                            asn: *asn,
+                            name: provider_names.get(asn).cloned(),
                         })
                         .collect();
 
@@ -1322,7 +1325,9 @@ impl<'a> InspectLens<'a> {
         // Get AS info for the queried ASN
         let asinfo = self.db.asinfo();
         let origin_info = asinfo.get_core(asn).ok().flatten();
-        let origin_name = origin_info.as_ref().map(|i| i.name.clone());
+        let origin_name = asinfo
+            .lookup_preferred_name(asn)
+            .or_else(|| origin_info.as_ref().map(|i| i.name.clone()));
         let origin_country = origin_info.as_ref().map(|i| i.country.clone());
 
         let prefix_entries: Vec<PrefixEntry> = sorted_prefixes
@@ -1353,12 +1358,7 @@ impl<'a> InspectLens<'a> {
 
     /// Lookup AS name by ASN
     pub fn lookup_name(&self, asn: u32) -> Option<String> {
-        self.db
-            .asinfo()
-            .get_core(asn)
-            .ok()
-            .flatten()
-            .map(|r| r.name)
+        self.db.asinfo().lookup_preferred_name(asn)
     }
 
     /// Lookup organization name by ASN
@@ -1373,7 +1373,7 @@ impl<'a> InspectLens<'a> {
 
     /// Batch lookup of AS names
     pub fn lookup_names_batch(&self, asns: &[u32]) -> HashMap<u32, String> {
-        self.db.asinfo().lookup_names_batch(asns)
+        self.db.asinfo().lookup_preferred_names_batch(asns)
     }
 
     // =========================================================================
@@ -1502,7 +1502,10 @@ impl<'a> InspectLens<'a> {
 
         // Core info - full names, no truncation
         lines.push(format!("ASN:     AS{}", detail.core.asn));
-        lines.push(format!("Name:    {}", detail.core.name));
+        lines.push(format!(
+            "Name:    {}",
+            self.preferred_name_from_full(detail)
+        ));
         lines.push(format!("Country: {}", detail.core.country));
 
         if let Some(ref as2org) = detail.as2org {
@@ -1585,7 +1588,7 @@ impl<'a> InspectLens<'a> {
 
                 let row = [
                     format!("AS{}", detail.core.asn),
-                    self.truncate_name(&detail.core.name, config),
+                    self.truncate_name(&self.preferred_name_from_full(detail), config),
                     detail.core.country.clone(),
                     org,
                 ];
@@ -1625,7 +1628,7 @@ impl<'a> InspectLens<'a> {
                     .unwrap_or_else(|| "-".to_string());
                 Some(SimpleRow {
                     asn: format!("AS{}", detail.core.asn),
-                    name: self.truncate_name(&detail.core.name, config),
+                    name: self.truncate_name(&self.preferred_name_from_full(detail), config),
                     country: detail.core.country.clone(),
                     org,
                 })
@@ -1700,7 +1703,7 @@ impl<'a> InspectLens<'a> {
         lines.push(format!("ASN:     AS{}", detail.core.asn));
         lines.push(format!(
             "Name:    {}",
-            self.truncate_name(&detail.core.name, config)
+            self.truncate_name(&self.preferred_name_from_full(detail), config)
         ));
         lines.push(format!("Country: {}", detail.core.country));
 
@@ -1765,7 +1768,7 @@ impl<'a> InspectLens<'a> {
             .iter()
             .map(|o| OriginRow {
                 asn: format!("AS{}", o.core.asn),
-                name: self.truncate_name(&o.core.name, config),
+                name: self.truncate_name(&self.preferred_name_from_full(o), config),
                 country: o.core.country.clone(),
             })
             .collect();
@@ -2201,12 +2204,20 @@ impl<'a> InspectLens<'a> {
                 country: String,
             }
 
+            let preferred_names: HashMap<u32, String> =
+                self.db.asinfo().lookup_preferred_names_batch(
+                    &search.results.iter().map(|r| r.asn).collect::<Vec<_>>(),
+                );
+
             let mut rows: Vec<SearchRow> = search
                 .results
                 .iter()
                 .map(|r| SearchRow {
                     asn: format!("AS{}", r.asn),
-                    name: self.truncate_name(&r.name, config),
+                    name: self.truncate_name(
+                        preferred_names.get(&r.asn).unwrap_or(&r.name).as_str(),
+                        config,
+                    ),
                     country: r.country.clone(),
                 })
                 .collect();
@@ -2233,6 +2244,35 @@ impl<'a> InspectLens<'a> {
         }
 
         lines.join("\n")
+    }
+
+    fn preferred_name_from_full(&self, detail: &AsinfoFullRecord) -> String {
+        if let Some(ref pdb) = detail.peeringdb {
+            if let Some(ref aka) = pdb.aka {
+                if !aka.is_empty() {
+                    return aka.clone();
+                }
+            }
+            if let Some(ref name_long) = pdb.name_long {
+                if !name_long.is_empty() {
+                    return name_long.clone();
+                }
+            }
+            if !pdb.name.is_empty() {
+                return pdb.name.clone();
+            }
+        }
+
+        if let Some(ref as2org) = detail.as2org {
+            if !as2org.org_name.is_empty() {
+                return as2org.org_name.clone();
+            }
+            if !as2org.name.is_empty() {
+                return as2org.name.clone();
+            }
+        }
+
+        detail.core.name.clone()
     }
 
     /// Truncate a name based on display config
