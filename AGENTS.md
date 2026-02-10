@@ -112,13 +112,13 @@ src/
 │   └── monocle/        # Main repositories (asinfo, as2rel, rpki, pfx2as)
 ├── lens/               # Business logic layer
 │   ├── utils.rs        # OutputFormat, shared utilities
-│   ├── time/           # Time parsing (lens-core)
-│   ├── country.rs      # Country lookup (lens-bgpkit)
-│   ├── parse/          # MRT parsing (lens-bgpkit)
-│   ├── search/         # BGP search (lens-bgpkit)
-│   ├── rpki/           # RPKI validation (lens-bgpkit)
-│   └── inspect/        # Unified inspection (lens-full)
-├── server/             # WebSocket server (cli feature)
+│   ├── time/           # Time parsing
+│   ├── country.rs      # Country lookup
+│   ├── parse/          # MRT parsing
+│   ├── search/         # BGP search
+│   ├── rpki/           # RPKI validation
+│   └── inspect/        # Unified inspection
+├── server/             # WebSocket server (requires `server` feature)
 │   └── handlers/       # Method handlers
 └── bin/
     ├── monocle.rs      # CLI entry point

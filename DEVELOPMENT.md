@@ -17,29 +17,29 @@ src/
 ├── lib.rs                    # Public API exports
 ├── config.rs                 # Configuration management
 │
-├── lens/                     # Business logic layer (feature-gated)
+├── lens/                     # Business logic layer (requires `lib` feature)
 │   ├── mod.rs                # Lens module exports
 │   ├── utils.rs              # Shared utilities (OutputFormat, truncate_name)
-│   ├── time/                 # Time parsing lens (lens-core)
+│   ├── time/                 # Time parsing lens
 │   │   └── mod.rs
-│   ├── country.rs            # Country lookup (lens-bgpkit)
-│   ├── ip/                   # IP information lookup (lens-bgpkit)
+│   ├── country.rs            # Country lookup
+│   ├── ip/                   # IP information lookup
 │   │   └── mod.rs
-│   ├── parse/                # MRT file parsing with progress (lens-bgpkit)
+│   ├── parse/                # MRT file parsing with progress
 │   │   └── mod.rs
-│   ├── search/               # BGP message search with progress (lens-bgpkit)
+│   ├── search/               # BGP message search with progress
 │   │   ├── mod.rs
 │   │   └── query_builder.rs
-│   ├── rpki/                 # RPKI validation (lens-bgpkit)
+│   ├── rpki/                 # RPKI validation
 │   │   ├── mod.rs
 │   │   └── commons.rs
-│   ├── pfx2as/               # Prefix-to-ASN types (lens-bgpkit)
+│   ├── pfx2as/               # Prefix-to-ASN types
 │   │   └── mod.rs
-│   ├── as2rel/               # AS-level relationship lens (lens-bgpkit)
+│   ├── as2rel/               # AS-level relationship lens
 │   │   ├── mod.rs
 │   │   ├── args.rs
 │   │   └── types.rs
-│   └── inspect/              # Unified AS/prefix inspection (lens-full)
+│   └── inspect/              # Unified AS/prefix inspection
 │       ├── mod.rs            # InspectLens implementation
 │       └── types.rs          # Result types, section selection
 │
@@ -52,7 +52,7 @@ src/
 │       ├── rpki.rs           # RPKI ROA/ASPA (blob-based prefix storage)
 │       └── pfx2as.rs         # Prefix-to-ASN (blob-based prefix storage)
 │
-├── server/                   # WebSocket server (cli feature)
+├── server/                   # WebSocket server (requires `server` feature)
 │   ├── mod.rs                # Server startup, handle_socket
 │   ├── protocol.rs           # Core protocol types
 │   ├── router.rs             # Router + Dispatcher
@@ -498,18 +498,15 @@ pub struct MyArgs { ... }
 #[cfg_attr(feature = "display", derive(tabled::Tabled))]
 pub struct MyResult { ... }
 
-// Lens-specific features
-#[cfg(feature = "lens-bgpkit")]
+// Lens module (requires `lib` feature)
+#[cfg(feature = "lib")]
 pub mod my_lens;
 ```
 
-Feature tiers:
-- `database`: SQLite operations only
-- `lens-core`: Standalone lenses (TimeLens)
-- `lens-bgpkit`: BGP-related lenses
-- `lens-full`: All lenses including InspectLens
-- `display`: Table formatting with tabled
-- `cli`: Full CLI binary with server support
+Feature tiers (simplified):
+- `lib`: Complete library (database + all lenses + display)
+- `server`: WebSocket server (implies lib)
+- `cli`: Full CLI binary (implies lib and server)
 
 ### Output Formatting
 

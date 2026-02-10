@@ -16,6 +16,7 @@ See through all Border Gateway Protocol (BGP) data with a monocle.
   - [Using `homebrew` on macOS](#using-homebrew-on-macos)
   - [Using `cargo-binstall`](#using-cargo-binstall)
 - [Library Usage](#library-usage)
+- [Documentation](#documentation)
 - [Usage](#usage)
   - [`monocle parse`](#monocle-parse)
     - [Output Format](#output-format)
@@ -98,52 +99,63 @@ Monocle can also be used as a library in your Rust projects. Add it to your `Car
 
 ```toml
 [dependencies]
-# Full library with CLI argument support (default)
+# Default: full CLI binary with all features
 monocle = "1.0"
 
-# Minimal database access only
-monocle = { version = "1.0", default-features = false, features = ["database"] }
+# Library only - all lenses and database operations
+monocle = { version = "1.0", default-features = false, features = ["lib"] }
 
-# BGP operations without CLI overhead
-monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
-
-# Full functionality without CLI
-monocle = { version = "1.0", default-features = false, features = ["lens-full"] }
+# Library + WebSocket server
+monocle = { version = "1.0", default-features = false, features = ["server"] }
 ```
 
 ### Feature Tiers
 
-Monocle's features are organized in tiers for minimal dependency footprint:
+Monocle uses a simplified feature system with three options:
 
-| Feature | Description | Key Dependencies |
-|---------|-------------|------------------|
-| `database` | SQLite operations only | rusqlite, oneio, ipnet, chrono |
-| `lens-core` | Standalone lenses (TimeLens) | chrono-humanize, dateparser |
-| `lens-bgpkit` | BGP-related lenses | bgpkit-*, rayon, tabled |
-| `lens-full` | All lenses including InspectLens | All above |
-| `cli` (default) | Full CLI binary with server | axum, tokio, tower-http |
+| Feature | Description | Implies |
+|---------|-------------|---------|
+| `lib` | Complete library (database + all lenses + display) | - |
+| `server` | WebSocket server for programmatic API access | `lib` |
+| `cli` (default) | Full CLI binary with all functionality | `lib`, `server` |
+
+### Documentation
+
+The following documentation files are available in the repository:
+
+| File | Description |
+|------|-------------|
+| [`README.md`](README.md) (this file) | User-facing CLI and library overview |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Overall project structure and design principles |
+| [`DEVELOPMENT.md`](DEVELOPMENT.md) | Contributor guide for adding lenses and fixing bugs |
+| [`AGENTS.md`](AGENTS.md) | AI coding agent guidelines and code style |
+| [`CHANGELOG.md`](CHANGELOG.md) | Version history and breaking changes |
+| [`src/server/README.md`](src/server/README.md) | WebSocket API specification |
+| [`src/lens/README.md`](src/lens/README.md) | Lens module patterns and conventions |
+| [`src/database/README.md`](src/database/README.md) | Database module overview |
+| [`examples/README.md`](examples/README.md) | Usage examples by feature tier |
 
 ### Architecture
 
 The library is organized into the following core modules:
 
-- **`database`**: All database functionality
+- **`database`**: All database functionality (requires `lib` feature)
   - `core`: Connection management and schema definitions
   - `session`: One-time storage for search results
   - `monocle`: Main monocle database with ASInfo, AS2Rel, RPKI, and Pfx2as caching
 
-- **`lens`**: High-level business logic (reusable across CLI, API, GUI)
-  - `time`: Time parsing and formatting lens (lens-core)
-  - `country`: Country code/name lookup lens (lens-bgpkit)
-  - `ip`: IP information lookup lens (lens-bgpkit)
-  - `parse`: MRT file parsing lens with progress tracking (lens-bgpkit)
-  - `search`: BGP message search lens with progress tracking (lens-bgpkit)
-  - `rpki`: RPKI validation and data lens (lens-bgpkit)
-  - `pfx2as`: Prefix-to-AS mapping types (lens-bgpkit)
-  - `as2rel`: AS-level relationships lens (lens-bgpkit)
-  - `inspect`: Unified AS/prefix inspection lens (lens-full)
+- **`lens`**: High-level business logic (requires `lib` feature)
+  - `time`: Time parsing and formatting lens
+  - `country`: Country code/name lookup lens
+  - `ip`: IP information lookup lens
+  - `parse`: MRT file parsing lens with progress tracking
+  - `search`: BGP message search lens with progress tracking
+  - `rpki`: RPKI validation and data lens
+  - `pfx2as`: Prefix-to-AS mapping types
+  - `as2rel`: AS-level relationships lens
+  - `inspect`: Unified AS/prefix inspection lens
 
-- **`server`**: WebSocket API server (cli feature)
+- **`server`**: WebSocket API server (requires `server` feature)
 
 For detailed architecture documentation, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 

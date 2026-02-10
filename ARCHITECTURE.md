@@ -88,38 +88,38 @@ src/
 │   ├── mod.rs
 │   ├── README.md
 │   ├── utils.rs              # OutputFormat, formatting helpers
-│   ├── country.rs            # Country code/name lookup (lens-bgpkit)
+│   ├── country.rs            # Country code/name lookup
 │   │
-│   ├── as2rel/               # AS relationship lens (lens-bgpkit)
+│   ├── as2rel/               # AS relationship lens
 │   │   ├── mod.rs
 │   │   ├── args.rs
 │   │   └── types.rs
 │   │
-│   ├── inspect/              # Unified AS/prefix inspection (lens-full)
+│   ├── inspect/              # Unified AS/prefix inspection
 │   │   ├── mod.rs            # InspectLens implementation
 │   │   └── types.rs          # Result types, section selection
 │   │
-│   ├── ip/                   # IP information lookup (lens-bgpkit)
+│   ├── ip/                   # IP information lookup
 │   │   └── mod.rs
 │   │
-│   ├── parse/                # MRT file parsing (lens-bgpkit)
+│   ├── parse/                # MRT file parsing
 │   │   └── mod.rs
 │   │
-│   ├── pfx2as/               # Prefix-to-ASN mapping types (lens-bgpkit)
+│   ├── pfx2as/               # Prefix-to-ASN mapping types
 │   │   └── mod.rs            # Types only; repository handles lookups
 │   │
-│   ├── rpki/                 # RPKI validation and data (lens-bgpkit)
+│   ├── rpki/                 # RPKI validation and data
 │   │   ├── mod.rs            # RpkiLens with validation logic
 │   │   └── commons.rs        # bgpkit-commons integration
 │   │
-│   ├── search/               # BGP message search (lens-bgpkit)
+│   ├── search/               # BGP message search
 │   │   ├── mod.rs
 │   │   └── query_builder.rs
 │   │
-│   └── time/                 # Time parsing and formatting (lens-core)
+│   └── time/                 # Time parsing and formatting
 │       └── mod.rs
 │
-├── server/                   # WebSocket server (cli feature)
+├── server/                   # WebSocket server (requires `server` feature)
 │   ├── mod.rs                # Server startup, handle_socket
 │   ├── protocol.rs           # Core protocol types (RequestEnvelope, ResponseEnvelope)
 │   ├── router.rs             # Router + Dispatcher

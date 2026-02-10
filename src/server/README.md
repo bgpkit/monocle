@@ -263,17 +263,17 @@ Returns a minimal method catalog for discoverability (names + short schemas). Ke
 
 | Namespace | Description | Feature |
 |-----------|-------------|---------|
-| `system.*` | Server introspection | cli |
-| `time.*` | Time parsing utilities | lens-core |
-| `ip.*` | IP information lookup | lens-bgpkit |
-| `rpki.*` | RPKI validation and data | lens-bgpkit |
-| `as2rel.*` | AS-level relationships | lens-bgpkit |
-| `pfx2as.*` | Prefix-to-ASN mapping | lens-bgpkit |
-| `country.*` | Country code/name lookup | lens-bgpkit |
-| `inspect.*` | Unified AS/prefix inspection | lens-full |
-| `parse.*` | MRT file parsing (streaming) | lens-bgpkit |
-| `search.*` | BGP message search (streaming) | lens-bgpkit |
-| `database.*` | Database management | database |
+| `system.*` | Server introspection | server |
+| `time.*` | Time parsing utilities | lib |
+| `ip.*` | IP information lookup | lib |
+| `rpki.*` | RPKI validation and data | lib |
+| `as2rel.*` | AS-level relationships | lib |
+| `pfx2as.*` | Prefix-to-ASN mapping | lib |
+| `country.*` | Country code/name lookup | lib |
+| `inspect.*` | Unified AS/prefix inspection | lib |
+| `parse.*` | MRT file parsing (streaming) | lib |
+| `search.*` | BGP message search (streaming) | lib |
+| `database.*` | Database management | lib |
 
 Methods are organized into namespaces matching the lens modules:
 
