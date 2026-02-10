@@ -9,33 +9,24 @@
 //!
 //! # Feature Flags
 //!
-//! Monocle uses a layered feature system to minimize dependencies based on your needs:
+//! Monocle uses a simplified feature system with three options:
 //!
-//! | Feature | Description | Key Dependencies |
-//! |---------|-------------|------------------|
-//! | `database` | SQLite database operations only | `rusqlite` |
-//! | `lens-core` | Standalone lenses (TimeLens, OutputFormat) | `chrono-humanize`, `dateparser` |
-//! | `lens-bgpkit` | BGP-related lenses (Parse, Search, RPKI, Country) | `bgpkit-*`, `rayon` |
-//! | `lens-full` | All lenses including InspectLens | All above |
-//! | `display` | Table formatting with `tabled` | `tabled` |
-//! | `cli` | Full CLI binary with server support | All above + `clap`, `axum` |
+//! | Feature | Description | Implies |
+//! |---------|-------------|---------|
+//! | `lib` | Complete library (database + all lenses + display) | - |
+//! | `server` | WebSocket server for programmatic API access | `lib` |
+//! | `cli` | Full CLI binary with all functionality | `lib`, `server` |
 //!
 //! ## Choosing Features
 //!
 //! ```toml
-//! # Minimal - just database operations
-//! monocle = { version = "1.0", default-features = false, features = ["database"] }
+//! # Library-only - all lenses and database operations
+//! monocle = { version = "1.0", default-features = false, features = ["lib"] }
 //!
-//! # Standalone utilities (time parsing, output formatting)
-//! monocle = { version = "1.0", default-features = false, features = ["lens-core"] }
+//! # Library + WebSocket server
+//! monocle = { version = "1.0", default-features = false, features = ["server"] }
 //!
-//! # BGP operations without CLI overhead
-//! monocle = { version = "1.0", default-features = false, features = ["lens-bgpkit"] }
-//!
-//! # Full lens functionality with display support
-//! monocle = { version = "1.0", default-features = false, features = ["lens-full", "display"] }
-//!
-//! # Default (CLI binary)
+//! # Default (full CLI binary)
 //! monocle = "1.0"
 //! ```
 //!
@@ -43,21 +34,23 @@
 //!
 //! The library is organized into the following modules:
 //!
-//! - **[`database`]**: Database functionality (requires `database` feature)
+//! - **[`database`]**: Database functionality (requires `lib` feature)
 //!   - `core`: SQLite connection management and schema definitions
 //!   - `session`: One-time storage (e.g., search results)
 //!   - `monocle`: Main monocle database (ASInfo, AS2Rel, RPKI, Pfx2as)
 //!
-//! - **[`lens`]**: High-level business logic (feature-gated)
-//!   - `time`: Time parsing and formatting (requires `lens-core`)
-//!   - `country`: Country code/name lookup (requires `lens-bgpkit`)
-//!   - `ip`: IP information lookup (requires `lens-bgpkit`)
-//!   - `parse`: MRT file parsing (requires `lens-bgpkit`)
-//!   - `search`: BGP message search (requires `lens-bgpkit`)
-//!   - `rpki`: RPKI validation and data (requires `lens-bgpkit`)
-//!   - `pfx2as`: Prefix-to-ASN mapping (requires `lens-bgpkit`)
-//!   - `as2rel`: AS-level relationships (requires `lens-bgpkit`)
-//!   - `inspect`: Unified AS/prefix lookup (requires `lens-full`)
+//! - **[`lens`]**: High-level business logic (requires `lib` feature)
+//!   - `time`: Time parsing and formatting
+//!   - `country`: Country code/name lookup
+//!   - `ip`: IP information lookup
+//!   - `parse`: MRT file parsing
+//!   - `search`: BGP message search
+//!   - `rpki`: RPKI validation and data
+//!   - `pfx2as`: Prefix-to-ASN mapping
+//!   - `as2rel`: AS-level relationships
+//!   - `inspect`: Unified AS/prefix lookup
+//!
+//! - **[`server`]**: WebSocket API server (requires `server` feature)
 //!
 //! - **[`config`]**: Configuration management (always available)
 //!
