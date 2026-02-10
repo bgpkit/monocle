@@ -4,6 +4,62 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### Breaking Changes
+
+* **CLI flag renamed**: `--no-refresh` renamed to `--no-update` for consistency with "update" terminology
+  * Old: `monocle --no-refresh <command>`
+  * New: `monocle --no-update <command>`
+  
+* **Config subcommands renamed**: Removed `db-` prefix from config subcommands for cleaner syntax
+  * `monocle config db-refresh` → `monocle config update`
+  * `monocle config db-backup` → `monocle config backup`
+  * `monocle config db-sources` → `monocle config sources`
+  
+* **Configurable TTL for all data sources**: All data sources now have configurable cache TTL with 7-day default
+  * Added `asinfo_cache_ttl_secs` config option (default: 7 days)
+  * Added `as2rel_cache_ttl_secs` config option (default: 7 days)
+  * Changed `rpki_cache_ttl_secs` default from 1 hour to 7 days
+  * Changed `pfx2as_cache_ttl_secs` default from 24 hours to 7 days
+  * Configure via `~/.monocle/monocle.toml` or environment variables (`MONOCLE_ASINFO_CACHE_TTL_SECS`, etc.)
+
+* **Simplified feature flags**: Replaced 6-tier feature system with 3 clear features
+  * Old: `database`, `lens-core`, `lens-bgpkit`, `lens-full`, `display`, `cli`
+  * New: `lib`, `server`, `cli`
+  * Quick guide:
+    - Need CLI binary? Use `cli` (includes everything)
+    - Need WebSocket server without CLI? Use `server` (includes lib)
+    - Need only library/data access? Use `lib` (database + all lenses + display)
+  * Display (tabled) now always included with `lib` feature
+
+* **Standardized database refresh API**: Consistent interface for all data sources
+  * New `RefreshResult` struct with `records_loaded`, `source`, `timestamp`, `details`
+  * Renamed methods for consistency:
+    - `bootstrap_asinfo()` → `refresh_asinfo()` (with deprecated alias)
+    - `update_as2rel()` → `refresh_as2rel()` (with deprecated alias)
+  * Added missing methods:
+    - `refresh_asinfo_from(path)` - Load ASInfo from custom path
+    - `refresh_rpki()` - Load RPKI data from records
+    - `refresh_pfx2as()` - Load Pfx2as data from records
+  * All repositories now use consistent `needs_*_refresh(ttl)` pattern
+  * Removed hardcoded TTL methods (`should_update()` from AS2Rel)
+  * All repositories have both URL and path loading methods
+
+* **Reorganized examples**: One example per lens with `_lens` suffix
+  * Flat directory structure: `examples/time_lens.rs`, `examples/rpki_lens.rs`, etc.
+  * Added new examples for IpLens, Pfx2asLens, As2relLens
+  * Removed verbose multi-example files
+  * All examples use `lib` feature exclusively
+
+### New Features
+
+* **`monocle config sources`**: Shows staleness status based on TTL for all data sources
+  * "Stale" column shows whether each source needs updating based on its configured TTL
+  * Configuration section shows current TTL values for all sources
+
+### Bug Fixes
+
+* Avoid creating a new SQLite database when `monocle config sources` inspects staleness
+
 ### Code Improvements
 
 * **Data refresh logging**: CLI now shows specific reason for data refresh ("data is empty" vs "data is outdated") instead of generic "empty or outdated" message

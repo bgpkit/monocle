@@ -142,10 +142,10 @@ impl WsMethod for InspectQueryHandler {
 
         // Do all DB work in a block before any awaits to avoid Send issues
         let (refresh_summary, result): (DataRefreshSummary, InspectResult) = {
-            let db = MonocleDatabase::open_in_dir(&ctx.data_dir)
+            let db = MonocleDatabase::open_in_dir(ctx.data_dir())
                 .map_err(|e| WsError::internal(format!("Failed to open database: {}", e)))?;
 
-            let lens = InspectLens::new(&db);
+            let lens = InspectLens::new(&db, &ctx.config);
 
             // Ensure data is available, refreshing if needed
             let refresh_summary = lens
@@ -298,10 +298,10 @@ impl WsMethod for InspectRefreshHandler {
     ) -> WsResult<()> {
         // Do all DB work in a block before any awaits
         let summary: DataRefreshSummary = {
-            let db = MonocleDatabase::open_in_dir(&ctx.data_dir)
+            let db = MonocleDatabase::open_in_dir(ctx.data_dir())
                 .map_err(|e| WsError::internal(format!("Failed to open database: {}", e)))?;
 
-            let lens = InspectLens::new(&db);
+            let lens = InspectLens::new(&db, &ctx.config);
 
             // Perform refresh
             lens.ensure_data_available()

@@ -6,19 +6,24 @@
 //!
 //! # Feature Requirements
 //!
-//! Lenses are organized by the features they require:
+//! All lenses require the `lib` feature to be enabled.
 //!
-//! | Lens | Feature Required | Dependencies |
-//! |------|-----------------|--------------|
-//! | `TimeLens` | `lens-core` | chrono, dateparser |
-//! | `CountryLens` | `lens-bgpkit` | bgpkit-commons |
-//! | `IpLens` | `lens-bgpkit` | ureq, radar-rs |
-//! | `ParseLens` | `lens-bgpkit` | bgpkit-parser |
-//! | `SearchLens` | `lens-bgpkit` | bgpkit-broker, bgpkit-parser, rayon |
-//! | `RpkiLens` | `lens-bgpkit` | bgpkit-commons |
-//! | `Pfx2asLens` | `lens-bgpkit` | bgpkit-commons, oneio |
-//! | `As2relLens` | `lens-bgpkit` | (database only) |
-//! | `InspectLens` | `lens-full` | All above |
+//! **Quick Guide:**
+//! - Need the CLI binary? Use `cli` feature (includes everything)
+//! - Need WebSocket server without CLI? Use `server` feature (includes lib)
+//! - Need only library/data access? Use `lib` feature (this module)
+//!
+//! | Lens | Description | Dependencies |
+//! |------|-------------|--------------|
+//! | `TimeLens` | Time parsing and formatting | chrono, dateparser |
+//! | `CountryLens` | Country code/name lookup | bgpkit-commons |
+//! | `IpLens` | IP information lookup | ureq, radar-rs |
+//! | `ParseLens` | MRT file parsing | bgpkit-parser |
+//! | `SearchLens` | BGP message search | bgpkit-broker, bgpkit-parser, rayon |
+//! | `RpkiLens` | RPKI validation and data | bgpkit-commons |
+//! | `Pfx2asLens` | Prefix-to-ASN mapping | bgpkit-commons, oneio |
+//! | `As2relLens` | AS-level relationships | database |
+//! | `InspectLens` | Unified AS/prefix lookup | All above |
 //!
 //! # Architecture
 //!
@@ -36,68 +41,60 @@
 //! specific lens module you need:
 //!
 //! ```rust,ignore
-//! // Time parsing (lens-core)
+//! // Time parsing
 //! use monocle::lens::time::{TimeLens, TimeParseArgs, TimeOutputFormat};
 //!
-//! // RPKI validation (lens-bgpkit)
+//! // RPKI validation
 //! use monocle::lens::rpki::{RpkiLens, RpkiValidationArgs, RpkiListArgs, RpkiRoaEntry};
 //!
-//! // IP information (lens-bgpkit)
+//! // IP information
 //! use monocle::lens::ip::{IpLens, IpLookupArgs, IpInfo};
 //!
-//! // Unified AS/prefix inspection (lens-full)
+//! // Unified AS/prefix inspection
 //! use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 //! ```
 
 // =============================================================================
-// Utility module (always available when any lens feature is enabled)
+// Utility module (always available when lib feature is enabled)
 // =============================================================================
 pub mod utils;
 
 // =============================================================================
-// Core lenses (lens-core feature)
+// All lenses (require lib feature)
 // =============================================================================
 
 // TimeLens - time parsing and formatting
-#[cfg(feature = "lens-core")]
+#[cfg(feature = "lib")]
 pub mod time;
 
-// =============================================================================
-// BGPKIT lenses (lens-bgpkit feature)
-// =============================================================================
-
 // CountryLens - country code/name lookup using bgpkit-commons
-#[cfg(feature = "lens-bgpkit")]
+#[cfg(feature = "lib")]
 pub mod country;
 
 // IpLens - IP information lookup
-#[cfg(feature = "lens-bgpkit")]
+#[cfg(feature = "lib")]
 pub mod ip;
 
 // ParseLens - MRT file parsing with bgpkit-parser
-#[cfg(feature = "lens-bgpkit")]
+#[cfg(feature = "lib")]
 pub mod parse;
 
 // SearchLens - BGP message search across MRT files
-#[cfg(feature = "lens-bgpkit")]
+#[cfg(feature = "lib")]
 pub mod search;
 
 // RpkiLens - RPKI validation and data
-#[cfg(feature = "lens-bgpkit")]
+#[cfg(feature = "lib")]
 pub mod rpki;
 
 // Pfx2asLens - prefix-to-ASN mapping
-#[cfg(feature = "lens-bgpkit")]
+#[cfg(feature = "lib")]
 pub mod pfx2as;
 
-// As2relLens - AS-level relationships (uses database, but grouped with bgpkit for convenience)
-#[cfg(feature = "lens-bgpkit")]
+// As2relLens - AS-level relationships
+#[cfg(feature = "lib")]
 pub mod as2rel;
 
-// =============================================================================
-// Full lenses (lens-full feature)
-// =============================================================================
-
 // InspectLens - unified AS and prefix information lookup
-#[cfg(feature = "lens-full")]
+#[cfg(feature = "lib")]
 pub mod inspect;

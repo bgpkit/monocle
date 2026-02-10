@@ -17,133 +17,96 @@ name = "monocle"
 path = "src/bin/monocle.rs"
 required-features = ["cli"]
 
-# Existing examples (require lens-bgpkit)
+# =============================================================================
+# Examples - One per lens
+# =============================================================================
+
 [[example]]
-name = "search_bgp_messages"
-path = "examples/bgpkit/search_bgp_messages.rs"
-required-features = ["lens-bgpkit"]
+name = "time_lens"
+path = "examples/time_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "country_lens"
+path = "examples/country_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "ip_lens"
+path = "examples/ip_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "parse_lens"
+path = "examples/parse_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "search_lens"
+path = "examples/search_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "rpki_lens"
+path = "examples/rpki_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "pfx2as_lens"
+path = "examples/pfx2as_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "as2rel_lens"
+path = "examples/as2rel_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "inspect_lens"
+path = "examples/inspect_lens.rs"
+required-features = ["lib"]
+
+[[example]]
+name = "database"
+path = "examples/database.rs"
+required-features = ["lib"]
 
 [[example]]
 name = "ws_client_all"
 path = "examples/ws_client_all.rs"
-required-features = ["cli"]
-
-# =============================================================================
-# Examples organized by feature requirements
-# =============================================================================
-
-# Standalone examples - minimal dependencies (no database, no bgpkit-*)
-[[example]]
-name = "time_parsing"
-path = "examples/standalone/time_parsing.rs"
-required-features = ["lens-core"]
-
-[[example]]
-name = "output_formats"
-path = "examples/standalone/output_formats.rs"
-required-features = ["lens-core"]
-
-# Database examples - SQLite operations only
-[[example]]
-name = "database_basics"
-path = "examples/database/database_basics.rs"
-required-features = ["database"]
-
-[[example]]
-name = "as2rel_queries"
-path = "examples/database/as2rel_queries.rs"
-required-features = ["database"]
-
-[[example]]
-name = "pfx2as_search"
-path = "examples/database/pfx2as_search.rs"
-required-features = ["lens-bgpkit"]
-
-# BGPKIT examples - requires bgpkit-* crates
-[[example]]
-name = "country_lookup"
-path = "examples/bgpkit/country_lookup.rs"
-required-features = ["lens-bgpkit"]
-
-[[example]]
-name = "rpki_validation"
-path = "examples/bgpkit/rpki_validation.rs"
-required-features = ["lens-bgpkit"]
-
-[[example]]
-name = "mrt_parsing"
-path = "examples/bgpkit/mrt_parsing.rs"
-required-features = ["lens-bgpkit"]
-
-# Full examples - all features
-[[example]]
-name = "inspect_unified"
-path = "examples/full/inspect_unified.rs"
-required-features = ["lens-full"]
-
-[[example]]
-name = "progress_callbacks"
-path = "examples/full/progress_callbacks.rs"
-required-features = ["lens-full"]
+required-features = ["server"]
 
 [features]
 default = ["cli"]
 
 # =============================================================================
-# Core feature tiers (layered dependencies)
+# Feature flags
 # =============================================================================
 
-# Database layer - SQLite operations only
-# Minimal dependencies for just database access
-# Note: oneio is needed for loading data from URLs in the database layer
-database = ["dep:oneio", "dep:ipnet"]
-
-# Core lens layer - standalone lenses that don't need bgpkit-*
-# Includes: TimeLens, OutputFormat utilities
-# Note: includes database feature for common usage patterns
-lens-core = [
-    "database",
+# Library feature - includes all database operations, lenses, and display
+lib = [
+    # Database
+    "dep:oneio",
+    "dep:ipnet",
+    # Lenses
     "dep:chrono-humanize",
     "dep:dateparser",
     "dep:humantime",
-]
-
-# BGPKIT lens layer - lenses requiring bgpkit-* crates
-# Includes: CountryLens, ParseLens, SearchLens, IpLens, RpkiLens (commons), Pfx2asLens
-# Note: includes display for table formatting (tabled is lightweight)
-lens-bgpkit = [
-    "lens-core",
-    "database",
-    "display",
     "dep:bgpkit-broker",
     "dep:bgpkit-parser",
     "dep:bgpkit-commons",
     "dep:itertools",
     "dep:radar-rs",
     "dep:rayon",
+    # Display (always included with lib)
+    "dep:tabled",
+    "dep:json_to_table",
 ]
 
-# Full lens layer - all lenses including InspectLens
-lens-full = [
-    "lens-bgpkit",
-]
-
-# Display support - tabled integration for pretty output
-display = ["dep:tabled", "dep:json_to_table"]
-
-# =============================================================================
-# CLI and server features
-# =============================================================================
-
-# CLI support (clap derives, terminal output, progress bars) + WebSocket server
-cli = [
-    "lens-full",
-    "display",
-    "dep:clap",
-    "dep:indicatif",
-    "dep:tracing-subscriber",
-    "dep:libc",
-    # server deps
+# WebSocket server feature - for programmatic API access
+# Can be used standalone or with CLI
+server = [
+    "lib",
     "dep:axum",
     "dep:tokio",
     "dep:tokio-util",
@@ -153,7 +116,18 @@ cli = [
     "dep:tower-http",
 ]
 
-# Full build with all features (alias for cli)
+# CLI feature - full binary with all functionality
+# Includes lib and server features
+cli = [
+    "lib",
+    "server",
+    "dep:clap",
+    "dep:indicatif",
+    "dep:tracing-subscriber",
+    "dep:libc",
+]
+
+# Full build (backward compatibility alias)
 full = ["cli"]
 
 [dependencies]
@@ -171,21 +145,17 @@ serde_json = "1.0"
 tracing = "0.1"
 
 # =============================================================================
-# Database dependencies (optional but commonly needed)
+# Library dependencies (enabled by "lib" feature)
 # =============================================================================
+
+# Database
 ipnet = { version = "2.10", features = ["json"], optional = true }
 oneio = { version = "0.20.1", default-features = false, features = ["https", "gz", "bz", "json"], optional = true }
 
-# =============================================================================
-# Lens-core dependencies (optional)
-# =============================================================================
+# Lenses
 chrono-humanize = { version = "0.2", optional = true }
 dateparser = { version = "0.2", optional = true }
 humantime = { version = "2.1", optional = true }
-
-# =============================================================================
-# Lens-bgpkit dependencies (optional)
-# =============================================================================
 bgpkit-broker = { version = "0.10.1", optional = true }
 bgpkit-parser = { version = "0.15.0", features = ["serde"], optional = true }
 bgpkit-commons = { version = "0.10.1", features = ["asinfo", "rpki", "countries"], optional = true }
@@ -193,22 +163,12 @@ itertools = { version = "0.14", optional = true }
 radar-rs = { version = "0.1.0", optional = true }
 rayon = { version = "1.8", optional = true }
 
-# =============================================================================
-# Display dependencies (optional)
-# =============================================================================
+# Display
 tabled = { version = "0.20", optional = true }
 json_to_table = { version = "0.12.0", optional = true }
 
 # =============================================================================
-# CLI-only dependencies (optional)
-# =============================================================================
-clap = { version = "4.1", features = ["derive"], optional = true }
-libc = { version = "0.2", optional = true }
-indicatif = { version = "0.18.0", optional = true }
-tracing-subscriber = { version = "0.3", optional = true }
-
-# =============================================================================
-# WebSocket server dependencies (optional, included in cli)
+# Server dependencies (enabled by "server" feature)
 # =============================================================================
 axum = { version = "0.7", features = ["ws"], optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
@@ -217,6 +177,14 @@ futures = { version = "0.3", optional = true }
 uuid = { version = "1.0", features = ["v4"], optional = true }
 async-trait = { version = "0.1", optional = true }
 tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+
+# =============================================================================
+# CLI-only dependencies (enabled by "cli" feature)
+# =============================================================================
+clap = { version = "4.1", features = ["derive"], optional = true }
+libc = { version = "0.2", optional = true }
+indicatif = { version = "0.18.0", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
 
 [dev-dependencies]
 bgpkit-parser = { version = "0.15.0", features = ["serde"] }

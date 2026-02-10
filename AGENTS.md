@@ -90,17 +90,15 @@ Use conditional compilation for feature-specific code:
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 pub struct MyArgs { ... }
 
-#[cfg_attr(feature = "display", derive(tabled::Tabled))]
+// Display (tabled) is always available with lib feature
+#[derive(tabled::Tabled)]
 pub struct MyResult { ... }
 ```
 
-Feature tiers (each includes the previous):
-- `database`: SQLite operations only
-- `lens-core`: Standalone lenses (TimeLens)
-- `lens-bgpkit`: BGP-related lenses
-- `lens-full`: All lenses including InspectLens
-- `display`: Table formatting with tabled
-- `cli`: Full CLI binary with server support
+Feature flags (3 simple options):
+- `lib`: Complete library (database + all lenses + display)
+- `server`: WebSocket server (implies lib)
+- `cli`: Full CLI binary (implies lib and server)
 
 ## Project Structure
 
@@ -160,8 +158,11 @@ mod tests {
 - Keep language factual and professional
 - Avoid words like "comprehensive", "extensive", "amazing", "powerful", "robust"
 - Use objective language: "Added X", "Fixed Y", "Updated Z"
-- Update CHANGELOG.md for fixes/features in "Unreleased changes" section
-- When changing `lib.rs` docs, run: `cargo readme > README.md`
+- **Update CHANGELOG.md for every commit** - Add entries to "Unreleased changes" section for:
+  - Breaking changes
+  - New features
+  - Bug fixes
+  - Code improvements
 - When pushing commits, list all commits first using `git log --oneline origin/[branch]..HEAD` and ask for confirmation
 
 ## Common Patterns

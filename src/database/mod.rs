@@ -53,8 +53,8 @@
 //! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
 //!
 //! // Bootstrap ASInfo data if needed
-//! if db.needs_asinfo_bootstrap() {
-//!     db.bootstrap_asinfo()?;
+//! if db.needs_asinfo_refresh(Duration::from_secs(7 * 24 * 60 * 60)) {
+//!     db.refresh_asinfo()?;
 //! }
 //!
 //! // Query AS data
@@ -122,8 +122,8 @@ pub use monocle::{
 };
 
 // Session types (SQLite-based for search result exports)
-// Requires lens-bgpkit feature because MsgStore depends on bgpkit_parser::BgpElem
-#[cfg(feature = "lens-bgpkit")]
+// Requires lib feature because MsgStore depends on bgpkit_parser::BgpElem
+#[cfg(feature = "lib")]
 pub use session::MsgStore;
 
 // =============================================================================

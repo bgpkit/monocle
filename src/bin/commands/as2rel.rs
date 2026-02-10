@@ -5,6 +5,7 @@ use monocle::lens::utils::{truncate_name, OutputFormat, DEFAULT_NAME_MAX_LEN};
 use monocle::MonocleConfig;
 use serde::Serialize;
 use serde_json::json;
+use std::time::Duration;
 use tabled::settings::Style;
 use tabled::Table;
 
@@ -79,12 +80,7 @@ pub struct As2relArgs {
     pub is_peer: bool,
 }
 
-pub fn run(
-    config: &MonocleConfig,
-    args: As2relArgs,
-    output_format: OutputFormat,
-    no_refresh: bool,
-) {
+pub fn run(config: &MonocleConfig, args: As2relArgs, output_format: OutputFormat, no_update: bool) {
     let As2relArgs {
         asns,
         update,
@@ -135,8 +131,8 @@ pub fn run(
 
     // Handle explicit updates
     if update || update_with.is_some() {
-        if no_refresh {
-            eprintln!("[monocle] Warning: --update ignored because --no-refresh is set");
+        if no_update {
+            eprintln!("[monocle] Warning: --update ignored because --no-update is set");
         } else {
             eprintln!("[monocle] Updating AS2rel data...");
 
@@ -148,7 +144,7 @@ pub fn run(
                 }
             };
 
-            let lens = As2relLens::new(&db);
+            let lens = As2relLens::with_ttl(&db, config.as2rel_cache_ttl());
             let result = match &update_with {
                 Some(path) => lens.update_from(path),
                 None => lens.update(),
@@ -181,6 +177,7 @@ pub fn run(
                 is_upstream,
                 is_downstream,
                 is_peer,
+                config.as2rel_cache_ttl(),
             );
             return;
         }
@@ -195,16 +192,16 @@ pub fn run(
         }
     };
 
-    let lens = As2relLens::new(&db);
+    let lens = As2relLens::with_ttl(&db, config.as2rel_cache_ttl());
 
     // Check if data needs to be initialized or updated automatically
     if let Some(reason) = lens.update_reason() {
-        if no_refresh {
+        if no_update {
             eprintln!(
                 "[monocle] Warning: AS2rel {} Results may be incomplete.",
                 reason
             );
-            eprintln!("[monocle]          Run without --no-refresh or use 'monocle config db-refresh --as2rel' to load data.");
+            eprintln!("[monocle]          Run without --no-update or use 'monocle config update --as2rel' to load data.");
         } else {
             eprintln!("[monocle] AS2rel {}, updating now...", reason);
 
@@ -237,6 +234,7 @@ pub fn run(
         is_upstream,
         is_downstream,
         is_peer,
+        config.as2rel_cache_ttl(),
     );
 }
 
@@ -275,8 +273,9 @@ fn run_query(
     is_upstream: bool,
     is_downstream: bool,
     is_peer: bool,
+    ttl: Duration,
 ) {
-    let lens = As2relLens::new(db);
+    let lens = As2relLens::with_ttl(db, ttl);
 
     // Build search args
     let search_args = As2relSearchArgs {

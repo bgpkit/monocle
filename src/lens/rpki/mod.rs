@@ -383,17 +383,20 @@ impl<'a> RpkiLens<'a> {
     }
 
     /// Check if the cache needs refresh (empty or expired)
-    pub fn needs_refresh(&self) -> Result<bool> {
-        Ok(self
-            .db
-            .rpki()
-            .needs_refresh(crate::database::DEFAULT_RPKI_CACHE_TTL))
+    ///
+    /// Uses the provided TTL to determine if the cache is stale.
+    pub fn needs_refresh(&self, ttl: std::time::Duration) -> Result<bool> {
+        Ok(self.db.rpki().needs_refresh(ttl))
     }
 
     /// Check why the cache needs refresh, if at all
     ///
     /// Returns `Some(RefreshReason)` if refresh is needed, `None` if data is current.
-    pub fn refresh_reason(&self) -> Result<Option<crate::lens::utils::RefreshReason>> {
+    /// Uses the provided TTL to determine if the cache is stale.
+    pub fn refresh_reason(
+        &self,
+        ttl: std::time::Duration,
+    ) -> Result<Option<crate::lens::utils::RefreshReason>> {
         use crate::lens::utils::RefreshReason;
 
         let rpki = self.db.rpki();
@@ -404,7 +407,7 @@ impl<'a> RpkiLens<'a> {
         }
 
         // Check if outdated
-        if rpki.needs_refresh(crate::database::DEFAULT_RPKI_CACHE_TTL) {
+        if rpki.needs_refresh(ttl) {
             return Ok(Some(RefreshReason::Outdated));
         }
 

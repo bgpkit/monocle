@@ -58,12 +58,7 @@ impl From<&Pfx2asArgs> for Pfx2asSearchArgs {
     }
 }
 
-pub fn run(
-    config: &MonocleConfig,
-    args: Pfx2asArgs,
-    output_format: OutputFormat,
-    no_refresh: bool,
-) {
+pub fn run(config: &MonocleConfig, args: Pfx2asArgs, output_format: OutputFormat, no_update: bool) {
     let sqlite_path = config.sqlite_path();
 
     // Open the database
@@ -79,8 +74,8 @@ pub fn run(
 
     // Handle explicit updates
     if args.update {
-        if no_refresh {
-            eprintln!("[monocle] Warning: --update ignored because --no-refresh is set");
+        if no_update {
+            eprintln!("[monocle] Warning: --update ignored because --no-update is set");
         } else {
             eprintln!("[monocle] Updating pfx2as data...");
 
@@ -97,8 +92,8 @@ pub fn run(
     }
 
     // Check if pfx2as data needs refresh
-    if !no_refresh {
-        match lens.refresh_reason() {
+    if !no_update {
+        match lens.refresh_reason(config.pfx2as_cache_ttl()) {
             Ok(Some(reason)) => {
                 eprintln!("[monocle] Pfx2as {}, updating now...", reason);
                 match lens.refresh(None) {
@@ -122,7 +117,7 @@ pub fn run(
 
         // Also ensure RPKI data is available for validation
         let rpki_lens = RpkiLens::new(&db);
-        if let Ok(Some(reason)) = rpki_lens.refresh_reason() {
+        if let Ok(Some(reason)) = rpki_lens.refresh_reason(config.rpki_cache_ttl()) {
             eprintln!("[monocle] RPKI {}, updating for validation...", reason);
             match rpki_lens.refresh() {
                 Ok((roa_count, aspa_count)) => {

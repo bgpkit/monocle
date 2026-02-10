@@ -10,11 +10,11 @@
 //!
 //! # Feature Requirements
 //!
-//! The `MsgStore` type requires the `lens-bgpkit` feature because it depends
+//! The `MsgStore` type requires the `lib` feature because it depends
 //! on `bgpkit_parser::BgpElem` for storing BGP elements.
 
-#[cfg(feature = "lens-bgpkit")]
+#[cfg(feature = "lib")]
 mod msg_store;
 
-#[cfg(feature = "lens-bgpkit")]
+#[cfg(feature = "lib")]
 pub use msg_store::MsgStore;

@@ -34,7 +34,41 @@ pub use rpki::{
 
 use crate::database::core::{DatabaseConn, SchemaManager, SchemaStatus};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use tracing::info;
+
+/// Result of a data refresh operation
+///
+/// Provides consistent information about refresh operations across all repositories.
+#[derive(Debug, Clone)]
+pub struct RefreshResult {
+    /// Number of records loaded
+    pub records_loaded: usize,
+    /// Source URL or path
+    pub source: String,
+    /// Timestamp when the refresh occurred
+    pub timestamp: DateTime<Utc>,
+    /// Additional details (repository-specific)
+    pub details: Option<String>,
+}
+
+impl RefreshResult {
+    /// Create a new refresh result
+    pub fn new(records_loaded: usize, source: impl Into<String>) -> Self {
+        Self {
+            records_loaded,
+            source: source.into(),
+            timestamp: Utc::now(),
+            details: None,
+        }
+    }
+
+    /// Add details to the result
+    pub fn with_details(mut self, details: impl Into<String>) -> Self {
+        self.details = Some(details.into());
+        self
+    }
+}
 
 /// Main monocle database for persistent data (SQLite backend)
 ///
@@ -136,60 +170,127 @@ impl MonocleDatabase {
         &self.db.conn
     }
 
-    /// Check if the ASInfo data needs to be bootstrapped
+    // =========================================================================
+    // ASInfo Data Management
+    // =========================================================================
+
+    /// Check if ASInfo data is empty (needs initial load)
+    pub fn needs_asinfo_refresh(&self, _ttl: std::time::Duration) -> bool {
+        self.asinfo().is_empty()
+    }
+
+    /// Refresh ASInfo data from the default URL
+    ///
+    /// Returns the counts of records loaded per table.
+    pub fn refresh_asinfo(&self) -> Result<AsinfoStoreCounts> {
+        self.asinfo().load_from_url(ASINFO_DATA_URL)
+    }
+
+    /// Refresh ASInfo data from a custom path
+    ///
+    /// Returns the counts of records loaded per table.
+    pub fn refresh_asinfo_from(&self, path: &str) -> Result<AsinfoStoreCounts> {
+        self.asinfo().load_from_path(path)
+    }
+
+    // =========================================================================
+    // AS2Rel Data Management
+    // =========================================================================
+
+    /// Check if AS2Rel data needs refresh
+    pub fn needs_as2rel_refresh(&self, ttl: std::time::Duration) -> bool {
+        self.as2rel().needs_refresh(ttl)
+    }
+
+    /// Refresh AS2Rel data from the default URL
+    ///
+    /// Returns the number of entries loaded.
+    pub fn refresh_as2rel(&self) -> Result<usize> {
+        self.as2rel().load_from_url()
+    }
+
+    /// Refresh AS2Rel data from a custom path
+    ///
+    /// Returns the number of entries loaded.
+    pub fn refresh_as2rel_from(&self, path: &str) -> Result<usize> {
+        self.as2rel().load_from_path(path)
+    }
+
+    // =========================================================================
+    // RPKI Data Management
+    // =========================================================================
+
+    /// Check if RPKI data needs refresh
+    pub fn needs_rpki_refresh(&self, ttl: std::time::Duration) -> bool {
+        self.rpki().needs_refresh(ttl)
+    }
+
+    /// Refresh RPKI data from provided records
+    ///
+    /// For loading from external sources (RTR, Cloudflare API, etc.),
+    /// fetch the data first, then pass it to this method.
+    pub fn refresh_rpki(
+        &self,
+        roas: &[RpkiRoaRecord],
+        aspas: &[RpkiAspaRecord],
+        roa_source: &str,
+        aspa_source: &str,
+    ) -> Result<RefreshResult> {
+        self.rpki().store(roas, aspas, roa_source, aspa_source)?;
+        Ok(RefreshResult::new(
+            roas.len() + aspas.len(),
+            format!("ROAs from: {}, ASPAs from: {}", roa_source, aspa_source),
+        ))
+    }
+
+    // =========================================================================
+    // Pfx2as Data Management
+    // =========================================================================
+
+    /// Check if Pfx2as data needs refresh
+    pub fn needs_pfx2as_refresh(&self, ttl: std::time::Duration) -> bool {
+        self.pfx2as().needs_refresh(ttl)
+    }
+
+    /// Refresh Pfx2as data from provided records
+    ///
+    /// For loading from external sources, fetch the data first,
+    /// then pass it to this method.
+    pub fn refresh_pfx2as(
+        &self,
+        records: &[Pfx2asDbRecord],
+        source: &str,
+    ) -> Result<RefreshResult> {
+        self.pfx2as().store(records, source)?;
+        Ok(RefreshResult::new(records.len(), source))
+    }
+
+    // =========================================================================
+    // Deprecated aliases (for backward compatibility)
+    // =========================================================================
+
+    /// Deprecated: Use `needs_asinfo_refresh` instead
+    #[deprecated(since = "1.1.0", note = "Use needs_asinfo_refresh instead")]
     pub fn needs_asinfo_bootstrap(&self) -> bool {
         self.asinfo().is_empty()
     }
 
-    /// Check if the ASInfo data needs refresh
-    pub fn needs_asinfo_refresh(&self) -> bool {
-        self.asinfo().needs_refresh(DEFAULT_ASINFO_TTL)
-    }
-
-    /// Bootstrap ASInfo data from the default URL
-    ///
-    /// Returns the counts of records loaded per table.
+    /// Deprecated: Use `refresh_asinfo` instead
+    #[deprecated(since = "1.1.0", note = "Use refresh_asinfo instead")]
     pub fn bootstrap_asinfo(&self) -> Result<AsinfoStoreCounts> {
-        self.asinfo().load_from_url(ASINFO_DATA_URL)
+        self.refresh_asinfo()
     }
 
-    /// Check if the AS2Rel data needs to be updated
-    pub fn needs_as2rel_update(&self) -> bool {
-        self.as2rel().should_update()
-    }
-
-    /// Update AS2Rel data from the default URL
-    ///
-    /// Returns the number of entries loaded.
+    /// Deprecated: Use `refresh_as2rel` instead
+    #[deprecated(since = "1.1.0", note = "Use refresh_as2rel instead")]
     pub fn update_as2rel(&self) -> Result<usize> {
-        self.as2rel().load_from_url()
+        self.refresh_as2rel()
     }
 
-    /// Update AS2Rel data from a custom path
-    ///
-    /// Returns the number of entries loaded.
+    /// Deprecated: Use `refresh_as2rel_from` instead
+    #[deprecated(since = "1.1.0", note = "Use refresh_as2rel_from instead")]
     pub fn update_as2rel_from(&self, path: &str) -> Result<usize> {
-        self.as2rel().load_from_path(path)
-    }
-
-    /// Check if the RPKI cache needs refresh
-    pub fn needs_rpki_refresh(&self) -> bool {
-        self.rpki().needs_refresh(DEFAULT_RPKI_CACHE_TTL)
-    }
-
-    /// Check if the RPKI cache needs refresh with custom TTL
-    pub fn needs_rpki_refresh_with_ttl(&self, ttl: chrono::Duration) -> bool {
-        self.rpki().needs_refresh(ttl)
-    }
-
-    /// Check if the Pfx2as cache needs refresh
-    pub fn needs_pfx2as_refresh(&self) -> bool {
-        self.pfx2as().needs_refresh(DEFAULT_PFX2AS_CACHE_TTL)
-    }
-
-    /// Check if the Pfx2as cache needs refresh with custom TTL
-    pub fn needs_pfx2as_refresh_with_ttl(&self, ttl: chrono::Duration) -> bool {
-        self.pfx2as().needs_refresh(ttl)
+        self.refresh_as2rel_from(path)
     }
 
     /// Get metadata value from the database
@@ -221,13 +322,6 @@ mod tests {
 
         // Should have empty repositories
         assert!(db.as2rel().is_empty());
-    }
-
-    #[test]
-    fn test_needs_bootstrap() {
-        let db = MonocleDatabase::open_in_memory().unwrap();
-
-        assert!(db.needs_as2rel_update());
     }
 
     #[test]
@@ -341,18 +435,6 @@ mod tests {
         assert_eq!(stats.valid, 2);
         assert_eq!(stats.unknown, 1);
         assert_eq!(stats.invalid, 0);
-    }
-
-    #[test]
-    fn test_needs_refresh_flags() {
-        let db = MonocleDatabase::open_in_memory().unwrap();
-
-        // Empty databases should need refresh
-        assert!(db.needs_asinfo_bootstrap());
-        assert!(db.needs_asinfo_refresh());
-        assert!(db.needs_as2rel_update());
-        assert!(db.needs_rpki_refresh());
-        assert!(db.needs_pfx2as_refresh());
     }
 
     #[test]

@@ -18,6 +18,10 @@ pub use crate::lens::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
 use crate::database::{MonocleDatabase, BGPKIT_AS2REL_URL};
 use anyhow::Result;
 use serde_json::json;
+use std::time::Duration;
+
+/// Default TTL for AS2Rel cache (7 days)
+pub const DEFAULT_AS2REL_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// AS2Rel lens for querying AS-level relationships
 ///
@@ -28,12 +32,22 @@ use serde_json::json;
 /// - Formatting results for output
 pub struct As2relLens<'a> {
     db: &'a MonocleDatabase,
+    /// TTL for cache staleness check
+    ttl: Duration,
 }
 
 impl<'a> As2relLens<'a> {
-    /// Create a new AS2Rel lens
+    /// Create a new AS2Rel lens with the default 7-day TTL
     pub fn new(db: &'a MonocleDatabase) -> Self {
-        Self { db }
+        Self {
+            db,
+            ttl: DEFAULT_AS2REL_CACHE_TTL,
+        }
+    }
+
+    /// Create a new AS2Rel lens with a custom TTL
+    pub fn with_ttl(db: &'a MonocleDatabase, ttl: Duration) -> Self {
+        Self { db, ttl }
     }
 
     /// Check if data is available
@@ -43,7 +57,7 @@ impl<'a> As2relLens<'a> {
 
     /// Check if data needs to be updated
     pub fn needs_update(&self) -> bool {
-        self.db.needs_as2rel_update()
+        self.db.needs_as2rel_refresh(self.ttl)
     }
 
     /// Check why the data needs update, if at all
@@ -59,8 +73,8 @@ impl<'a> As2relLens<'a> {
             return Some(RefreshReason::Empty);
         }
 
-        // Check if outdated (uses should_update which checks 7-day TTL)
-        if self.db.needs_as2rel_update() {
+        // Check if outdated (uses configurable TTL)
+        if self.db.needs_as2rel_refresh(self.ttl) {
             return Some(RefreshReason::Outdated);
         }
 
@@ -69,12 +83,12 @@ impl<'a> As2relLens<'a> {
 
     /// Update AS2Rel data from the default URL
     pub fn update(&self) -> Result<usize> {
-        self.db.update_as2rel()
+        self.db.refresh_as2rel()
     }
 
     /// Update AS2Rel data from a custom path
     pub fn update_from(&self, path: &str) -> Result<usize> {
-        self.db.update_as2rel_from(path)
+        self.db.refresh_as2rel_from(path)
     }
 
     /// Get the maximum peers count (for percentage calculation)
@@ -381,61 +395,35 @@ impl<'a> As2relLens<'a> {
                 serde_json::to_string_pretty(&output).unwrap_or_default()
             }
             As2relOutputFormat::Pretty => {
-                #[cfg(feature = "display")]
-                {
-                    use tabled::settings::Style;
-                    use tabled::Table;
-                    if show_name {
-                        let results_with_name: Vec<_> = results
-                            .iter()
-                            .cloned()
-                            .map(|r| r.with_name(truncate_names))
-                            .collect();
-                        Table::new(&results_with_name)
-                            .with(Style::rounded())
-                            .to_string()
-                    } else {
-                        Table::new(results).with(Style::rounded()).to_string()
-                    }
-                }
-                #[cfg(not(feature = "display"))]
-                {
-                    // Fall back to JSON when display feature is not enabled
-                    self.format_results(
-                        results,
-                        &As2relOutputFormat::Json,
-                        show_name,
-                        truncate_names,
-                    )
+                use tabled::settings::Style;
+                use tabled::Table;
+                if show_name {
+                    let results_with_name: Vec<_> = results
+                        .iter()
+                        .cloned()
+                        .map(|r| r.with_name(truncate_names))
+                        .collect();
+                    Table::new(&results_with_name)
+                        .with(Style::rounded())
+                        .to_string()
+                } else {
+                    Table::new(results).with(Style::rounded()).to_string()
                 }
             }
             As2relOutputFormat::Markdown => {
-                #[cfg(feature = "display")]
-                {
-                    use tabled::settings::Style;
-                    use tabled::Table;
-                    if show_name {
-                        let results_with_name: Vec<_> = results
-                            .iter()
-                            .cloned()
-                            .map(|r| r.with_name(truncate_names))
-                            .collect();
-                        Table::new(&results_with_name)
-                            .with(Style::markdown())
-                            .to_string()
-                    } else {
-                        Table::new(results).with(Style::markdown()).to_string()
-                    }
-                }
-                #[cfg(not(feature = "display"))]
-                {
-                    // Fall back to JSON when display feature is not enabled
-                    self.format_results(
-                        results,
-                        &As2relOutputFormat::Json,
-                        show_name,
-                        truncate_names,
-                    )
+                use tabled::settings::Style;
+                use tabled::Table;
+                if show_name {
+                    let results_with_name: Vec<_> = results
+                        .iter()
+                        .cloned()
+                        .map(|r| r.with_name(truncate_names))
+                        .collect();
+                    Table::new(&results_with_name)
+                        .with(Style::markdown())
+                        .to_string()
+                } else {
+                    Table::new(results).with(Style::markdown()).to_string()
                 }
             }
         }

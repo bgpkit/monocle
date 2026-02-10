@@ -150,7 +150,7 @@ impl WsMethod for As2relSearchHandler {
         // Do all DB work synchronously first, then await only for sending the response.
         let response = {
             // Open the database
-            let db = MonocleDatabase::open_in_dir(&ctx.data_dir).map_err(|e| {
+            let db = MonocleDatabase::open_in_dir(ctx.data_dir()).map_err(|e| {
                 WsError::operation_failed(format!("Failed to open database: {}", e))
             })?;
 
@@ -252,7 +252,7 @@ impl WsMethod for As2relRelationshipHandler {
         // We do all DB work synchronously first, then await only for sending the response.
 
         // Open the database
-        let db = MonocleDatabase::open_in_dir(&ctx.data_dir)
+        let db = MonocleDatabase::open_in_dir(ctx.data_dir())
             .map_err(|e| WsError::operation_failed(format!("Failed to open database: {}", e)))?;
 
         // Run search (DB-first) without any `.await`

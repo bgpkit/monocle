@@ -22,16 +22,14 @@ pub mod types;
 
 pub use types::*;
 
-use crate::database::{
-    AsinfoCoreRecord, AsinfoFullRecord, AsinfoStoreCounts, MonocleDatabase,
-    DEFAULT_PFX2AS_CACHE_TTL, DEFAULT_RPKI_CACHE_TTL,
-};
+use crate::config::MonocleConfig;
+use crate::database::{AsinfoCoreRecord, AsinfoFullRecord, AsinfoStoreCounts, MonocleDatabase};
 use crate::lens::country::CountryLens;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 use tracing::info;
@@ -108,16 +106,35 @@ impl DataRefreshSummary {
 /// - Getting AS connectivity information
 pub struct InspectLens<'a> {
     db: &'a MonocleDatabase,
+    config: &'a MonocleConfig,
     country_lookup: CountryLens,
 }
 
 impl<'a> InspectLens<'a> {
     /// Create a new Inspect lens
-    pub fn new(db: &'a MonocleDatabase) -> Self {
+    pub fn new(db: &'a MonocleDatabase, config: &'a MonocleConfig) -> Self {
         Self {
             db,
+            config,
             country_lookup: CountryLens::new(),
         }
+    }
+
+    // Helper methods for TTL access
+    fn asinfo_ttl(&self) -> Duration {
+        self.config.asinfo_cache_ttl()
+    }
+
+    fn as2rel_ttl(&self) -> Duration {
+        self.config.as2rel_cache_ttl()
+    }
+
+    fn rpki_ttl(&self) -> Duration {
+        self.config.rpki_cache_ttl()
+    }
+
+    fn pfx2as_ttl(&self) -> Duration {
+        self.config.pfx2as_cache_ttl()
     }
 
     // =========================================================================
@@ -131,12 +148,12 @@ impl<'a> InspectLens<'a> {
 
     /// Check if data needs to be bootstrapped
     pub fn needs_bootstrap(&self) -> bool {
-        self.db.needs_asinfo_bootstrap()
+        self.db.needs_asinfo_refresh(self.asinfo_ttl())
     }
 
     /// Check if data needs refresh
     pub fn needs_refresh(&self) -> bool {
-        self.db.needs_asinfo_refresh()
+        self.db.needs_asinfo_refresh(self.asinfo_ttl())
     }
 
     // =========================================================================
@@ -146,13 +163,13 @@ impl<'a> InspectLens<'a> {
     /// Bootstrap ASInfo data from the default URL
     pub fn bootstrap(&self) -> Result<AsinfoStoreCounts> {
         info!("Bootstrapping ASInfo data...");
-        self.db.bootstrap_asinfo()
+        self.db.refresh_asinfo()
     }
 
     /// Refresh ASInfo data (same as bootstrap, but logs differently)
     pub fn refresh(&self) -> Result<AsinfoStoreCounts> {
         info!("Refreshing ASInfo data...");
-        self.db.bootstrap_asinfo()
+        self.db.refresh_asinfo()
     }
 
     /// Ensure all required data sources are available, refreshing if needed
@@ -172,7 +189,7 @@ impl<'a> InspectLens<'a> {
         if self.db.asinfo().is_empty() {
             eprintln!("[monocle] Loading ASInfo data (AS names, organizations, PeeringDB)...");
             info!("ASInfo data is empty, bootstrapping...");
-            match self.db.bootstrap_asinfo() {
+            match self.db.refresh_asinfo() {
                 Ok(counts) => {
                     summary.add(
                         "asinfo",
@@ -193,10 +210,10 @@ impl<'a> InspectLens<'a> {
                     );
                 }
             }
-        } else if self.db.needs_asinfo_refresh() {
+        } else if self.db.needs_asinfo_refresh(self.asinfo_ttl()) {
             eprintln!("[monocle] Refreshing ASInfo data (AS names, organizations, PeeringDB)...");
             info!("ASInfo data is stale, refreshing...");
-            match self.db.bootstrap_asinfo() {
+            match self.db.refresh_asinfo() {
                 Ok(counts) => {
                     summary.add(
                         "asinfo",
@@ -223,7 +240,7 @@ impl<'a> InspectLens<'a> {
         if self.db.as2rel().is_empty() {
             eprintln!("[monocle] Loading AS2Rel data (AS relationships)...");
             info!("AS2Rel data is empty, loading...");
-            match self.db.update_as2rel() {
+            match self.db.refresh_as2rel() {
                 Ok(count) => {
                     summary.add(
                         "as2rel",
@@ -241,10 +258,10 @@ impl<'a> InspectLens<'a> {
                     );
                 }
             }
-        } else if self.db.needs_as2rel_update() {
+        } else if self.db.needs_as2rel_refresh(self.as2rel_ttl()) {
             eprintln!("[monocle] Refreshing AS2Rel data (AS relationships)...");
             info!("AS2Rel data is stale, refreshing...");
-            match self.db.update_as2rel() {
+            match self.db.refresh_as2rel() {
                 Ok(count) => {
                     summary.add(
                         "as2rel",
@@ -281,7 +298,7 @@ impl<'a> InspectLens<'a> {
                     summary.add("rpki", false, format!("Failed to load RPKI: {}", e), None);
                 }
             }
-        } else if self.db.rpki().needs_refresh(DEFAULT_RPKI_CACHE_TTL) {
+        } else if self.db.rpki().needs_refresh(self.rpki_ttl()) {
             eprintln!("[monocle] Refreshing RPKI data (ROAs, ASPA)...");
             info!("RPKI data is stale, refreshing...");
             match self.refresh_rpki_from_commons() {
@@ -326,7 +343,7 @@ impl<'a> InspectLens<'a> {
                     );
                 }
             }
-        } else if self.db.pfx2as().needs_refresh(DEFAULT_PFX2AS_CACHE_TTL) {
+        } else if self.db.pfx2as().needs_refresh(self.pfx2as_ttl()) {
             eprintln!("[monocle] Refreshing Pfx2as data (prefix-to-AS mappings)...");
             info!("Pfx2as data is stale, refreshing...");
             match self.refresh_pfx2as() {
@@ -366,7 +383,7 @@ impl<'a> InspectLens<'a> {
         if sections.contains(&InspectDataSection::Basic) {
             if self.db.asinfo().is_empty() {
                 eprintln!("[monocle] Loading ASInfo data (AS names, organizations, PeeringDB)...");
-                match self.db.bootstrap_asinfo() {
+                match self.db.refresh_asinfo() {
                     Ok(counts) => {
                         summary.add(
                             "asinfo",
@@ -387,11 +404,11 @@ impl<'a> InspectLens<'a> {
                         );
                     }
                 }
-            } else if self.db.needs_asinfo_refresh() {
+            } else if self.db.needs_asinfo_refresh(self.asinfo_ttl()) {
                 eprintln!(
                     "[monocle] Refreshing ASInfo data (AS names, organizations, PeeringDB)..."
                 );
-                match self.db.bootstrap_asinfo() {
+                match self.db.refresh_asinfo() {
                     Ok(counts) => {
                         summary.add(
                             "asinfo",
@@ -419,7 +436,7 @@ impl<'a> InspectLens<'a> {
         if sections.contains(&InspectDataSection::Connectivity) {
             if self.db.as2rel().is_empty() {
                 eprintln!("[monocle] Loading AS2Rel data (AS relationships)...");
-                match self.db.update_as2rel() {
+                match self.db.refresh_as2rel() {
                     Ok(count) => {
                         summary.add(
                             "as2rel",
@@ -437,9 +454,9 @@ impl<'a> InspectLens<'a> {
                         );
                     }
                 }
-            } else if self.db.needs_as2rel_update() {
+            } else if self.db.needs_as2rel_refresh(self.as2rel_ttl()) {
                 eprintln!("[monocle] Refreshing AS2Rel data (AS relationships)...");
-                match self.db.update_as2rel() {
+                match self.db.refresh_as2rel() {
                     Ok(count) => {
                         summary.add(
                             "as2rel",
@@ -477,7 +494,7 @@ impl<'a> InspectLens<'a> {
                         summary.add("rpki", false, format!("Failed to load RPKI: {}", e), None);
                     }
                 }
-            } else if self.db.rpki().needs_refresh(DEFAULT_RPKI_CACHE_TTL) {
+            } else if self.db.rpki().needs_refresh(self.rpki_ttl()) {
                 eprintln!("[monocle] Refreshing RPKI data (ROAs, ASPA)...");
                 match self.refresh_rpki_from_commons() {
                     Ok(count) => {
@@ -522,7 +539,7 @@ impl<'a> InspectLens<'a> {
                         );
                     }
                 }
-            } else if self.db.pfx2as().needs_refresh(DEFAULT_PFX2AS_CACHE_TTL) {
+            } else if self.db.pfx2as().needs_refresh(self.pfx2as_ttl()) {
                 eprintln!("[monocle] Refreshing Pfx2as data (prefix-to-AS mappings)...");
                 match self.refresh_pfx2as() {
                     Ok(count) => {
@@ -2289,10 +2306,16 @@ impl<'a> InspectLens<'a> {
 mod tests {
     use super::*;
 
+    /// Helper to create a lens with default config for tests
+    fn create_test_lens<'a>(db: &'a MonocleDatabase, config: &'a MonocleConfig) -> InspectLens<'a> {
+        InspectLens::new(db, config)
+    }
+
     #[test]
     fn test_detect_query_type_asn() {
         let db = MonocleDatabase::open_in_memory().unwrap();
-        let lens = InspectLens::new(&db);
+        let config = MonocleConfig::default();
+        let lens = create_test_lens(&db, &config);
 
         assert_eq!(lens.detect_query_type("13335"), InspectQueryType::Asn);
         assert_eq!(lens.detect_query_type("AS13335"), InspectQueryType::Asn);
@@ -2303,7 +2326,8 @@ mod tests {
     #[test]
     fn test_detect_query_type_prefix() {
         let db = MonocleDatabase::open_in_memory().unwrap();
-        let lens = InspectLens::new(&db);
+        let config = MonocleConfig::default();
+        let lens = create_test_lens(&db, &config);
 
         assert_eq!(
             lens.detect_query_type("1.1.1.0/24"),
@@ -2320,7 +2344,8 @@ mod tests {
     #[test]
     fn test_detect_query_type_name() {
         let db = MonocleDatabase::open_in_memory().unwrap();
-        let lens = InspectLens::new(&db);
+        let config = MonocleConfig::default();
+        let lens = create_test_lens(&db, &config);
 
         assert_eq!(lens.detect_query_type("cloudflare"), InspectQueryType::Name);
         assert_eq!(lens.detect_query_type("Google LLC"), InspectQueryType::Name);
@@ -2330,7 +2355,8 @@ mod tests {
     #[test]
     fn test_parse_asn() {
         let db = MonocleDatabase::open_in_memory().unwrap();
-        let lens = InspectLens::new(&db);
+        let config = MonocleConfig::default();
+        let lens = create_test_lens(&db, &config);
 
         assert_eq!(lens.parse_asn("13335").unwrap(), 13335);
         assert_eq!(lens.parse_asn("AS13335").unwrap(), 13335);
@@ -2341,7 +2367,8 @@ mod tests {
     #[test]
     fn test_normalize_prefix() {
         let db = MonocleDatabase::open_in_memory().unwrap();
-        let lens = InspectLens::new(&db);
+        let config = MonocleConfig::default();
+        let lens = create_test_lens(&db, &config);
 
         assert_eq!(lens.normalize_prefix("1.1.1.0/24").unwrap(), "1.1.1.0/24");
         assert_eq!(lens.normalize_prefix("1.1.1.1").unwrap(), "1.1.1.1/32");

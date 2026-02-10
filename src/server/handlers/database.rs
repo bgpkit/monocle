@@ -99,7 +99,7 @@ impl WsMethod for DatabaseStatusHandler {
         sink: WsOpSink,
     ) -> WsResult<()> {
         // Build paths
-        let sqlite_path = format!("{}/monocle.db", ctx.data_dir);
+        let sqlite_path = format!("{}/monocle.db", ctx.data_dir());
         let sqlite_exists = Path::new(&sqlite_path).exists();
 
         // Get SQLite size if exists
@@ -112,7 +112,7 @@ impl WsMethod for DatabaseStatusHandler {
         // Open database to get counts
         let (as2rel_count, rpki_roa_count, pfx2as_count, as2rel_status, rpki_status, pfx2as_status) =
             if sqlite_exists {
-                match MonocleDatabase::open_in_dir(&ctx.data_dir) {
+                match MonocleDatabase::open_in_dir(ctx.data_dir()) {
                     Ok(db) => {
                         let as2rel = db.as2rel().count().unwrap_or(0);
                         let rpki_roa = db.rpki().roa_count().unwrap_or(0);
@@ -269,12 +269,12 @@ impl WsMethod for DatabaseRefreshHandler {
         let _force = params.force.unwrap_or(false);
 
         // Open the database
-        let db = MonocleDatabase::open_in_dir(&ctx.data_dir)
+        let db = MonocleDatabase::open_in_dir(ctx.data_dir())
             .map_err(|e| WsError::operation_failed(format!("Failed to open database: {}", e)))?;
 
         let (message, count) = match source.as_str() {
             "as2rel" => {
-                let count = db.update_as2rel().map_err(|e| {
+                let count = db.refresh_as2rel().map_err(|e| {
                     WsError::operation_failed(format!("AS2Rel refresh failed: {}", e))
                 })?;
                 (
@@ -331,7 +331,7 @@ impl WsMethod for DatabaseRefreshHandler {
                 let mut messages = Vec::new();
 
                 // AS2Rel
-                match db.update_as2rel() {
+                match db.refresh_as2rel() {
                     Ok(count) => messages.push(format!("AS2Rel: {} entries", count)),
                     Err(e) => messages.push(format!("AS2Rel: failed - {}", e)),
                 }
