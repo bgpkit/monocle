@@ -63,6 +63,10 @@ All notable changes to this project will be documented in this file.
 ### Code Improvements
 
 * **Data refresh logging**: CLI now shows specific reason for data refresh ("data is empty" vs "data is outdated") instead of generic "empty or outdated" message
+* **AS name display**: ASN names are now displayed using a preferred source hierarchy:
+  * Priority order: PeeringDB `aka` → PeeringDB `name_long` → PeeringDB `name` → AS2Org `org_name` → AS2Org `name` → Core `name`
+  * This provides more recognizable, commonly-used AS names from PeeringDB when available
+  * Affects all commands that display AS names: `inspect`, `as2rel`, `rpki`, `pfx2as`
 
 ### Breaking Changes
 

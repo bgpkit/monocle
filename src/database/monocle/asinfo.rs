@@ -724,6 +724,58 @@ impl<'a> AsinfoRepository<'a> {
         result
     }
 
+    /// Batch lookup of preferred AS names with source preference:
+    /// peeringdb.name_long/name -> as2org.org_name -> as2org.name -> core.name
+    pub fn lookup_preferred_names_batch(&self, asns: &[u32]) -> HashMap<u32, String> {
+        let mut result = HashMap::new();
+
+        if asns.is_empty() {
+            return result;
+        }
+
+        let placeholders: Vec<String> = asns.iter().map(|_| "?".to_string()).collect();
+        let query = format!(
+            r#"
+            SELECT
+                c.asn,
+                COALESCE(
+                    NULLIF(p.aka, ''),
+                    NULLIF(p.name_long, ''),
+                    NULLIF(p.name, ''),
+                    NULLIF(a.org_name, ''),
+                    NULLIF(a.name, ''),
+                    c.name
+                ) AS preferred_name
+            FROM asinfo_core c
+            LEFT JOIN asinfo_as2org a ON c.asn = a.asn
+            LEFT JOIN asinfo_peeringdb p ON c.asn = p.asn
+            WHERE c.asn IN ({})
+            "#,
+            placeholders.join(",")
+        );
+
+        if let Ok(mut stmt) = self.conn.prepare(&query) {
+            let params: Vec<&dyn rusqlite::ToSql> =
+                asns.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
+
+            if let Ok(rows) = stmt.query_map(params.as_slice(), |row| {
+                Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
+            }) {
+                for row in rows.flatten() {
+                    result.insert(row.0, row.1);
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Lookup preferred AS name for a single ASN
+    pub fn lookup_preferred_name(&self, asn: u32) -> Option<String> {
+        let mut result = self.lookup_preferred_names_batch(&[asn]);
+        result.remove(&asn)
+    }
+
     /// Batch lookup of org names (from as2org table)
     pub fn lookup_orgs_batch(&self, asns: &[u32]) -> HashMap<u32, String> {
         let mut result = HashMap::new();
@@ -1052,6 +1104,104 @@ mod tests {
         assert_eq!(names.len(), 2);
         assert_eq!(names.get(&13335), Some(&"CLOUDFLARENET".to_string()));
         assert_eq!(names.get(&15169), Some(&"GOOGLE".to_string()));
+        assert!(names.get(&99999).is_none());
+    }
+
+    #[test]
+    fn test_lookup_preferred_names_batch() {
+        let db = setup_test_db();
+        let repo = AsinfoRepository::new(&db.conn);
+
+        let records = vec![
+            JsonlRecord {
+                asn: 1,
+                name: "CORE1".to_string(),
+                country: "US".to_string(),
+                as2org: Some(JsonlAs2org {
+                    country: "US".to_string(),
+                    name: "AS2ORG_NAME1".to_string(),
+                    org_id: "ORG1".to_string(),
+                    org_name: "AS2ORG_ORG1".to_string(),
+                }),
+                peeringdb: Some(JsonlPeeringdb {
+                    aka: Some("PDB1_AKA".to_string()),
+                    asn: 1,
+                    irr_as_set: None,
+                    name: "PDB1".to_string(),
+                    name_long: Some("PDB1_LONG".to_string()),
+                    website: None,
+                }),
+                hegemony: None,
+                population: None,
+            },
+            JsonlRecord {
+                asn: 2,
+                name: "CORE2".to_string(),
+                country: "US".to_string(),
+                as2org: Some(JsonlAs2org {
+                    country: "US".to_string(),
+                    name: "AS2ORG_NAME2".to_string(),
+                    org_id: "ORG2".to_string(),
+                    org_name: "AS2ORG_ORG2".to_string(),
+                }),
+                peeringdb: Some(JsonlPeeringdb {
+                    aka: None,
+                    asn: 2,
+                    irr_as_set: None,
+                    name: "PDB2".to_string(),
+                    name_long: None,
+                    website: None,
+                }),
+                hegemony: None,
+                population: None,
+            },
+            JsonlRecord {
+                asn: 3,
+                name: "CORE3".to_string(),
+                country: "US".to_string(),
+                as2org: Some(JsonlAs2org {
+                    country: "US".to_string(),
+                    name: "AS2ORG_NAME3".to_string(),
+                    org_id: "ORG3".to_string(),
+                    org_name: "AS2ORG_ORG3".to_string(),
+                }),
+                peeringdb: None,
+                hegemony: None,
+                population: None,
+            },
+            JsonlRecord {
+                asn: 4,
+                name: "CORE4".to_string(),
+                country: "US".to_string(),
+                as2org: Some(JsonlAs2org {
+                    country: "US".to_string(),
+                    name: "AS2ORG_NAME4".to_string(),
+                    org_id: "ORG4".to_string(),
+                    org_name: "".to_string(),
+                }),
+                peeringdb: None,
+                hegemony: None,
+                population: None,
+            },
+            JsonlRecord {
+                asn: 5,
+                name: "CORE5".to_string(),
+                country: "US".to_string(),
+                as2org: None,
+                peeringdb: None,
+                hegemony: None,
+                population: None,
+            },
+        ];
+
+        repo.store_from_jsonl(&records, "test://source").unwrap();
+
+        let names = repo.lookup_preferred_names_batch(&[1, 2, 3, 4, 5, 99999]);
+        assert_eq!(names.get(&1), Some(&"PDB1_AKA".to_string()));
+        assert_eq!(names.get(&2), Some(&"PDB2".to_string()));
+        assert_eq!(names.get(&3), Some(&"AS2ORG_ORG3".to_string()));
+        assert_eq!(names.get(&4), Some(&"AS2ORG_NAME4".to_string()));
+        assert_eq!(names.get(&5), Some(&"CORE5".to_string()));
         assert!(names.get(&99999).is_none());
     }
 

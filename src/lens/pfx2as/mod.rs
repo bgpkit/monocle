@@ -672,16 +672,7 @@ impl<'a> Pfx2asLens<'a> {
 
     /// Get AS names for a list of ASNs
     fn get_as_names(&self, asns: &[u32]) -> HashMap<u32, String> {
-        let mut names = HashMap::new();
-        let asinfo = self.db.asinfo();
-
-        for asn in asns {
-            if let Ok(Some(record)) = asinfo.get_full(*asn) {
-                names.insert(*asn, record.core.name);
-            }
-        }
-
-        names
+        self.db.asinfo().lookup_preferred_names_batch(asns)
     }
 
     // =========================================================================

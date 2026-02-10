@@ -226,7 +226,16 @@ impl<'a> As2relRepository<'a> {
             SELECT
                 :asn as asn1,
                 CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END as asn2,
-                o.org_name as asn2_name,
+                COALESCE(
+                    NULLIF(p.aka, ''),
+                    NULLIF(p.name_long, ''),
+                    NULLIF(p.name, ''),
+                    NULLIF(ai.org_name, ''),
+                    NULLIF(ai.name, ''),
+                    NULLIF(o.org_name, ''),
+                    NULLIF(o.as_name, ''),
+                    c.name
+                ) as asn2_name,
                 MAX(CASE WHEN r.rel = 0 THEN r.peers_count ELSE 0 END) as connected_count,
                 SUM(CASE
                     WHEN r.asn1 = :asn AND r.rel = 1 THEN r.peers_count
@@ -239,7 +248,14 @@ impl<'a> As2relRepository<'a> {
                     ELSE 0
                 END) as as2_upstream_count
             FROM as2rel r
-            LEFT JOIN as2org_all o ON o.asn = CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END
+            LEFT JOIN asinfo_core c
+                ON c.asn = CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END
+            LEFT JOIN asinfo_as2org ai
+                ON ai.asn = CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END
+            LEFT JOIN asinfo_peeringdb p
+                ON p.asn = CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END
+            LEFT JOIN as2org_all o
+                ON o.asn = CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END
             WHERE r.asn1 = :asn OR r.asn2 = :asn
             GROUP BY CASE WHEN r.asn1 = :asn THEN r.asn2 ELSE r.asn1 END
         "#;
@@ -274,7 +290,16 @@ impl<'a> As2relRepository<'a> {
             SELECT
                 :asn1 as asn1,
                 :asn2 as asn2,
-                o.org_name as asn2_name,
+                COALESCE(
+                    NULLIF(p.aka, ''),
+                    NULLIF(p.name_long, ''),
+                    NULLIF(p.name, ''),
+                    NULLIF(ai.org_name, ''),
+                    NULLIF(ai.name, ''),
+                    NULLIF(o.org_name, ''),
+                    NULLIF(o.as_name, ''),
+                    c.name
+                ) as asn2_name,
                 MAX(CASE WHEN r.rel = 0 THEN r.peers_count ELSE 0 END) as connected_count,
                 SUM(CASE
                     WHEN r.asn1 = :asn1 AND r.rel = 1 THEN r.peers_count
@@ -287,6 +312,9 @@ impl<'a> As2relRepository<'a> {
                     ELSE 0
                 END) as as2_upstream_count
             FROM as2rel r
+            LEFT JOIN asinfo_core c ON c.asn = :asn2
+            LEFT JOIN asinfo_as2org ai ON ai.asn = :asn2
+            LEFT JOIN asinfo_peeringdb p ON p.asn = :asn2
             LEFT JOIN as2org_all o ON o.asn = :asn2
             WHERE (r.asn1 = :asn1 AND r.asn2 = :asn2) OR (r.asn1 = :asn2 AND r.asn2 = :asn1)
         "#;
@@ -615,9 +643,21 @@ impl<'a> As2relRepository<'a> {
             SELECT
                 h.customer_asn,
                 h.visibility,
-                o.org_name
+                COALESCE(
+                    NULLIF(p.aka, ''),
+                    NULLIF(p.name_long, ''),
+                    NULLIF(p.name, ''),
+                    NULLIF(ai.org_name, ''),
+                    NULLIF(ai.name, ''),
+                    NULLIF(o.org_name, ''),
+                    NULLIF(o.as_name, ''),
+                    c.name
+                ) as asn_name
             FROM has_target_upstream h
             JOIN upstream_counts u ON h.customer_asn = u.customer_asn
+            LEFT JOIN asinfo_core c ON c.asn = h.customer_asn
+            LEFT JOIN asinfo_as2org ai ON ai.asn = h.customer_asn
+            LEFT JOIN asinfo_peeringdb p ON p.asn = h.customer_asn
             LEFT JOIN as2org_all o ON o.asn = h.customer_asn
             WHERE u.upstream_count = 1
               AND h.visibility >= :min_peers
@@ -852,7 +892,16 @@ impl<'a> As2relRepository<'a> {
             SELECT
                 CASE WHEN r.asn1 < r.asn2 THEN r.asn1 ELSE r.asn2 END as asn1,
                 CASE WHEN r.asn1 < r.asn2 THEN r.asn2 ELSE r.asn1 END as asn2,
-                o.org_name as asn2_name,
+                COALESCE(
+                    NULLIF(p.aka, ''),
+                    NULLIF(p.name_long, ''),
+                    NULLIF(p.name, ''),
+                    NULLIF(ai.org_name, ''),
+                    NULLIF(ai.name, ''),
+                    NULLIF(o.org_name, ''),
+                    NULLIF(o.as_name, ''),
+                    c.name
+                ) as asn2_name,
                 MAX(CASE WHEN r.rel = 0 THEN r.peers_count ELSE 0 END) as connected_count,
                 SUM(CASE
                     WHEN r.asn1 < r.asn2 AND r.rel = 1 THEN r.peers_count
@@ -865,7 +914,14 @@ impl<'a> As2relRepository<'a> {
                     ELSE 0
                 END) as as2_upstream_count
             FROM as2rel r
-            LEFT JOIN as2org_all o ON o.asn = CASE WHEN r.asn1 < r.asn2 THEN r.asn2 ELSE r.asn1 END
+            LEFT JOIN asinfo_core c
+                ON c.asn = CASE WHEN r.asn1 < r.asn2 THEN r.asn2 ELSE r.asn1 END
+            LEFT JOIN asinfo_as2org ai
+                ON ai.asn = CASE WHEN r.asn1 < r.asn2 THEN r.asn2 ELSE r.asn1 END
+            LEFT JOIN asinfo_peeringdb p
+                ON p.asn = CASE WHEN r.asn1 < r.asn2 THEN r.asn2 ELSE r.asn1 END
+            LEFT JOIN as2org_all o
+                ON o.asn = CASE WHEN r.asn1 < r.asn2 THEN r.asn2 ELSE r.asn1 END
             WHERE {}
             GROUP BY
                 CASE WHEN r.asn1 < r.asn2 THEN r.asn1 ELSE r.asn2 END,

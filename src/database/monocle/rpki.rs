@@ -607,16 +607,25 @@ impl<'a> RpkiRepository<'a> {
             return Ok(Vec::new());
         }
 
-        // Query that joins with asinfo_core for customer info
+        // Query that joins with asinfo tables for preferred customer info
         let mut stmt = self.conn.prepare(
             r#"
             SELECT
                 a.customer_asn,
-                c.name as customer_name,
+                COALESCE(
+                    NULLIF(pc.aka, ''),
+                    NULLIF(pc.name_long, ''),
+                    NULLIF(pc.name, ''),
+                    NULLIF(ac.org_name, ''),
+                    NULLIF(ac.name, ''),
+                    c.name
+                ) as customer_name,
                 c.country as customer_country,
                 GROUP_CONCAT(a.provider_asn) as provider_asns
             FROM rpki_aspa a
             LEFT JOIN asinfo_core c ON a.customer_asn = c.asn
+            LEFT JOIN asinfo_as2org ac ON a.customer_asn = ac.asn
+            LEFT JOIN asinfo_peeringdb pc ON a.customer_asn = pc.asn
             GROUP BY a.customer_asn
             ORDER BY a.customer_asn
             "#,
@@ -634,15 +643,24 @@ impl<'a> RpkiRepository<'a> {
             .filter_map(|r| r.ok())
             .collect();
 
-        // Now get provider names with a second query
+        // Now get provider names with a second query (preferred name)
         let mut provider_stmt = self.conn.prepare(
             r#"
             SELECT
                 a.customer_asn,
                 a.provider_asn,
-                c.name as provider_name
+                COALESCE(
+                    NULLIF(pp.aka, ''),
+                    NULLIF(pp.name_long, ''),
+                    NULLIF(pp.name, ''),
+                    NULLIF(ap.org_name, ''),
+                    NULLIF(ap.name, ''),
+                    c.name
+                ) as provider_name
             FROM rpki_aspa a
             LEFT JOIN asinfo_core c ON a.provider_asn = c.asn
+            LEFT JOIN asinfo_as2org ap ON a.provider_asn = ap.asn
+            LEFT JOIN asinfo_peeringdb pp ON a.provider_asn = pp.asn
             ORDER BY a.customer_asn, a.provider_asn
             "#,
         )?;
@@ -697,15 +715,24 @@ impl<'a> RpkiRepository<'a> {
             return Ok(Vec::new());
         }
 
-        // Get customer info
+        // Get customer info (preferred name)
         let mut customer_stmt = self.conn.prepare(
             r#"
             SELECT
                 a.customer_asn,
-                c.name as customer_name,
+                COALESCE(
+                    NULLIF(pc.aka, ''),
+                    NULLIF(pc.name_long, ''),
+                    NULLIF(pc.name, ''),
+                    NULLIF(ac.org_name, ''),
+                    NULLIF(ac.name, ''),
+                    c.name
+                ) as customer_name,
                 c.country as customer_country
             FROM rpki_aspa a
             LEFT JOIN asinfo_core c ON a.customer_asn = c.asn
+            LEFT JOIN asinfo_as2org ac ON a.customer_asn = ac.asn
+            LEFT JOIN asinfo_peeringdb pc ON a.customer_asn = pc.asn
             WHERE a.customer_asn = ?1
             LIMIT 1
             "#,
@@ -725,14 +752,23 @@ impl<'a> RpkiRepository<'a> {
             return Ok(Vec::new());
         };
 
-        // Get providers with names
+        // Get providers with names (preferred name)
         let mut provider_stmt = self.conn.prepare(
             r#"
             SELECT
                 a.provider_asn,
-                c.name as provider_name
+                COALESCE(
+                    NULLIF(pp.aka, ''),
+                    NULLIF(pp.name_long, ''),
+                    NULLIF(pp.name, ''),
+                    NULLIF(ap.org_name, ''),
+                    NULLIF(ap.name, ''),
+                    c.name
+                ) as provider_name
             FROM rpki_aspa a
             LEFT JOIN asinfo_core c ON a.provider_asn = c.asn
+            LEFT JOIN asinfo_as2org ap ON a.provider_asn = ap.asn
+            LEFT JOIN asinfo_peeringdb pp ON a.provider_asn = pp.asn
             WHERE a.customer_asn = ?1
             ORDER BY a.provider_asn
             "#,

@@ -699,7 +699,9 @@ impl<'a> RpkiLens<'a> {
             // Historical query: use bgpkit-commons
             let trie =
                 self.load_historical_data(args.date, &args.source, args.collector.as_ref())?;
-            commons::get_aspas(trie, args.customer_asn, args.provider_asn)
+            let mut aspas = commons::get_aspas(trie, args.customer_asn, args.provider_asn)?;
+            self.enrich_aspa_names(&mut aspas);
+            Ok(aspas)
         } else {
             // Current query: use cache
             self.get_aspas_from_cache(args.customer_asn, args.provider_asn)
@@ -760,6 +762,29 @@ impl<'a> RpkiLens<'a> {
                     .collect(),
             })
             .collect())
+    }
+
+    fn enrich_aspa_names(&self, aspas: &mut [RpkiAspaEntry]) {
+        let mut asns = Vec::new();
+        for aspa in aspas.iter() {
+            asns.push(aspa.customer_asn);
+            asns.extend(aspa.providers.iter().map(|p| p.asn));
+        }
+        if asns.is_empty() {
+            return;
+        }
+
+        let names = self.db.asinfo().lookup_preferred_names_batch(&asns);
+        for aspa in aspas.iter_mut() {
+            if aspa.customer_name.is_none() {
+                aspa.customer_name = names.get(&aspa.customer_asn).cloned();
+            }
+            for provider in aspa.providers.iter_mut() {
+                if provider.name.is_none() {
+                    provider.name = names.get(&provider.asn).cloned();
+                }
+            }
+        }
     }
 
     /// Get ASPA by customer ASN from cache
