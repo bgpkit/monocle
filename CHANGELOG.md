@@ -4,23 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
-### Breaking Changes
+## v1.1.0 - 2025-02-10
 
-* **CLI flag renamed**: `--no-refresh` renamed to `--no-update` for consistency with "update" terminology
-  * Old: `monocle --no-refresh <command>`
-  * New: `monocle --no-update <command>`
-  
-* **Config subcommands renamed**: Removed `db-` prefix from config subcommands for cleaner syntax
-  * `monocle config db-refresh` → `monocle config update`
-  * `monocle config db-backup` → `monocle config backup`
-  * `monocle config db-sources` → `monocle config sources`
-  
-* **Configurable TTL for all data sources**: All data sources now have configurable cache TTL with 7-day default
-  * Added `asinfo_cache_ttl_secs` config option (default: 7 days)
-  * Added `as2rel_cache_ttl_secs` config option (default: 7 days)
-  * Changed `rpki_cache_ttl_secs` default from 1 hour to 7 days
-  * Changed `pfx2as_cache_ttl_secs` default from 24 hours to 7 days
-  * Configure via `~/.monocle/monocle.toml` or environment variables (`MONOCLE_ASINFO_CACHE_TTL_SECS`, etc.)
+### Breaking Changes
 
 * **Simplified feature flags**: Replaced 6-tier feature system with 3 clear features
   * Old: `database`, `lens-core`, `lens-bgpkit`, `lens-full`, `display`, `cli`
@@ -30,6 +16,22 @@ All notable changes to this project will be documented in this file.
     - Need WebSocket server without CLI? Use `server` (includes lib)
     - Need only library/data access? Use `lib` (database + all lenses + display)
   * Display (tabled) now always included with `lib` feature
+
+* **CLI flag renamed**: `--no-refresh` renamed to `--no-update` for consistency with "update" terminology
+  * Old: `monocle --no-refresh <command>`
+  * New: `monocle --no-update <command>`
+
+* **Config subcommands renamed**: Removed `db-` prefix from config subcommands for cleaner syntax
+  * `monocle config db-refresh` → `monocle config update`
+  * `monocle config db-backup` → `monocle config backup`
+  * `monocle config db-sources` → `monocle config sources`
+
+* **Configurable TTL for all data sources**: All data sources now have configurable cache TTL with 7-day default
+  * Added `asinfo_cache_ttl_secs` config option (default: 7 days)
+  * Added `as2rel_cache_ttl_secs` config option (default: 7 days)
+  * Changed `rpki_cache_ttl_secs` default from 1 hour to 7 days
+  * Changed `pfx2as_cache_ttl_secs` default from 24 hours to 7 days
+  * Configure via `~/.monocle/monocle.toml` or environment variables (`MONOCLE_ASINFO_CACHE_TTL_SECS`, etc.)
 
 * **Standardized database refresh API**: Consistent interface for all data sources
   * New `RefreshResult` struct with `records_loaded`, `source`, `timestamp`, `details`
@@ -50,26 +52,6 @@ All notable changes to this project will be documented in this file.
   * Removed verbose multi-example files
   * All examples use `lib` feature exclusively
 
-### New Features
-
-* **`monocle config sources`**: Shows staleness status based on TTL for all data sources
-  * "Stale" column shows whether each source needs updating based on its configured TTL
-  * Configuration section shows current TTL values for all sources
-
-### Bug Fixes
-
-* Avoid creating a new SQLite database when `monocle config sources` inspects staleness
-
-### Code Improvements
-
-* **Data refresh logging**: CLI now shows specific reason for data refresh ("data is empty" vs "data is outdated") instead of generic "empty or outdated" message
-* **AS name display**: ASN names are now displayed using a preferred source hierarchy:
-  * Priority order: PeeringDB `aka` → PeeringDB `name_long` → PeeringDB `name` → AS2Org `org_name` → AS2Org `name` → Core `name`
-  * This provides more recognizable, commonly-used AS names from PeeringDB when available
-  * Affects all commands that display AS names: `inspect`, `as2rel`, `rpki`, `pfx2as`
-
-### Breaking Changes
-
 * **ParseFilters**: Changed filter field types to support multiple values with OR logic
   * `origin_asn`: `Option<u32>` → `Vec<String>`
   * `prefix`: `Option<String>` → `Vec<String>`
@@ -89,11 +71,12 @@ All notable changes to this project will be documented in this file.
     rpki_rtr_no_fallback = false
     ```
   * Or use environment variables: `MONOCLE_RPKI_RTR_HOST`, `MONOCLE_RPKI_RTR_PORT`, `MONOCLE_RPKI_RTR_TIMEOUT_SECS`, `MONOCLE_RPKI_RTR_NO_FALLBACK`
-  * Or use CLI flag for one-time override: `monocle config db-refresh --rpki --rtr-endpoint rtr.rpki.cloudflare.com:8282`
+  * Or use CLI flag for one-time override: `monocle config update --rpki --rtr-endpoint rtr.rpki.cloudflare.com:8282`
   * ROAs are fetched via RTR, ASPAs always from Cloudflare (RTR v1 per RFC 8210 doesn't support ASPA)
   * Automatic fallback to Cloudflare if RTR connection fails, with warning message (set `rpki_rtr_no_fallback = true` to disable fallback and error out instead)
   * Connection timeout defaults to 10 seconds
   * Supports RTR protocol version negotiation (v1 with v0 fallback)
+
 * **`--cache-dir`**: Added local caching support to the `search` command
   * Download MRT files to a local directory before parsing
   * Files are cached as `{cache-dir}/{collector}/{path}` (e.g., `cache/rrc00/2024.01/updates.20240101.0000.gz`)
@@ -106,15 +89,19 @@ All notable changes to this project will be documented in this file.
     * Subsequent identical queries use cached results, enabling offline operation
     * Tested: run search once, disable network, run same search again - results returned from cache
   * Example: `monocle search -t 2024-01-01 -d 1h --cache-dir /tmp/mrt-cache`
+
 * **Multi-value filters**: `parse` and `search` commands now support filtering by multiple values with OR logic
   * Example: `-o 13335,15169,8075` matches elements from ANY of the specified origin ASNs
   * Example: `-p 1.1.1.0/24,8.8.8.0/24` matches ANY of the specified prefixes
   * Example: `-J 174,2914` matches elements from ANY of the specified peer ASNs
+
 * **Negative filters**: Support for exclusion filters using `!` prefix
   * Example: `-o '!13335'` excludes elements from AS13335
   * Example: `-o '!13335,!15169'` excludes elements from AS13335 AND AS15169
   * Note: Cannot mix positive and negative values in the same filter
+
 * Added validation for ASN format, prefix CIDR notation, and negation consistency
+
 * **`--time-format`**: Added timestamp output format option to `parse` and `search` commands
   * `--time-format unix` (default): Output timestamps as Unix epoch (integer/float)
   * `--time-format rfc3339`: Output timestamps in ISO 8601/RFC3339 format (e.g., `2023-10-11T17:00:00+00:00`)
@@ -122,13 +109,6 @@ All notable changes to this project will be documented in this file.
   * JSON output always uses numeric Unix timestamps for backward compatibility
   * Example: `monocle parse file.mrt --time-format rfc3339`
   * Example: `monocle search -t 2024-01-01 -d 1h -p 1.1.1.0/24 --time-format rfc3339`
-
-### Code Improvements
-
-* **Feature gate cleanup**: Simplified feature gating for the `database` module
-  * The entire `database` module is now gated at `lib.rs` level with `#[cfg(feature = "database")]`
-  * Removed redundant feature gates from internal submodules
-  * Added detailed feature documentation to `ARCHITECTURE.md` with use case scenarios
 
 * Added `--fields` (`-f`) option to `parse` and `search` commands for selecting output fields ([#99](https://github.com/bgpkit/monocle/issues/99), [#101](https://github.com/bgpkit/monocle/pull/101))
   * Choose which columns to display with comma-separated field names
@@ -147,6 +127,26 @@ All notable changes to this project will be documented in this file.
   * When ordering is specified, output is buffered and sorted before display
   * Example: `monocle parse file.mrt --order-by timestamp --order asc`
   * Example: `monocle search -t 2024-01-01 -d 1h -p 1.1.1.0/24 --order-by timestamp --order desc`
+
+* **`monocle config sources`**: Shows staleness status based on TTL for all data sources
+  * "Stale" column shows whether each source needs updating based on its configured TTL
+  * Configuration section shows current TTL values for all sources
+
+### Bug Fixes
+
+* Avoid creating a new SQLite database when `monocle config sources` inspects staleness
+
+### Code Improvements
+
+* **Data refresh logging**: CLI now shows specific reason for data refresh ("data is empty" vs "data is outdated") instead of generic "empty or outdated" message
+* **AS name display**: ASN names are now displayed using a preferred source hierarchy:
+  * Priority order: PeeringDB `aka` → PeeringDB `name_long` → PeeringDB `name` → AS2Org `org_name` → AS2Org `name` → Core `name`
+  * This provides more recognizable, commonly-used AS names from PeeringDB when available
+  * Affects all commands that display AS names: `inspect`, `as2rel`, `rpki`, `pfx2as`
+* **Feature gate cleanup**: Simplified feature gating for the `database` module
+  * The entire `database` module is now gated at `lib.rs` level with `#[cfg(feature = "lib")]`
+  * Removed redundant feature gates from internal submodules
+  * Added detailed feature documentation to `ARCHITECTURE.md` with use case scenarios
 
 ## v1.0.2 - 2025-12-18
 

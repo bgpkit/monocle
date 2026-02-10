@@ -100,13 +100,13 @@ Monocle can also be used as a library in your Rust projects. Add it to your `Car
 ```toml
 [dependencies]
 # Default: full CLI binary with all features
-monocle = "1.0"
+monocle = "1.1"
 
 # Library only - all lenses and database operations
-monocle = { version = "1.0", default-features = false, features = ["lib"] }
+monocle = { version = "1.1", default-features = false, features = ["lib"] }
 
 # Library + WebSocket server
-monocle = { version = "1.0", default-features = false, features = ["server"] }
+monocle = { version = "1.1", default-features = false, features = ["server"] }
 ```
 
 ### Feature Tiers

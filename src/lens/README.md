@@ -53,7 +53,7 @@ All lenses are available with the `lib` feature, which is the default for librar
 
 ```toml
 # Library usage (all lenses + database)
-monocle = { version = "1.0", default-features = false, features = ["lib"] }
+monocle = { version = "1.1", default-features = false, features = ["lib"] }
 ```
 
 The `lib` feature includes:

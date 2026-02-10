@@ -354,7 +354,7 @@ Use when building applications that need:
 - Table formatting with tabled
 
 ```toml
-monocle = { version = "1.0", default-features = false, features = ["lib"] }
+monocle = { version = "1.1", default-features = false, features = ["lib"] }
 ```
 
 ```rust
@@ -374,7 +374,7 @@ Use when building applications that need:
 - WebSocket server for remote API access
 
 ```toml
-monocle = { version = "1.0", default-features = false, features = ["server"] }
+monocle = { version = "1.1", default-features = false, features = ["server"] }
 ```
 
 ```rust
@@ -390,13 +390,13 @@ start_server("127.0.0.1:3000").await?;
 The full CLI binary with all features, WebSocket server, and terminal UI:
 
 ```toml
-monocle = "1.0"
+monocle = "1.1"
 ```
 
 Or explicitly:
 
 ```toml
-monocle = { version = "1.0", features = ["cli"] }
+monocle = { version = "1.1", features = ["cli"] }
 ```
 
 ### Valid Feature Combinations
