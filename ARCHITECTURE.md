@@ -361,7 +361,7 @@ monocle = { version = "1.1", default-features = false, features = ["lib"] }
 use monocle::database::MonocleDatabase;
 use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 let lens = InspectLens::new(&db);
 let result = lens.query("AS13335", &InspectQueryOptions::default())?;
 ```

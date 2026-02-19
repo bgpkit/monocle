@@ -197,7 +197,7 @@ use monocle::database::MonocleDatabase;
 use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 use monocle::lens::utils::OutputFormat;
 
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 let lens = InspectLens::new(&db);
 
 // Query AS information
@@ -223,7 +223,7 @@ use monocle::database::MonocleDatabase;
 use monocle::lens::as2rel::{As2relLens, As2relSearchArgs};
 use monocle::lens::utils::OutputFormat;
 
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 let lens = As2relLens::new(&db);
 
 // Update data if needed

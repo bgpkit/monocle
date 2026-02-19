@@ -50,7 +50,7 @@
 //! use monocle::database::MonocleDatabase;
 //!
 //! // Open the monocle database
-//! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+//! let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 //!
 //! // Bootstrap ASInfo data if needed
 //! if db.needs_asinfo_refresh(Duration::from_secs(7 * 24 * 60 * 60)) {

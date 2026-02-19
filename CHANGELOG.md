@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### Breaking Changes
+
+* Moved config, data, and cache paths to follow XDG base directory specification
+  * Config file default is now `$XDG_CONFIG_HOME/monocle/monocle.toml` (fallback: `~/.config/monocle/monocle.toml`)
+  * Data directory default is now `$XDG_DATA_HOME/monocle` (fallback: `~/.local/share/monocle`)
+  * Cache directory default is now `$XDG_CACHE_HOME/monocle` (fallback: `~/.cache/monocle`)
+  * Existing SQLite data under `~/.monocle` is no longer used by default and will be rebuilt in the new data location
+    * Legacy config migration: when the new config directory is empty, monocle copies `~/.monocle/monocle.toml` to the new config path
+    * Old database file will not be copied over. Once the updated monocle has been executed at least once, old `~/.monocle` can be safely deleted
+* Added `--use-cache` flag to `monocle search` to use the default XDG cache path (`$XDG_CACHE_HOME/monocle`)
+  * Value set by `--cache-dir` overrides `--use-cache` when both are provided
+
+### Dependencies
+
+* Switched directory resolution library from `dirs` to `etcetera`
+
 ## v1.1.0 - 2025-02-10
 
 ### Breaking Changes

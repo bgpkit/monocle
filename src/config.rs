@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
 use anyhow::{anyhow, Result};
 use config::Config;
+use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
 use serde::Serialize;
-use std::collections::HashMap;
-use std::path::Path;
 
 /// Default TTL for all data sources: 7 days in seconds
 pub const DEFAULT_CACHE_TTL_SECS: u64 = 604800;
@@ -41,7 +43,8 @@ pub struct MonocleConfig {
 const EMPTY_CONFIG: &str = r#"### monocle configuration file
 
 ### directory for cached data used by monocle
-# data_dir = "~/.monocle"
+### defaults to $XDG_DATA_HOME/monocle or ~/.local/share/monocle
+# data_dir = "~/.local/share/monocle"
 
 ### cache TTL settings (in seconds)
 ### all data sources default to 7 days (604800 seconds)
@@ -60,14 +63,103 @@ const EMPTY_CONFIG: &str = r#"### monocle configuration file
 # rpki_rtr_no_fallback = false
 "#;
 
+#[derive(Debug, Clone)]
+struct MonoclePaths {
+    config_dir: PathBuf,
+    config_file: PathBuf,
+    data_dir: PathBuf,
+    cache_dir: PathBuf,
+    legacy_config_file: PathBuf, // TODO: remove legacy config fallback in future release after the migration is considered finished?
+}
+
+fn resolve_monocle_paths() -> Result<MonoclePaths> {
+    let strategy = choose_base_strategy()
+        .map_err(|e| anyhow!("Could not determine user directories: {}", e))?;
+
+    let config_dir = strategy.config_dir().join("monocle");
+    let config_file = config_dir.join("monocle.toml");
+    let data_dir = strategy.data_dir().join("monocle");
+    let cache_dir = strategy.cache_dir().join("monocle");
+    let legacy_config_file = strategy.home_dir().join(".monocle").join("monocle.toml");
+
+    Ok(MonoclePaths {
+        config_dir,
+        config_file,
+        data_dir,
+        cache_dir,
+        legacy_config_file,
+    })
+}
+
+fn ensure_default_config_file(paths: &MonoclePaths) -> Result<()> {
+    if paths.config_file.exists() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(paths.config_dir.as_path()).map_err(|e| {
+        anyhow!(
+            "Unable to create config directory {}: {}",
+            paths.config_dir.display(),
+            e
+        )
+    })?;
+
+    let mut entries = std::fs::read_dir(paths.config_dir.as_path()).map_err(|e| {
+        anyhow!(
+            "Unable to read config directory {}: {}",
+            paths.config_dir.display(),
+            e
+        )
+    })?;
+
+    let config_dir_is_empty = match entries.next() {
+        None => true,
+        Some(Ok(_)) => false,
+        Some(Err(e)) => {
+            return Err(anyhow!(
+                "Unable to read config directory {}: {}",
+                paths.config_dir.display(),
+                e
+            ));
+        }
+    };
+
+    if config_dir_is_empty && paths.legacy_config_file.exists() {
+        std::fs::copy(
+            paths.legacy_config_file.as_path(),
+            paths.config_file.as_path(),
+        )
+        .map_err(|e| {
+            anyhow!(
+                "Unable to migrate config file from {} to {}: {}",
+                paths.legacy_config_file.display(),
+                paths.config_file.display(),
+                e
+            )
+        })?;
+
+        return Ok(());
+    }
+
+    std::fs::write(paths.config_file.as_path(), EMPTY_CONFIG).map_err(|e| {
+        anyhow!(
+            "Unable to create config file {}: {}",
+            paths.config_file.display(),
+            e
+        )
+    })?;
+
+    Ok(())
+}
+
 impl Default for MonocleConfig {
     fn default() -> Self {
-        let home_dir = dirs::home_dir()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string());
+        let data_dir = resolve_monocle_paths()
+            .map(|paths| paths.data_dir.to_string_lossy().to_string())
+            .unwrap_or_else(|_| ".".to_string());
 
         Self {
-            data_dir: format!("{}/.monocle", home_dir),
+            data_dir,
             asinfo_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
             as2rel_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
             rpki_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
@@ -84,16 +176,9 @@ impl MonocleConfig {
     /// Function to create and initialize a new configuration
     pub fn new(path: &Option<String>) -> Result<MonocleConfig> {
         let mut builder = Config::builder();
+        let paths = resolve_monocle_paths()?;
 
-        // By default use $HOME/.monocle.toml as the configuration file path
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| anyhow!("Could not find home directory"))?
-            .to_str()
-            .ok_or_else(|| anyhow!("Could not convert home directory path to string"))?
-            .to_owned();
-
-        // Config dir
-        let monocle_dir = format!("{}/.monocle", home_dir.as_str());
+        // By default use $XDG_CONFIG_HOME/monocle/monocle.toml as the configuration file path
 
         // Add in toml configuration file
         match path {
@@ -105,26 +190,30 @@ impl MonocleConfig {
                         .ok_or_else(|| anyhow!("Could not convert path to string"))?;
                     builder = builder.add_source(config::File::with_name(path_str));
                 } else {
+                    if let Some(parent) = path.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            std::fs::create_dir_all(parent).map_err(|e| {
+                                anyhow!(
+                                    "Unable to create config parent directory {}: {}",
+                                    parent.display(),
+                                    e
+                                )
+                            })?;
+                        }
+                    }
                     std::fs::write(p.as_str(), EMPTY_CONFIG)
                         .map_err(|e| anyhow!("Unable to create config file: {}", e))?;
                 }
             }
             None => {
-                std::fs::create_dir_all(monocle_dir.as_str())
-                    .map_err(|e| anyhow!("Unable to create monocle directory: {}", e))?;
-                let p = format!("{}/monocle.toml", monocle_dir.as_str());
-                if Path::new(p.as_str()).exists() {
-                    builder = builder.add_source(config::File::with_name(p.as_str()));
-                } else {
-                    std::fs::write(p.as_str(), EMPTY_CONFIG).map_err(|e| {
-                        anyhow!("Unable to create config file {}: {}", p.as_str(), e)
-                    })?;
-                }
+                ensure_default_config_file(&paths)?;
+                let p = paths.config_file.to_string_lossy().to_string();
+                builder = builder.add_source(config::File::with_name(p.as_str()));
             }
         }
 
         // Add in settings from the environment (with a prefix of MONOCLE)
-        // E.g., `MONOCLE_DATA_DIR=~/.monocle ./monocle` would set the data directory
+        // E.g., `MONOCLE_DATA_DIR=~/.local/share/monocle ./monocle` sets the data directory
         builder = builder.add_source(config::Environment::with_prefix("MONOCLE"));
 
         let settings = builder
@@ -144,12 +233,7 @@ impl MonocleConfig {
                     .to_string()
             }
             None => {
-                let home =
-                    dirs::home_dir().ok_or_else(|| anyhow!("Could not find home directory"))?;
-                let home_str = home
-                    .to_str()
-                    .ok_or_else(|| anyhow!("Could not convert home directory path to string"))?;
-                let dir = format!("{}/.monocle/", home_str);
+                let dir = paths.data_dir.to_string_lossy().to_string();
                 std::fs::create_dir_all(dir.as_str())
                     .map_err(|e| anyhow!("Unable to create data directory: {}", e))?;
                 dir
@@ -268,7 +352,7 @@ impl MonocleConfig {
         }
 
         // Check if cache directories exist and show status
-        let cache_dir = format!("{}/cache", self.data_dir.trim_end_matches('/'));
+        let cache_dir = self.cache_dir();
         if std::path::Path::new(&cache_dir).exists() {
             lines.push(format!("Cache Directory:    {}", cache_dir));
         }
@@ -278,15 +362,16 @@ impl MonocleConfig {
 
     /// Get the config file path
     pub fn config_file_path() -> String {
-        let home_dir = dirs::home_dir()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|| "~".to_string());
-        format!("{}/.monocle/monocle.toml", home_dir)
+        resolve_monocle_paths()
+            .map(|paths| paths.config_file.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "~/.config/monocle/monocle.toml".to_string())
     }
 
     /// Get the cache directory path
     pub fn cache_dir(&self) -> String {
-        format!("{}/cache", self.data_dir.trim_end_matches('/'))
+        resolve_monocle_paths()
+            .map(|paths| paths.cache_dir.to_string_lossy().to_string())
+            .unwrap_or_else(|_| format!("{}/cache", self.data_dir.trim_end_matches('/')))
     }
 }
 
@@ -745,7 +830,10 @@ mod tests {
         };
 
         assert_eq!(config.sqlite_path(), "/test/dir/monocle-data.sqlite3");
-        assert_eq!(config.cache_dir(), "/test/dir/cache");
+        let expected_cache_dir = resolve_monocle_paths()
+            .map(|paths| paths.cache_dir.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "/test/dir/cache".to_string());
+        assert_eq!(config.cache_dir(), expected_cache_dir);
     }
 
     #[test]

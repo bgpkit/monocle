@@ -167,7 +167,7 @@ use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 
 fn main() -> anyhow::Result<()> {
     // Open the monocle database
-    let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+    let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
     
     // Create a lens
     let lens = InspectLens::new(&db);
@@ -270,7 +270,7 @@ Commands:
   help     Print this message or the help of the given subcommand(s)
 
 Options:
-  -c, --config <CONFIG>  configuration file path, by default $HOME/.monocle.toml is used
+  -c, --config <CONFIG>  configuration file path (default: $XDG_CONFIG_HOME/monocle/monocle.toml)
       --debug            Print debug information
       --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
       --json             Output as JSON objects (shortcut for --format json-pretty)
@@ -470,7 +470,8 @@ Options:
   -m, --elem-type <ELEM_TYPE>        Filter by elem type: announce (a) or withdraw (w)
       --as-path <AS_PATH>            Filter by AS path regex
       --broker-files                 Show broker file list only (don't parse)
-      --cache-dir <CACHE_DIR>        Local cache directory for MRT files
+      --use-cache                    Use default XDG cache directory for MRT files
+      --cache-dir <CACHE_DIR>        Override cache directory for MRT files
   -f, --fields <FIELDS>              Select output fields (comma-separated)
       --order-by <ORDER_BY>          Sort output by field: timestamp, prefix, peer_ip, peer_asn, as_path, next_hop
       --order <ORDER>                Sort direction: asc (default), desc
@@ -480,20 +481,24 @@ Options:
 
 #### Local Caching
 
-Use `--cache-dir` to download and cache MRT files locally:
+Enable local caching with `--use-cache` (default XDG cache path) or `--cache-dir` (custom path):
 
 ```bash
-# Cache MRT files to a local directory
-monocle search -t 2024-01-01 -d 1h -p 1.1.1.0/24 --cache-dir /tmp/mrt-cache
+# Cache MRT files under $XDG_CACHE_HOME/monocle
+monocle search -t 2024-01-01 -d 1h -p 1.1.1.0/24 --use-cache
 
-# Subsequent runs reuse cached files, avoiding redundant downloads
+# Cache MRT files to a custom directory
 monocle search -t 2024-01-01 -d 1h -p 8.8.8.0/24 --cache-dir /tmp/mrt-cache
+
+# --cache-dir overrides --use-cache when both are specified
+monocle search -t 2024-01-01 -d 1h -p 8.8.8.0/24 --use-cache --cache-dir /tmp/mrt-cache
 ```
 
 Features:
 - Files are cached as `{cache-dir}/{collector}/{path}` (e.g., `cache/rrc00/2024.01/updates.20240101.0000.gz`)
 - Uses `.partial` extension during downloads to handle interrupted transfers
-- **Broker query caching**: When `--cache-dir` is specified, broker API results are cached in SQLite at `{cache-dir}/broker-cache.sqlite3`
+- **Broker query caching**: When caching is enabled (`--use-cache` or `--cache-dir`), broker API results are cached in SQLite at `{cache-dir}/broker-cache.sqlite3`
+- Default cache path for `--use-cache` is `$XDG_CACHE_HOME/monocle` (fallback: `~/.cache/monocle`)
 - Only queries with end time >2 hours in the past are cached (recent data may still change)
 - Enables offline operation: run search once with network, then run same search again without network using cached results
 
@@ -1095,10 +1100,11 @@ Examples:
 # Show configuration and database status
 ➜  monocle config
 Configuration:
-  Config file: ~/.monocle.toml (not found, using defaults)
-  Data directory: ~/.monocle
+  Config file: ~/.config/monocle/monocle.toml
+  Data directory: ~/.local/share/monocle
+  Cache directory: ~/.cache/monocle
 
-SQLite Database: ~/.monocle/monocle-data.sqlite3
+SQLite Database: ~/.local/share/monocle/monocle-data.sqlite3
   Size: 45.2 MB
   ASInfo: 120415 ASes
   AS2Rel: 1234567 relationships
@@ -1118,6 +1124,10 @@ SQLite Database: ~/.monocle/monocle-data.sqlite3
 # List available data sources
 ➜  monocle config sources
 ```
+
+Notes:
+- Persistent data is stored in a single SQLite file at `{data-dir}/monocle-data.sqlite3`
+- The default cache directory (`$XDG_CACHE_HOME/monocle`) is created and used on demand when running `monocle search --use-cache`
 
 ### `monocle server`
 

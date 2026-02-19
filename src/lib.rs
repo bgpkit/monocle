@@ -62,7 +62,7 @@
 //! use monocle::database::MonocleDatabase;
 //!
 //! // Open or create database
-//! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+//! let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 //!
 //! // Check if AS2Rel data needs update
 //! use std::time::Duration;
@@ -102,7 +102,7 @@
 //! use monocle::database::MonocleDatabase;
 //! use monocle::lens::rpki::RpkiLens;
 //!
-//! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+//! let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 //! let lens = RpkiLens::new(&db);
 //!
 //! // Ensure cache is populated
@@ -142,7 +142,7 @@
 //! use monocle::database::MonocleDatabase;
 //! use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
 //!
-//! let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+//! let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 //! let lens = InspectLens::new(&db);
 //!
 //! // Auto-refresh data if needed

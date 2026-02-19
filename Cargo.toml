@@ -137,7 +137,7 @@ full = ["cli"]
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 config = { version = "0.15", features = ["toml"] }
-dirs = "6"
+etcetera = "0.11.0"
 dotenvy = "0.15"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }

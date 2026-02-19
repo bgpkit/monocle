@@ -12,6 +12,7 @@ use clap::Args;
 use monocle::database::MsgStore;
 use monocle::lens::search::SearchFilters;
 use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
+use monocle::MonocleConfig;
 use rayon::prelude::*;
 use tracing::{info, warn};
 
@@ -58,7 +59,12 @@ pub struct SearchArgs {
     #[clap(long, value_enum, default_value = "unix")]
     pub time_format: TimestampFormat,
 
-    /// Cache directory for downloaded MRT files.
+    /// Use the default XDG cache directory ($XDG_CACHE_HOME/monocle) for MRT files.
+    /// Overridden by --cache-dir if both are specified.
+    #[clap(long)]
+    pub use_cache: bool,
+
+    /// Override cache directory for downloaded MRT files.
     /// Files are stored as {cache-dir}/{collector}/{path}.
     /// If a file already exists in cache, it will be used instead of downloading.
     #[clap(long)]
@@ -524,7 +530,7 @@ fn fetch_broker_items_cached(
     Ok((items, false))
 }
 
-pub fn run(args: SearchArgs, output_format: OutputFormat) {
+pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat) {
     let SearchArgs {
         dry_run,
         sqlite_path,
@@ -535,9 +541,15 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         order_by,
         order,
         time_format,
+        use_cache,
         cache_dir,
         filters,
     } = args;
+
+    let cache_dir = match cache_dir {
+        Some(cache_dir) => Some(cache_dir),
+        None => use_cache.then(|| PathBuf::from(config.cache_dir())),
+    };
 
     // Parse and validate fields (true = search command, include collector in defaults)
     let fields = match parse_fields(&fields_arg, true) {
@@ -553,7 +565,7 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
         return;
     }
 
-    // Validate cache directory access upfront if specified
+    // Validate cache directory access upfront if caching is enabled
     if let Some(ref cache_dir) = cache_dir {
         if let Err(e) = validate_cache_dir(cache_dir) {
             eprintln!("ERROR: {e}");
@@ -597,7 +609,7 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
                 }
             }
         } else {
-            // No cache_dir, query broker directly
+            // Cache disabled, query broker directly
             match base_broker.query() {
                 Ok(items) => (items, false),
                 Err(e) => {
@@ -894,7 +906,7 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
     let failed_items = Arc::new(Mutex::new(Vec::<FailedItem>::new()));
     let failed_items_clone = Arc::clone(&failed_items);
 
-    // Only use broker cache when cache_dir is specified; otherwise use pagination
+    // Only use broker cache when caching is enabled; otherwise use pagination
     let (all_items, used_broker_cache) = if cache_dir.is_some() {
         match fetch_broker_items_cached(&filters, cache_dir.as_deref()) {
             Ok((items, used_cache)) => (Some(items), used_cache),
@@ -905,7 +917,7 @@ pub fn run(args: SearchArgs, output_format: OutputFormat) {
             }
         }
     } else {
-        // No cache_dir specified, use pagination (original behavior)
+        // Cache disabled, use pagination (original behavior)
         (None, false)
     };
 

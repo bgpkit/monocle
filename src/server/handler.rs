@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn test_ws_context_default() {
         let ctx = WsContext::default();
-        assert!(ctx.data_dir().contains(".monocle"));
+        assert!(ctx.data_dir().contains("monocle"));
     }
 
     #[test]

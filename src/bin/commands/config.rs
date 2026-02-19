@@ -81,6 +81,7 @@ pub enum ConfigCommands {
 struct ConfigInfo {
     config_file: String,
     data_dir: String,
+    cache_dir: String,
     cache_ttl: CacheTtlConfig,
     database: SqliteDatabaseInfo,
     server_defaults: ServerDefaults,
@@ -173,6 +174,7 @@ fn run_status(config: &MonocleConfig, verbose: bool, output_format: OutputFormat
     let config_info = ConfigInfo {
         config_file,
         data_dir: config.data_dir.clone(),
+        cache_dir: config.cache_dir(),
         cache_ttl: CacheTtlConfig {
             asinfo_secs: config.asinfo_cache_ttl_secs,
             as2rel_secs: config.as2rel_cache_ttl_secs,
@@ -241,6 +243,7 @@ fn print_config_table(info: &ConfigInfo, verbose: bool) {
     println!("General:");
     println!("  Config file:    {}", info.config_file);
     println!("  Data dir:       {}", info.data_dir);
+    println!("  Cache dir:      {}", info.cache_dir);
     println!();
 
     println!("Cache TTL:");
@@ -399,7 +402,10 @@ fn print_config_table(info: &ConfigInfo, verbose: bool) {
     eprintln!("Tips:");
     eprintln!("  Use --verbose (-v) to see all files in the data directory");
     eprintln!("  Use --format json for machine-readable output");
-    eprintln!("  Edit ~/.monocle/monocle.toml to customize settings");
+    eprintln!(
+        "  Edit {} to customize settings",
+        MonocleConfig::config_file_path()
+    );
     eprintln!("  Use 'monocle config sources' to see data source status");
     eprintln!("  Use 'monocle config update' to update data sources");
 }
