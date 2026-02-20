@@ -50,7 +50,7 @@ cargo run --example inspect_lens --features lib
 use monocle::database::MonocleDatabase;
 use monocle::lens::rpki::{RpkiLens, RpkiValidationArgs};
 
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 let lens = RpkiLens::new(&db);
 let result = lens.validate("1.1.1.0/24", 13335)?;
 ```

@@ -336,7 +336,7 @@ impl Pfx2asSearchArgs {
 /// use monocle::database::MonocleDatabase;
 /// use monocle::lens::pfx2as::{Pfx2asLens, Pfx2asSearchArgs};
 ///
-/// let db = MonocleDatabase::open("~/.monocle/monocle-data.sqlite3")?;
+/// let db = MonocleDatabase::open("~/.local/share/monocle/monocle-data.sqlite3")?;
 /// let lens = Pfx2asLens::new(&db);
 ///
 /// // Search by prefix with RPKI validation

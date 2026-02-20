@@ -25,7 +25,7 @@ use commands::time::TimeArgs;
 #[clap(author, version, about, long_about = None)]
 #[clap(propagate_version = true)]
 struct Cli {
-    /// configuration file path, by default $HOME/.monocle.toml is used
+    /// configuration file path (default: $XDG_CONFIG_HOME/monocle/monocle.toml)
     #[clap(short, long)]
     config: Option<String>,
 
@@ -103,7 +103,7 @@ struct ServerArgs {
     #[clap(long, default_value_t = 8080)]
     port: u16,
 
-    /// Monocle data directory (default: $HOME/.monocle)
+    /// Monocle data directory (default: $XDG_DATA_HOME/monocle)
     #[clap(long)]
     data_dir: Option<String>,
 
@@ -175,7 +175,7 @@ fn main() {
     // matches just as you would the top level cmd
     match cli.command {
         Commands::Parse(args) => commands::parse::run(args, streaming_output_format),
-        Commands::Search(args) => commands::search::run(args, streaming_output_format),
+        Commands::Search(args) => commands::search::run(&config, args, streaming_output_format),
 
         Commands::Server(args) => {
             // The server requires the `server` feature (axum + tokio). Keep the CLI

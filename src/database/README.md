@@ -85,7 +85,7 @@ manager.initialize()?;
 use monocle::database::MonocleDatabase;
 
 // Open the monocle database
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 
 // Bootstrap ASInfo data if needed
 if db.needs_asinfo_refresh(Duration::from_secs(7 * 24 * 60 * 60)) {
@@ -118,7 +118,7 @@ RPKI current data (ROAs and ASPAs) is stored in the monocle SQLite database and 
 ```rust
 use monocle::database::{MonocleDatabase, RpkiRepository, DEFAULT_RPKI_CACHE_TTL};
 
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 let rpki = db.rpki();
 
 // Check metadata / whether refresh is needed
@@ -141,7 +141,7 @@ println!("{} {} -> {} ({})", result.prefix, result.asn, result.state, result.rea
 ```rust
 use monocle::database::{MonocleDatabase, DEFAULT_PFX2AS_CACHE_TTL};
 
-let db = MonocleDatabase::open_in_dir("~/.monocle")?;
+let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 let pfx2as = db.pfx2as();
 
 // Check if refresh is needed

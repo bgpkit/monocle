@@ -978,7 +978,7 @@ Get the status of all data sources.
   "type": "result",
   "data": {
     "sqlite": {
-      "path": "/home/user/.monocle/monocle.db",
+      "path": "/home/user/.local/share/monocle/monocle-data.sqlite3",
       "exists": true,
       "size_bytes": 52428800,
       "asinfo_count": 120415,
@@ -993,7 +993,7 @@ Get the status of all data sources.
       }
     },
     "cache": {
-      "directory": "/home/user/.monocle/cache",
+      "directory": "/home/user/.cache/monocle",
       "pfx2as_cache_count": 3
     }
   }
@@ -1321,7 +1321,7 @@ ping_interval = 30
 ```bash
 MONOCLE_SERVER_ADDRESS=0.0.0.0
 MONOCLE_SERVER_PORT=8800
-MONOCLE_DATA_DIR=~/.monocle
+MONOCLE_DATA_DIR=~/.local/share/monocle
 ```
 
 ---
