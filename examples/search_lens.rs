@@ -17,6 +17,7 @@ fn main() -> anyhow::Result<()> {
         parse_filters: ParseFilters {
             start_ts: Some("2025-01-01T00:00:00Z".to_string()),
             end_ts: Some("2025-01-01T01:00:00Z".to_string()),
+            communities: vec!["*:100".to_string()],
             ..Default::default()
         },
         collector: Some("rrc00".to_string()),
@@ -25,6 +26,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     println!("Searching for BGP messages...");
+    println!("Filter: community *:100");
 
     let broker = filters.build_broker()?;
     let items = broker.query()?;
