@@ -16,11 +16,13 @@ fn main() -> anyhow::Result<()> {
     // Parse with filters
     let filters = ParseFilters {
         origin_asn: vec!["13335".to_string()],
+        communities: vec!["*:100".to_string()],
         ..Default::default()
     };
 
     println!("Parsing MRT file with filters:");
     println!("  Origin ASN: 13335 (Cloudflare)");
+    println!("  Community: *:100");
 
     let url = "https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz";
     let elems = lens.parse_with_progress(&filters, url, None)?;

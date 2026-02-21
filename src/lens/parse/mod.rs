@@ -206,6 +206,21 @@ pub struct ParseFilters {
     #[serde(default)]
     pub peer_asn: Vec<String>,
 
+    /// Filter by BGP community value(s), comma-separated (`A:B` or `A:B:C`).
+    /// Each part can be a number or `*` wildcard (e.g., `*:100`, `13335:*`, `57866:104:31`).
+    /// Prefix with ! to exclude.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'C',
+            long = "community",
+            visible_alias = "communities",
+            value_delimiter = ','
+        )
+    )]
+    #[serde(default)]
+    pub communities: Vec<String>,
+
     /// Filter by elem type: announce (a) or withdraw (w)
     #[cfg_attr(feature = "cli", clap(short = 'm', long, value_enum))]
     pub elem_type: Option<ParseElemType>,
@@ -333,10 +348,16 @@ impl ParseFilters {
             Self::validate_prefix(prefix)?;
         }
 
+        // Validate communities
+        for community in &self.communities {
+            Self::validate_community(community)?;
+        }
+
         // Check for mixed positive/negative in same filter
         Self::check_negation_consistency(&self.origin_asn, "origin-asn")?;
         Self::check_negation_consistency(&self.peer_asn, "peer-asn")?;
         Self::check_negation_consistency(&self.prefix, "prefix")?;
+        Self::check_negation_consistency(&self.communities, "community")?;
 
         Ok(())
     }
@@ -363,6 +384,93 @@ impl ParseFilters {
             )
         })?;
         Ok(())
+    }
+
+    /// Validate a community value (with optional `!` prefix for negation).
+    /// Community format is either `A:B` (standard) or `A:B:C` (large community).
+    /// Standard community parts must be `*` or u16 (0-65535).
+    /// Large community parts must be `*` or u32 (0-4294967295).
+    fn validate_community(value: &str) -> Result<()> {
+        let community_str = value.strip_prefix('!').unwrap_or(value);
+        let parts: Vec<&str> = community_str.split(':').collect();
+        match parts.len() {
+            2 => {
+                let first_valid = parts[0] == "*" || parts[0].parse::<u16>().is_ok();
+                let second_valid = parts[1] == "*" || parts[1].parse::<u16>().is_ok();
+                if !first_valid || !second_valid {
+                    return Err(anyhow!(
+                        "Invalid community '{}': A:B parts must each be 0-65535 or '*'",
+                        value
+                    ));
+                }
+            }
+            3 => {
+                let all_valid = parts.iter().all(|p| *p == "*" || p.parse::<u32>().is_ok());
+                if !all_valid {
+                    return Err(anyhow!(
+                        "Invalid community '{}': A:B:C parts must each be 0-4294967295 or '*'",
+                        value
+                    ));
+                }
+            }
+            _ => {
+                return Err(anyhow!(
+                    "Invalid community '{}': must be A:B or A:B:C (e.g., 13335:100, *:100, 57866:104:31)",
+                    value
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convert a validated community pattern (`A:B` or `A:B:C`) into a strict regex body.
+    /// `*` is translated to `\d+` and each community is matched with exact colon positions.
+    fn community_pattern_to_regex_body(pattern: &str) -> Result<String> {
+        Self::validate_community(pattern)?;
+        let value = pattern.strip_prefix('!').unwrap_or(pattern);
+        let parts: Vec<&str> = value.split(':').collect();
+
+        let regex_parts = parts
+            .iter()
+            .map(|part| {
+                if *part == "*" {
+                    "\\d+".to_string()
+                } else {
+                    (*part).to_string()
+                }
+            })
+            .collect::<Vec<String>>();
+
+        Ok(regex_parts.join(":"))
+    }
+
+    /// Build parser-compatible community filter value from monocle community inputs.
+    /// Multi-value positive filters use OR logic; multi-value negative filters negate the OR set.
+    fn build_community_filter_value(&self) -> Result<Option<String>> {
+        if self.communities.is_empty() {
+            return Ok(None);
+        }
+
+        Self::check_negation_consistency(&self.communities, "community")?;
+
+        let is_negated = self
+            .communities
+            .first()
+            .map(|v| v.starts_with('!'))
+            .unwrap_or(false);
+
+        let mut pattern_bodies = Vec::with_capacity(self.communities.len());
+        for pattern in &self.communities {
+            pattern_bodies.push(Self::community_pattern_to_regex_body(pattern)?);
+        }
+
+        let regex = format!("^(?:{})$", pattern_bodies.join("|"));
+        if is_negated {
+            Ok(Some(format!("!{}", regex)))
+        } else {
+            Ok(Some(regex))
+        }
     }
 
     /// Check that all values in a filter are either all positive or all negative
@@ -419,6 +527,11 @@ impl ParseFilters {
         if !self.peer_asn.is_empty() {
             let value = self.peer_asn.join(",");
             parser = parser.add_filter("peer_asns", &value)?;
+        }
+
+        // Community filter - bgpkit-parser uses singular filter key name.
+        if let Some(value) = self.build_community_filter_value()? {
+            parser = parser.add_filter("community", &value)?;
         }
 
         if let Some(v) = &self.elem_type {
@@ -791,6 +904,79 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_community_valid() {
+        assert!(ParseFilters::validate_community("13335:100").is_ok());
+        assert!(ParseFilters::validate_community("!13335:100").is_ok());
+        assert!(ParseFilters::validate_community("0:0").is_ok());
+        assert!(ParseFilters::validate_community("65535:65535").is_ok());
+        assert!(ParseFilters::validate_community("*:100").is_ok());
+        assert!(ParseFilters::validate_community("13335:*").is_ok());
+        assert!(ParseFilters::validate_community("*:*").is_ok());
+        assert!(ParseFilters::validate_community("!*:100").is_ok());
+        assert!(ParseFilters::validate_community("57866:104:31").is_ok());
+        assert!(ParseFilters::validate_community("!57866:104:31").is_ok());
+        assert!(ParseFilters::validate_community("*:104:31").is_ok());
+        assert!(ParseFilters::validate_community("57866:*:*").is_ok());
+        assert!(ParseFilters::validate_community("4294967295:0:1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_community_invalid() {
+        assert!(ParseFilters::validate_community("13335").is_err());
+        assert!(ParseFilters::validate_community("13335:").is_err());
+        assert!(ParseFilters::validate_community(":100").is_err());
+        assert!(ParseFilters::validate_community("65536:1").is_err());
+        assert!(ParseFilters::validate_community("1:65536").is_err());
+        assert!(ParseFilters::validate_community("abc:100").is_err());
+        assert!(ParseFilters::validate_community("13*:100").is_err());
+        assert!(ParseFilters::validate_community("*6:100").is_err());
+        assert!(ParseFilters::validate_community("1:2:3:4").is_err());
+        assert!(ParseFilters::validate_community("4294967296:1:1").is_err());
+        assert!(ParseFilters::validate_community("1::3").is_err());
+    }
+
+    #[test]
+    fn test_community_pattern_to_regex_body() {
+        assert_eq!(
+            ParseFilters::community_pattern_to_regex_body("1299:*").unwrap(),
+            "1299:\\d+"
+        );
+        assert_eq!(
+            ParseFilters::community_pattern_to_regex_body("*:100").unwrap(),
+            "\\d+:100"
+        );
+        assert_eq!(
+            ParseFilters::community_pattern_to_regex_body("57866:104:31").unwrap(),
+            "57866:104:31"
+        );
+        assert_eq!(
+            ParseFilters::community_pattern_to_regex_body("*:*:*").unwrap(),
+            "\\d+:\\d+:\\d+"
+        );
+    }
+
+    #[test]
+    fn test_build_community_filter_value() {
+        let filters = ParseFilters {
+            communities: vec!["1299:*".to_string(), "*:100".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            filters.build_community_filter_value().unwrap(),
+            Some("^(?:1299:\\d+|\\d+:100)$".to_string())
+        );
+
+        let filters = ParseFilters {
+            communities: vec!["!1299:*".to_string(), "!*:100".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            filters.build_community_filter_value().unwrap(),
+            Some("!^(?:1299:\\d+|\\d+:100)$".to_string())
+        );
+    }
+
+    #[test]
     fn test_negation_consistency_valid() {
         // All positive
         let values = vec!["13335".to_string(), "15169".to_string()];
@@ -828,6 +1014,7 @@ mod tests {
             origin_asn: vec!["13335".to_string(), "15169".to_string()],
             prefix: vec!["1.1.1.0/24".to_string()],
             peer_asn: vec!["!174".to_string()],
+            communities: vec!["*:100".to_string()],
             ..Default::default()
         };
         assert!(filters.validate().is_ok());
@@ -846,9 +1033,23 @@ mod tests {
         };
         assert!(filters.validate().is_err());
 
+        // Invalid community
+        let filters = ParseFilters {
+            communities: vec!["not-a-community".to_string()],
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
+
         // Mixed negation
         let filters = ParseFilters {
             origin_asn: vec!["13335".to_string(), "!15169".to_string()],
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
+
+        // Mixed community negation
+        let filters = ParseFilters {
+            communities: vec!["13335:100".to_string(), "!15169:100".to_string()],
             ..Default::default()
         };
         assert!(filters.validate().is_err());

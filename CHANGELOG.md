@@ -20,6 +20,18 @@ All notable changes to this project will be documented in this file.
 
 * Switched directory resolution library from `dirs` to `etcetera`
 
+### New Features
+
+* Added BGP community filtering support to `monocle parse` and `monocle search`
+  * New CLI option: `-C, --community` (with `--communities` alias)
+  * Supports repeated flags and comma-separated values
+  * Supports standard communities (`A:B`) and large communities (`A:B:C`)
+  * Supports wildcard matching per position with `*` (for example `*:100`, `1299:*`, `57866:*:*`)
+  * Uses strict positional matching with exact colon-count semantics
+    * `A:B` patterns match only standard communities
+    * `A:B:C` patterns match only large communities
+    * Example: `1299:*` does not match `1403:1299`
+
 ## v1.1.0 - 2025-02-10
 
 ### Breaking Changes

@@ -617,6 +617,7 @@ mod tests {
                 include_sub: false,
                 peer_ip: Vec::new(),
                 peer_asn: Vec::new(),
+                communities: Vec::new(),
                 elem_type: None,
                 start_ts: Some("2022-01-01T00:00:00Z".to_string()),
                 end_ts: Some("2022-01-01T01:00:00Z".to_string()), // 1 hour window
@@ -705,6 +706,7 @@ mod tests {
                 include_sub: false,
                 peer_ip: Vec::new(),
                 peer_asn: Vec::new(),
+                communities: Vec::new(),
                 elem_type: None,
                 start_ts: Some("2022-01-01T00:00:00Z".to_string()),
                 end_ts: Some("2022-01-01T01:00:00Z".to_string()),
@@ -757,5 +759,22 @@ mod tests {
         };
         let json = serde_json::to_string(&progress).expect("Failed to serialize");
         assert!(json.contains("percent_complete"));
+    }
+
+    #[test]
+    fn test_search_filters_validate_with_communities() {
+        let filters = SearchFilters {
+            parse_filters: ParseFilters {
+                communities: vec!["*:100".to_string(), "15169:*".to_string()],
+                start_ts: Some("2025-01-01T00:00:00Z".to_string()),
+                end_ts: Some("2025-01-01T01:00:00Z".to_string()),
+                ..Default::default()
+            },
+            collector: Some("rrc00".to_string()),
+            project: Some("riperis".to_string()),
+            dump_type: SearchDumpType::Updates,
+        };
+
+        assert!(filters.validate().is_ok());
     }
 }
