@@ -16,3 +16,5 @@ test_as2rel.sqlite3*
 
 .DS_Store
 test-*
+
+docs
