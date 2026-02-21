@@ -226,11 +226,11 @@ pub struct ParseFilters {
     pub elem_type: Option<ParseElemType>,
 
     /// Filter by start unix timestamp inclusive
-    #[cfg_attr(feature = "cli", clap(short = 't', long))]
+    #[cfg_attr(feature = "cli", clap(short = 't', long, visible_alias = "ts-start"))]
     pub start_ts: Option<String>,
 
     /// Filter by end unix timestamp inclusive
-    #[cfg_attr(feature = "cli", clap(short = 'T', long))]
+    #[cfg_attr(feature = "cli", clap(short = 'T', long, visible_alias = "ts-end"))]
     pub end_ts: Option<String>,
 
     /// Duration from the start-ts or end-ts, e.g. 1h
