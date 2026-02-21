@@ -31,6 +31,13 @@ All notable changes to this project will be documented in this file.
     * `A:B` patterns match only standard communities
     * `A:B:C` patterns match only large communities
     * Example: `1299:*` does not match `1403:1299`
+* Added CLI compatibility aliases for time filters in `monocle parse` and `monocle search`
+  * `--ts-start` is now accepted as an alias for `--start-ts`
+  * `--ts-end` is now accepted as an alias for `--end-ts`
+
+### Code Improvements
+
+* Updated README command help examples to match current CLI help output from the release binary
 
 ## v1.1.0 - 2025-02-10
 

@@ -250,7 +250,7 @@ All commands support the following global options:
 Top-level help menu:
 
 ```text
-➜  ~ monocle                      
+➜  monocle --help
 A commandline application to search, parse, and process BGP information in public sources.
 
 
@@ -266,14 +266,16 @@ Commands:
   rpki     RPKI utilities
   ip       IP information lookup
   as2rel   AS-level relationship lookup between ASNs
+  pfx2as   Prefix-to-ASN mapping lookup
   config   Show monocle configuration, data paths, and database management
   help     Print this message or the help of the given subcommand(s)
 
 Options:
   -c, --config <CONFIG>  configuration file path (default: $XDG_CONFIG_HOME/monocle/monocle.toml)
       --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --format <FORMAT>  Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
       --json             Output as JSON objects (shortcut for --format json-pretty)
+      --no-update        Disable automatic database updates (use existing cached data only)
   -h, --help             Print help
   -V, --version          Print version
 ```
@@ -289,27 +291,107 @@ Parse individual MRT files given a file path, local or remote
 Usage: monocle parse [OPTIONS] <FILE>
 
 Arguments:
-  <FILE>  File path to a MRT file, local or remote
+  <FILE>
+          File path to an MRT file, local or remote
 
 Options:
-      --debug                      Print debug information
-      --format <FORMAT>            Output format: table (default), markdown, json, json-pretty, json-line, psv
-      --json                       Output as JSON objects (shortcut for --format json-pretty)
-  -M, --mrt-path <MRT_PATH>        MRT output file path
-  -o, --origin-asn <ORIGIN_ASN>    Filter by origin AS Number (comma-separated, prefix with ! to exclude)
-  -p, --prefix <PREFIX>            Filter by network prefix (comma-separated, prefix with ! to exclude)
-  -s, --include-super              Include super-prefix when filtering
-  -S, --include-sub                Include sub-prefix when filtering
-  -j, --peer-ip <PEER_IP>          Filter by peer IP address
-  -J, --peer-asn <PEER_ASN>        Filter by peer ASN (comma-separated, prefix with ! to exclude)
-  -m, --elem-type <ELEM_TYPE>      Filter by elem type: announce (a) or withdraw (w)
-  -t, --start-ts <START_TS>        Filter by start unix timestamp inclusive
-  -T, --end-ts <END_TS>            Filter by end unix timestamp inclusive
-  -f, --fields <FIELDS>            Select output fields (comma-separated)
-      --order-by <ORDER_BY>        Sort output by field: timestamp, prefix, peer_ip, peer_asn, as_path, next_hop
-      --order <ORDER>              Sort direction: asc (default), desc
-      --time-format <TIME_FORMAT>  Timestamp format: unix (default), rfc3339
-  -h, --help                       Print help
+      --pretty
+          Pretty-print JSON output
+
+      --debug
+          Print debug information
+
+  -M, --mrt-path <MRT_PATH>
+          MRT output file path
+
+  -f, --fields <FIELDS>
+          Comma-separated list of fields to output. Available fields: type, timestamp, peer_ip, peer_asn, prefix, as_path, origin, next_hop, local_pref, med, communities, atomic, aggr_asn, aggr_ip, collector
+
+      --format <FORMAT>
+          Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
+
+      --json
+          Output as JSON objects (shortcut for --format json-pretty)
+
+      --order-by <ORDER_BY>
+          Order output by field (enables buffering)
+
+          Possible values:
+          - timestamp: Order by timestamp (default)
+          - prefix:    Order by network prefix
+          - peer_ip:   Order by peer IP address
+          - peer_asn:  Order by peer AS number
+          - as_path:   Order by AS path (string comparison)
+          - next_hop:  Order by next hop IP address
+
+      --no-update
+          Disable automatic database updates (use existing cached data only)
+
+      --order <ORDER>
+          Order direction (asc or desc, default: asc)
+
+          Possible values:
+          - asc:  Ascending order (smallest/oldest first)
+          - desc: Descending order (largest/newest first)
+          
+          [default: asc]
+
+      --time-format <TIME_FORMAT>
+          Timestamp output format for non-JSON output (unix or rfc3339)
+
+          Possible values:
+          - unix:    Unix timestamp (integer or float) - default for backward compatibility
+          - rfc3339: RFC3339/ISO 8601 format (e.g., "2023-10-11T15:00:00Z")
+          
+          [default: unix]
+
+  -o, --origin-asn <ORIGIN_ASN>
+          Filter by origin AS Number(s), comma-separated. Prefix with ! to exclude
+
+  -p, --prefix <PREFIX>
+          Filter by network prefix(es), comma-separated. Prefix with ! to exclude
+
+  -s, --include-super
+          Include super-prefixes when filtering
+
+  -S, --include-sub
+          Include sub-prefixes when filtering
+
+  -j, --peer-ip <PEER_IP>
+          Filter by peer IP address(es)
+
+  -J, --peer-asn <PEER_ASN>
+          Filter by peer ASN(s), comma-separated. Prefix with ! to exclude
+
+  -C, --community <COMMUNITIES>
+          Filter by BGP community value(s), comma-separated (`A:B` or `A:B:C`). Each part can be a number or `*` wildcard (e.g., `*:100`, `13335:*`, `57866:104:31`). Prefix with ! to exclude
+          
+          [aliases: --communities]
+
+  -m, --elem-type <ELEM_TYPE>
+          Filter by elem type: announce (a) or withdraw (w)
+
+          Possible values:
+          - a: BGP announcement
+          - w: BGP withdrawal
+
+  -t, --start-ts <START_TS>
+          Filter by start unix timestamp inclusive
+
+  -T, --end-ts <END_TS>
+          Filter by end unix timestamp inclusive
+
+  -d, --duration <DURATION>
+          Duration from the start-ts or end-ts, e.g. 1h
+
+  -a, --as-path <AS_PATH>
+          Filter by AS path regex string
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 ```
 
 #### Multi-value Filters
@@ -449,34 +531,137 @@ Search for BGP messages from all available public MRT files using [BGPKIT Broker
 ➜  monocle search --help
 Search BGP messages from all available public MRT files
 
-Usage: monocle search [OPTIONS] --start-ts <START_TS> --end-ts <END_TS>
+Usage: monocle search [OPTIONS]
 
 Options:
-      --debug                        Print debug information
-      --format <FORMAT>              Output format: table (default), markdown, json, json-pretty, json-line, psv
-      --json                         Output as JSON objects (shortcut for --format json-pretty)
-  -t, --start-ts <START_TS>          Start timestamp (RFC3339 or Unix)
-  -T, --end-ts <END_TS>              End timestamp (RFC3339 or Unix)
-  -d, --duration <DURATION>          Duration (e.g., 1h, 30m) - can replace --end-ts
-  -c, --collector <COLLECTOR>        Filter by collector name
-      --project <PROJECT>            Filter by project (riperis, routeviews)
-      --dump-type <DUMP_TYPE>        Dump type: updates or rib [default: updates]
-  -o, --origin-asn <ORIGIN_ASN>      Filter by origin AS Number (comma-separated, prefix with ! to exclude)
-  -p, --prefix <PREFIX>              Filter by network prefix (comma-separated, prefix with ! to exclude)
-  -s, --include-super                Include super-prefix when filtering
-  -S, --include-sub                  Include sub-prefix when filtering
-  -j, --peer-ip <PEER_IP>            Filter by peer IP address
-  -J, --peer-asn <PEER_ASN>          Filter by peer ASN (comma-separated, prefix with ! to exclude)
-  -m, --elem-type <ELEM_TYPE>        Filter by elem type: announce (a) or withdraw (w)
-      --as-path <AS_PATH>            Filter by AS path regex
-      --broker-files                 Show broker file list only (don't parse)
-      --use-cache                    Use default XDG cache directory for MRT files
-      --cache-dir <CACHE_DIR>        Override cache directory for MRT files
-  -f, --fields <FIELDS>              Select output fields (comma-separated)
-      --order-by <ORDER_BY>          Sort output by field: timestamp, prefix, peer_ip, peer_asn, as_path, next_hop
-      --order <ORDER>                Sort direction: asc (default), desc
-      --time-format <TIME_FORMAT>    Timestamp format: unix (default), rfc3339
-  -h, --help                         Print help
+      --dry-run
+          Dry-run, do not download or parse
+
+      --debug
+          Print debug information
+
+      --sqlite-path <SQLITE_PATH>
+          SQLite output file path
+
+      --format <FORMAT>
+          Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
+
+  -M, --mrt-path <MRT_PATH>
+          MRT output file path
+
+      --json
+          Output as JSON objects (shortcut for --format json-pretty)
+
+      --sqlite-reset
+          SQLite reset database content if exists
+
+      --broker-files
+          Output matching broker files (URLs) and exit without searching
+
+      --no-update
+          Disable automatic database updates (use existing cached data only)
+
+  -f, --fields <FIELDS>
+          Comma-separated list of fields to output. Available fields: type, timestamp, peer_ip, peer_asn, prefix, as_path, origin, next_hop, local_pref, med, communities, atomic, aggr_asn, aggr_ip, collector
+
+      --order-by <ORDER_BY>
+          Order output by field (enables buffering)
+
+          Possible values:
+          - timestamp: Order by timestamp (default)
+          - prefix:    Order by network prefix
+          - peer_ip:   Order by peer IP address
+          - peer_asn:  Order by peer AS number
+          - as_path:   Order by AS path (string comparison)
+          - next_hop:  Order by next hop IP address
+
+      --order <ORDER>
+          Order direction (asc or desc, default: asc)
+
+          Possible values:
+          - asc:  Ascending order (smallest/oldest first)
+          - desc: Descending order (largest/newest first)
+          
+          [default: asc]
+
+      --time-format <TIME_FORMAT>
+          Timestamp output format for non-JSON output (unix or rfc3339)
+
+          Possible values:
+          - unix:    Unix timestamp (integer or float) - default for backward compatibility
+          - rfc3339: RFC3339/ISO 8601 format (e.g., "2023-10-11T15:00:00Z")
+          
+          [default: unix]
+
+      --use-cache
+          Use the default XDG cache directory ($XDG_CACHE_HOME/monocle) for MRT files. Overridden by --cache-dir if both are specified
+
+      --cache-dir <CACHE_DIR>
+          Override cache directory for downloaded MRT files. Files are stored as {cache-dir}/{collector}/{path}. If a file already exists in cache, it will be used instead of downloading
+
+  -o, --origin-asn <ORIGIN_ASN>
+          Filter by origin AS Number(s), comma-separated. Prefix with ! to exclude
+
+  -p, --prefix <PREFIX>
+          Filter by network prefix(es), comma-separated. Prefix with ! to exclude
+
+  -s, --include-super
+          Include super-prefixes when filtering
+
+  -S, --include-sub
+          Include sub-prefixes when filtering
+
+  -j, --peer-ip <PEER_IP>
+          Filter by peer IP address(es)
+
+  -J, --peer-asn <PEER_ASN>
+          Filter by peer ASN(s), comma-separated. Prefix with ! to exclude
+
+  -C, --community <COMMUNITIES>
+          Filter by BGP community value(s), comma-separated (`A:B` or `A:B:C`). Each part can be a number or `*` wildcard (e.g., `*:100`, `13335:*`, `57866:104:31`). Prefix with ! to exclude
+          
+          [aliases: --communities]
+
+  -m, --elem-type <ELEM_TYPE>
+          Filter by elem type: announce (a) or withdraw (w)
+
+          Possible values:
+          - a: BGP announcement
+          - w: BGP withdrawal
+
+  -t, --start-ts <START_TS>
+          Filter by start unix timestamp inclusive
+
+  -T, --end-ts <END_TS>
+          Filter by end unix timestamp inclusive
+
+  -d, --duration <DURATION>
+          Duration from the start-ts or end-ts, e.g. 1h
+
+  -a, --as-path <AS_PATH>
+          Filter by AS path regex string
+
+  -c, --collector <COLLECTOR>
+          Filter by collector, e.g., rrc00 or route-views2
+
+  -P, --project <PROJECT>
+          Filter by route collection project, i.e., riperis or routeviews
+
+  -D, --dump-type <DUMP_TYPE>
+          Specify data dump type to search (updates or RIB dump)
+
+          Possible values:
+          - updates:     BGP updates only
+          - rib:         BGP RIB dump only
+          - rib-updates: BGP RIB dump and BGP updates
+          
+          [default: updates]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 ```
 
 #### Local Caching
@@ -524,16 +709,19 @@ Parse and convert time strings between various formats.
 ➜  monocle time --help
 Time conversion utilities
 
-Usage: monocle time [OPTIONS] [TIMES]...
+Usage: monocle time [OPTIONS] [TIME]...
 
 Arguments:
-  [TIMES]...  Time strings to parse (Unix timestamp, RFC3339, or human-readable)
+  [TIME]...  Time stamp or time string to convert
 
 Options:
+  -s, --simple           Simple output, only print the converted time (RFC3339 format)
       --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --format <FORMAT>  Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
       --json             Output as JSON objects (shortcut for --format json-pretty)
+      --no-update        Disable automatic database updates (use existing cached data only)
   -h, --help             Print help
+  -V, --version          Print version
 ```
 
 Examples:
@@ -581,11 +769,12 @@ Options:
   -a, --asn                Force treat queries as ASNs
       --debug              Print debug information
   -p, --prefix             Force treat queries as prefixes
-      --format <FORMAT>    Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --format <FORMAT>    Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
   -n, --name               Force treat queries as name search
   -c, --country <COUNTRY>  Search by country code (e.g., US, DE)
       --json               Output as JSON objects (shortcut for --format json-pretty)
-      --show <SECTION>     Select data sections to display (can be repeated). Available: basic, prefixes, connectivity, rpki, all
+      --no-update          Disable automatic database updates (use existing cached data only)
+      --show <SECTION>     Select data sections to display (can be repeated). Overrides defaults. Available: basic, prefixes, connectivity, rpki, all
       --full               Show all data sections with no limits
       --full-roas          Show all RPKI ROAs (default: top 10)
       --full-prefixes      Show all prefixes (default: top 10)
@@ -593,6 +782,7 @@ Options:
       --limit <N>          Limit search results (default: 20)
   -u, --update             Force refresh the asinfo database
   -h, --help               Print help
+  -V, --version            Print version
 ```
 
 Examples:
@@ -689,16 +879,20 @@ Look up country names and codes.
 ➜  monocle country --help
 Country name and code lookup utilities
 
-Usage: monocle country [OPTIONS] <QUERY>
+Usage: monocle country [OPTIONS] [QUERY]
 
 Arguments:
-  <QUERY>  Country code (2-letter) or name to search
+  [QUERY]  Search query: country code (e.g., "US") or partial name (e.g., "united")
 
 Options:
+  -a, --all              List all countries
       --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+  -s, --simple           Output as simple text (code: name)
+      --format <FORMAT>  Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
       --json             Output as JSON objects (shortcut for --format json-pretty)
+      --no-update        Disable automatic database updates (use existing cached data only)
   -h, --help             Print help
+  -V, --version          Print version
 ```
 
 Examples:
@@ -730,26 +924,74 @@ AS-level relationship lookup between ASNs
 Usage: monocle as2rel [OPTIONS] <ASNS>...
 
 Arguments:
-  <ASNS>...  One or more ASNs to query relationships for
-             - Single ASN: shows all relationships for that ASN
-             - Two ASNs: shows the relationship between them
-             - Multiple ASNs: shows relationships for all pairs (asn1 < asn2)
+  <ASNS>...
+          One or more ASNs to query relationships for
+          
+          - Single ASN: shows all relationships for that ASN - Two ASNs: shows the relationship between them - Multiple ASNs: shows relationships for all pairs (asn1 < asn2)
 
 Options:
-      --debug                Print debug information
-      --format <FORMAT>      Output format: table (default), markdown, json, json-pretty, json-line, psv
-      --json                 Output as JSON objects (shortcut for --format json-pretty)
-      --update               Force update the local database
-      --no-explain           Hide the explanation text in table output
-      --sort-by-asn          Sort results by ASN2 ascending (default: sort by connected % descending)
-      --show-name            Show organization name for ASN2 (truncated to 20 chars)
-      --show-full-name       Show full organization name without truncation
-      --min-visibility <PCT> Minimum visibility percentage (0-100) to include in results
-      --single-homed         Only show ASNs that are single-homed to the queried ASN
-      --is-upstream          Only show relationships where the queried ASN is an upstream (provider)
-      --is-downstream        Only show relationships where the queried ASN is a downstream (customer)
-      --is-peer              Only show peer relationships
-  -h, --help                 Print help
+  -u, --update
+          Force update the local as2rel database
+
+      --debug
+          Print debug information
+
+      --update-with <UPDATE_WITH>
+          Update with a custom data file (local path or URL)
+
+      --format <FORMAT>
+          Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
+
+      --no-explain
+          Hide the explanation text
+
+      --json
+          Output as JSON objects (shortcut for --format json-pretty)
+
+      --sort-by-asn
+          Sort by ASN2 ascending instead of connected percentage descending
+
+      --no-update
+          Disable automatic database updates (use existing cached data only)
+
+      --show-name
+          Show organization name for ASN2 (from asinfo database)
+
+      --show-full-name
+          Show full organization name without truncation (default truncates to 20 chars)
+
+      --min-visibility <PERCENT>
+          Minimum visibility percentage (0-100) to include in results
+          
+          Filters out relationships seen by fewer than this percentage of peers.
+
+      --single-homed
+          Only show ASNs that are single-homed to the queried ASN
+          
+          An ASN is single-homed if it has exactly one upstream provider. This finds ASNs where the queried ASN is their ONLY upstream.
+          
+          Only applicable when querying a single ASN.
+
+      --is-upstream
+          Only show relationships where the queried ASN is an upstream (provider)
+          
+          Shows the downstream customers of the queried ASN. Only applicable when querying a single ASN.
+
+      --is-downstream
+          Only show relationships where the queried ASN is a downstream (customer)
+          
+          Shows the upstream providers of the queried ASN. Only applicable when querying a single ASN.
+
+      --is-peer
+          Only show peer relationships
+          
+          Only applicable when querying a single ASN.
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 ```
 
 Output columns:
@@ -798,25 +1040,50 @@ Results include RPKI validation status for each prefix-ASN pair.
 ➜  monocle pfx2as --help
 Prefix-to-ASN mapping lookup
 
-Query by prefix to find origin ASNs, or by ASN to find announced prefixes.
-Includes RPKI validation status for each prefix-ASN pair.
+Query by prefix to find origin ASNs, or by ASN to find announced prefixes. Includes RPKI validation status for each prefix-ASN pair.
 
 Usage: monocle pfx2as [OPTIONS] <QUERY>
 
 Arguments:
-  <QUERY>  Query: an IP prefix (e.g., 1.1.1.0/24) or ASN (e.g., 13335, AS13335)
+  <QUERY>
+          Query: an IP prefix (e.g., 1.1.1.0/24) or ASN (e.g., 13335, AS13335)
 
 Options:
-  -u, --update           Force update the local pfx2as database
-      --include-sub      Include sub-prefixes (more specific) in results when querying by prefix
-      --include-super    Include super-prefixes (less specific) in results when querying by prefix
-      --show-name        Show AS name for each origin ASN
-      --show-full-name   Show full AS name without truncation (default truncates to 20 chars)
-  -l, --limit <N>        Limit the number of results (default: no limit)
-      --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
-      --json             Output as JSON objects (shortcut for --format json-pretty)
-  -h, --help             Print help
+  -u, --update
+          Force update the local pfx2as database
+
+      --debug
+          Print debug information
+
+      --include-sub
+          Include sub-prefixes (more specific) in results when querying by prefix
+
+      --format <FORMAT>
+          Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
+
+      --include-super
+          Include super-prefixes (less specific) in results when querying by prefix
+
+      --json
+          Output as JSON objects (shortcut for --format json-pretty)
+
+      --show-name
+          Show AS name for each origin ASN
+
+      --no-update
+          Disable automatic database updates (use existing cached data only)
+
+      --show-full-name
+          Show full AS name without truncation (default truncates to 20 chars)
+
+  -l, --limit <N>
+          Limit the number of results (default: no limit)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 ```
 
 Examples:
@@ -908,9 +1175,11 @@ Commands:
 
 Options:
       --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --format <FORMAT>  Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
       --json             Output as JSON objects (shortcut for --format json-pretty)
+      --no-update        Disable automatic database updates (use existing cached data only)
   -h, --help             Print help
+  -V, --version          Print version
 ```
 
 #### `monocle rpki validate`
@@ -924,14 +1193,19 @@ Validate a prefix-ASN pair against cached RPKI data. Implements RFC 6811 validat
 ➜  monocle rpki validate --help
 validate a prefix-asn pair using cached RPKI data
 
-Usage: monocle rpki validate [OPTIONS] <RESOURCES>...
+Usage: monocle rpki validate [OPTIONS] [RESOURCES] [RESOURCES]...
 
 Arguments:
-  <RESOURCES>...  Two resources: one prefix and one ASN (order does not matter)
+  [RESOURCES] [RESOURCES]...  Two resources: one prefix and one ASN (order does not matter)
 
 Options:
-  -r, --refresh  Force refresh the RPKI cache before validation
-  -h, --help     Print help
+  -r, --refresh          Force refresh the RPKI cache before validation
+      --debug            Print debug information
+      --format <FORMAT>  Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
+      --json             Output as JSON objects (shortcut for --format json-pretty)
+      --no-update        Disable automatic database updates (use existing cached data only)
+  -h, --help             Print help
+  -V, --version          Print version
 ```
 
 Examples:
@@ -967,10 +1241,15 @@ Arguments:
 
 Options:
       --date <DATE>            Load historical data for this date (YYYY-MM-DD)
-      --source <SOURCE>        Historical data source: ripe, rpkiviews [default: ripe]
-      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle [default: soborost]
+      --debug                  Print debug information
+      --source <SOURCE>        Historical data source: ripe, rpkiviews (default: ripe) [default: ripe]
+      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle (default: soborost) [default: soborost]
+      --format <FORMAT>        Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
+      --json                   Output as JSON objects (shortcut for --format json-pretty)
   -r, --refresh                Force refresh the RPKI cache (only applies to current data)
+      --no-update              Disable automatic database updates (use existing cached data only)
   -h, --help                   Print help
+  -V, --version                Print version
 ```
 
 Examples:
@@ -1010,12 +1289,17 @@ Usage: monocle rpki aspas [OPTIONS]
 
 Options:
       --customer <CUSTOMER>    Filter by customer ASN
+      --debug                  Print debug information
       --provider <PROVIDER>    Filter by provider ASN
       --date <DATE>            Load historical data for this date (YYYY-MM-DD)
-      --source <SOURCE>        Historical data source: ripe, rpkiviews [default: ripe]
-      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle [default: soborost]
+      --format <FORMAT>        Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
+      --json                   Output as JSON objects (shortcut for --format json-pretty)
+      --source <SOURCE>        Historical data source: ripe, rpkiviews (default: ripe) [default: ripe]
+      --collector <COLLECTOR>  RPKIviews collector: soborost, massars, attn, kerfuffle (default: soborost) [default: soborost]
+      --no-update              Disable automatic database updates (use existing cached data only)
   -r, --refresh                Force refresh the RPKI cache (only applies to current data)
   -h, --help                   Print help
+  -V, --version                Print version
 ```
 
 Examples:
@@ -1042,13 +1326,16 @@ IP information lookup
 Usage: monocle ip [OPTIONS] [IP]
 
 Arguments:
-  [IP]  IP address to look up (omit to get your public IP)
+  [IP]  IP address to look up (optional)
 
 Options:
+      --simple           Print IP address only (e.g., for getting the public IP address quickly)
       --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --format <FORMAT>  Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
       --json             Output as JSON objects (shortcut for --format json-pretty)
+      --no-update        Disable automatic database updates (use existing cached data only)
   -h, --help             Print help
+  -V, --version          Print version
 ```
 
 Examples:
@@ -1088,10 +1375,12 @@ Commands:
 
 Options:
       --debug            Print debug information
-      --format <FORMAT>  Output format: table (default), markdown, json, json-pretty, json-line, psv
+      --format <FORMAT>  Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
       --json             Output as JSON objects (shortcut for --format json-pretty)
   -v, --verbose          Show detailed information about all data files
+      --no-update        Disable automatic database updates (use existing cached data only)
   -h, --help             Print help
+  -V, --version          Print version
 ```
 
 Examples:
@@ -1135,14 +1424,55 @@ Start a WebSocket server for programmatic access to monocle functionality.
 
 ```text
 ➜  monocle server --help
-Start the WebSocket server
+Start the WebSocket server (ws://<address>:<port>/ws, health: http://<address>:<port>/health)
+
+Note: This requires building with the `server` feature enabled.
 
 Usage: monocle server [OPTIONS]
 
 Options:
-  -a, --address <ADDRESS>  Bind address [default: 127.0.0.1]
-  -p, --port <PORT>        Bind port [default: 8080]
-  -h, --help               Print help
+      --address <ADDRESS>
+          Address to bind to (default: 127.0.0.1)
+          
+          [default: 127.0.0.1]
+
+      --debug
+          Print debug information
+
+      --port <PORT>
+          Port to listen on (default: 8080)
+          
+          [default: 8080]
+
+      --data-dir <DATA_DIR>
+          Monocle data directory (default: $XDG_DATA_HOME/monocle)
+
+      --format <FORMAT>
+          Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
+
+      --json
+          Output as JSON objects (shortcut for --format json-pretty)
+
+      --max-concurrent-ops <MAX_CONCURRENT_OPS>
+          Maximum concurrent operations per connection (0 = unlimited)
+
+      --max-message-size <MAX_MESSAGE_SIZE>
+          Maximum websocket message size in bytes
+
+      --no-update
+          Disable automatic database updates (use existing cached data only)
+
+      --connection-timeout-secs <CONNECTION_TIMEOUT_SECS>
+          Idle timeout in seconds
+
+      --ping-interval-secs <PING_INTERVAL_SECS>
+          Ping interval in seconds
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 ```
 
 **Endpoints:**
