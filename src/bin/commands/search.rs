@@ -11,7 +11,7 @@ use bgpkit_parser::BgpElem;
 use clap::Args;
 use monocle::database::MsgStore;
 use monocle::lens::search::SearchFilters;
-use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
+use monocle::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
 use monocle::MonocleConfig;
 use rayon::prelude::*;
 use tracing::{info, warn};

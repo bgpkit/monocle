@@ -5,7 +5,7 @@
 //! multiple output format support.
 
 use bgpkit_parser::BgpElem;
-use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
+use monocle::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
 use serde_json::json;
 use tabled::builder::Builder;
 use tabled::settings::Style;

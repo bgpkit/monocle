@@ -1,7 +1,7 @@
 use clap::Args;
 use monocle::database::MonocleDatabase;
 use monocle::lens::as2rel::{As2relLens, As2relSearchArgs};
-use monocle::lens::utils::{truncate_name, OutputFormat, DEFAULT_NAME_MAX_LEN};
+use monocle::utils::{truncate_name, OutputFormat, DEFAULT_NAME_MAX_LEN};
 use monocle::MonocleConfig;
 use serde::Serialize;
 use serde_json::json;

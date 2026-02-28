@@ -7,7 +7,7 @@ use clap::Args;
 use monocle::database::MonocleDatabase;
 use monocle::lens::pfx2as::{Pfx2asLens, Pfx2asSearchArgs};
 use monocle::lens::rpki::RpkiLens;
-use monocle::lens::utils::OutputFormat;
+use monocle::utils::OutputFormat;
 use monocle::MonocleConfig;
 
 /// Arguments for the Pfx2as command

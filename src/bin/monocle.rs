@@ -3,7 +3,7 @@
 #![deny(clippy::expect_used)]
 
 use clap::{Args, Parser, Subcommand};
-use monocle::lens::utils::OutputFormat;
+use monocle::utils::OutputFormat;
 use monocle::*;
 use tracing::Level;
 

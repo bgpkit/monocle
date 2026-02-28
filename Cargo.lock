@@ -264,16 +264,15 @@ dependencies = [
 
 [[package]]
 name = "bgpkit-commons"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14c4a7a4fda320c75886e8f92bc2b00eb5ec595def76b6a9ec9fc2d602dc6526"
+checksum = "c583f55fdbfe590bd3a6b8ad17e60631c8e82c5a25363760aa372cc9ca8dc92d"
 dependencies = [
  "chrono",
  "ipnet",
  "ipnet-trie",
  "oneio",
  "regex",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tar",

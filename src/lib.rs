@@ -193,12 +193,18 @@ pub use config::{
 pub use database::*;
 
 // =============================================================================
-// Lens Module - Feature-gated exports
+// Utility Module
 // =============================================================================
+
+pub mod utils;
 
 // Output format utilities (lib feature)
 #[cfg(feature = "lib")]
-pub use lens::utils::OutputFormat;
+pub use utils::OutputFormat;
+
+// =============================================================================
+// Lens Module - Feature-gated exports
+// =============================================================================
 
 // =============================================================================
 // Server Module (WebSocket API) - requires "server" feature

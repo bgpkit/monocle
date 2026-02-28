@@ -6,8 +6,8 @@ use monocle::config::{
 };
 use monocle::database::{MonocleDatabase, Pfx2asDbRecord};
 use monocle::lens::rpki::RpkiLens;
-use monocle::lens::utils::OutputFormat;
 use monocle::server::ServerConfig;
+use monocle::utils::OutputFormat;
 use monocle::MonocleConfig;
 use serde::Serialize;
 use std::path::Path;

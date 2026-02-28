@@ -39,7 +39,7 @@
 
 use crate::database::MonocleDatabase;
 use crate::lens::rpki::RpkiLens;
-use crate::lens::utils::{truncate_name, OutputFormat, DEFAULT_NAME_MAX_LEN};
+use crate::utils::{truncate_name, OutputFormat, DEFAULT_NAME_MAX_LEN};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -381,8 +381,8 @@ impl<'a> Pfx2asLens<'a> {
     pub fn refresh_reason(
         &self,
         ttl: std::time::Duration,
-    ) -> Result<Option<crate::lens::utils::RefreshReason>> {
-        use crate::lens::utils::RefreshReason;
+    ) -> Result<Option<crate::utils::RefreshReason>> {
+        use crate::utils::RefreshReason;
 
         let pfx2as = self.db.pfx2as();
 

@@ -6,7 +6,7 @@ use bgpkit_parser::BgpElem;
 use clap::Args;
 
 use monocle::lens::parse::{ParseFilters, ParseLens};
-use monocle::lens::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
+use monocle::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
 
 use super::elem_format::{
     available_fields_help, format_elem, format_elems_table, get_header, parse_fields, sort_elems,

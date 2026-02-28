@@ -13,7 +13,7 @@ pub use types::{
 };
 
 // Re-export common utilities for convenience
-pub use crate::lens::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
+pub use crate::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
 
 use crate::database::{MonocleDatabase, BGPKIT_AS2REL_URL};
 use anyhow::Result;
@@ -63,8 +63,8 @@ impl<'a> As2relLens<'a> {
     /// Check why the data needs update, if at all
     ///
     /// Returns `Some(RefreshReason)` if update is needed, `None` if data is current.
-    pub fn update_reason(&self) -> Option<crate::lens::utils::RefreshReason> {
-        use crate::lens::utils::RefreshReason;
+    pub fn update_reason(&self) -> Option<crate::utils::RefreshReason> {
+        use crate::utils::RefreshReason;
 
         let as2rel = self.db.as2rel();
 

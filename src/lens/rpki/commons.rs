@@ -4,6 +4,7 @@
 //! from bgpkit-commons, supporting both current (Cloudflare) and historical
 //! (RIPE NCC, RPKIviews) data sources.
 
+use crate::utils::truncate_name;
 use anyhow::{anyhow, Result};
 use bgpkit_commons::rpki::{HistoricalRpkiSource, RpkiTrie, RpkiViewsCollector};
 use chrono::NaiveDate;
@@ -52,17 +53,6 @@ pub struct RpkiAspaTableEntry {
 
 /// Default max width for customer name in table display
 const DEFAULT_NAME_MAX_WIDTH: usize = 20;
-
-/// Truncate a name to fit within max_width, adding "..." if truncated
-fn truncate_name(name: &str, max_width: usize) -> String {
-    if name.len() <= max_width {
-        name.to_string()
-    } else if max_width <= 3 {
-        "...".to_string()
-    } else {
-        format!("{}...", &name[..max_width - 3])
-    }
-}
 
 impl From<&RpkiAspaEntry> for RpkiAspaTableEntry {
     fn from(entry: &RpkiAspaEntry) -> Self {

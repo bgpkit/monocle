@@ -5,7 +5,7 @@ use monocle::lens::rpki::{
     RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource, RpkiLens, RpkiRoaEntry,
     RpkiRoaLookupArgs, RpkiViewsCollectorOption,
 };
-use monocle::lens::utils::OutputFormat;
+use monocle::utils::OutputFormat;
 use monocle::MonocleConfig;
 use std::collections::HashSet;
 use tabled::settings::object::Columns;

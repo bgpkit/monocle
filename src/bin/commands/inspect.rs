@@ -8,7 +8,7 @@ use monocle::lens::inspect::{
     InspectDataSection, InspectDisplayConfig, InspectLens, InspectQueryOptions, InspectQueryType,
     InspectResult,
 };
-use monocle::lens::utils::OutputFormat;
+use monocle::utils::OutputFormat;
 use monocle::MonocleConfig;
 use std::collections::HashSet;
 

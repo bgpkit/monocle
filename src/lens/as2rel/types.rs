@@ -3,7 +3,7 @@
 //! This module defines the types used by the AS2Rel lens for relationship
 //! queries and result formatting.
 
-use crate::lens::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
+use crate::utils::{truncate_name, DEFAULT_NAME_MAX_LEN};
 use serde::{Deserialize, Serialize};
 
 /// Sort order for search results

@@ -1,6 +1,6 @@
 use clap::Args;
 use monocle::lens::country::{CountryEntry, CountryLens, CountryLookupArgs};
-use monocle::lens::utils::OutputFormat;
+use monocle::utils::OutputFormat;
 use tabled::settings::Style;
 use tabled::Table;
 
