@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased changes
+## v1.2.0 - 2026-02-28
 
 ### New Features
 
@@ -48,7 +48,7 @@ All notable changes to this project will be documented in this file.
 
 * Switched directory resolution library from `dirs` to `etcetera`
 
-## v1.1.0 - 2025-02-10
+## v1.1.0 - 2026-02-10
 
 ### Breaking Changes
 
