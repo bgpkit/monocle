@@ -2294,10 +2294,10 @@ impl<'a> InspectLens<'a> {
 
     /// Truncate a name based on display config
     fn truncate_name(&self, name: &str, config: &InspectDisplayConfig) -> String {
-        if !config.truncate_names || name.len() <= config.name_max_width {
+        if !config.truncate_names {
             name.to_string()
         } else {
-            format!("{}...", &name[..config.name_max_width.saturating_sub(3)])
+            crate::utils::truncate_name(name, config.name_max_width)
         }
     }
 }

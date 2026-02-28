@@ -20,7 +20,7 @@ pub use commons::{RpkiAspaEntry, RpkiAspaProvider, RpkiAspaTableEntry, RpkiRoaEn
 pub use rtr::RtrClient;
 
 use crate::database::MonocleDatabase;
-use crate::lens::utils::option_u32_from_str;
+use crate::utils::option_u32_from_str;
 use anyhow::Result;
 use bgpkit_commons::rpki::RpkiTrie;
 use chrono::NaiveDate;
@@ -396,8 +396,8 @@ impl<'a> RpkiLens<'a> {
     pub fn refresh_reason(
         &self,
         ttl: std::time::Duration,
-    ) -> Result<Option<crate::lens::utils::RefreshReason>> {
-        use crate::lens::utils::RefreshReason;
+    ) -> Result<Option<crate::utils::RefreshReason>> {
+        use crate::utils::RefreshReason;
 
         let rpki = self.db.rpki();
 

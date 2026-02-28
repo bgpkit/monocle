@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::types::{As2relOutputFormat, As2relSortOrder};
-use crate::lens::utils::{bool_from_str, u32_or_vec};
+use crate::utils::{bool_from_str, u32_or_vec};
 
 /// Filter for relationship type perspective
 ///

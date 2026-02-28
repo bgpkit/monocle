@@ -1,6 +1,6 @@
 use clap::Args;
 use monocle::lens::ip::{IpInfo, IpLens, IpLookupArgs};
-use monocle::lens::utils::OutputFormat;
+use monocle::utils::OutputFormat;
 use serde_json::json;
 use std::net::IpAddr;
 use tabled::settings::Style;

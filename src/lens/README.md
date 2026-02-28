@@ -177,7 +177,7 @@ These lenses do not require a persistent database reference:
 
 ```rust,ignore
 use monocle::lens::time::{TimeLens, TimeParseArgs};
-use monocle::lens::utils::OutputFormat;
+use monocle::utils::OutputFormat;
 
 let lens = TimeLens::new();
 let args = TimeParseArgs::new(vec![
@@ -195,7 +195,7 @@ println!("{}", out);
 ```rust,ignore
 use monocle::database::MonocleDatabase;
 use monocle::lens::inspect::{InspectLens, InspectQueryOptions};
-use monocle::lens::utils::OutputFormat;
+use monocle::utils::OutputFormat;
 
 let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 let lens = InspectLens::new(&db);
@@ -221,7 +221,7 @@ for r in results {
 ```rust,ignore
 use monocle::database::MonocleDatabase;
 use monocle::lens::as2rel::{As2relLens, As2relSearchArgs};
-use monocle::lens::utils::OutputFormat;
+use monocle::utils::OutputFormat;
 
 let db = MonocleDatabase::open_in_dir("~/.local/share/monocle")?;
 let lens = As2relLens::new(&db);

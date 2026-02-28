@@ -403,7 +403,7 @@ pub const DEFAULT_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 /// # Example
 ///
 /// ```rust
-/// use monocle::lens::utils::CacheTtlConfig;
+/// use monocle::utils::CacheTtlConfig;
 /// use std::time::Duration;
 ///
 /// // Use default 7-day TTL for all sources
@@ -780,7 +780,7 @@ impl FromStr for OutputFormat {
 /// # Examples
 ///
 /// ```
-/// use monocle::lens::utils::truncate_name;
+/// use monocle::utils::truncate_name;
 ///
 /// // Short name - no truncation
 /// assert_eq!(truncate_name("Short", 20), "Short");
@@ -835,6 +835,32 @@ mod tests {
             truncate_name("日本語テスト名前これは長い", 10),
             "日本語テスト名..."
         );
+    }
+
+    #[test]
+    fn test_truncate_name_arabic() {
+        // Arabic text with multi-byte characters (the original bug case)
+        // "بلو سكاي تيليكوم" is 16 chars
+        assert_eq!(truncate_name("بلو سكاي تيليكوم", 20), "بلو سكاي تيليكوم");
+        assert_eq!(truncate_name("بلو سكاي تيليكوم", 10), "بلو سكا...");
+    }
+
+    #[test]
+    fn test_truncate_name_mixed_scripts() {
+        // Mixed ASCII and multi-byte characters
+        assert_eq!(truncate_name("Hello世界Goodbye", 15), "Hello世界Goodbye");
+        assert_eq!(truncate_name("Hello世界Goodbye", 10), "Hello世界...");
+    }
+
+    #[test]
+    fn test_truncate_name_emoji() {
+        // Emoji characters (4 bytes each in UTF-8)
+        // "Hello 🌍🌍🌍 World" = 5 (Hello) + 1 (space) + 3 (🌍) + 1 (space) + 5 (World) = 15 chars
+        assert_eq!(
+            truncate_name("Hello 🌍🌍🌍 World", 15),
+            "Hello 🌍🌍🌍 World"
+        );
+        assert_eq!(truncate_name("Hello 🌍🌍🌍 World", 10), "Hello 🌍...");
     }
 
     #[test]
