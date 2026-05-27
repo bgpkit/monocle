@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased changes
+## v1.2.1 - 2026-05-27
 
 ### Breaking Changes
 
@@ -35,6 +35,13 @@ All notable changes to this project will be documented in this file.
   * Removes SQLite lookups and writes from the replay hot path
   * Keeps `path_id` only for internal route identity during add-path reconstruction
   * Narrows reconstructed RIB entries and SQLite export rows to collector, timestamp, peer_ip, peer_asn, prefix, as_path, and origin_asns
+
+### Bug Fixes
+
+* Fixed compilation failure when installing from crates.io
+  * Updated RPKI lens to handle `bgpkit-commons` v0.10.3 API changes
+  * Added match arm for new `HistoricalRpkiSource::RpkiSpools` variant
+  * Corrected `RpkiViewsCollector` variant name from `SoborostNet` to `SobornostNet`
 
 ## v1.2.0 - 2026-02-28
 
