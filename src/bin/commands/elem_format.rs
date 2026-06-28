@@ -454,6 +454,7 @@ pub fn sort_elems(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use bgpkit_parser::models::{AsPath, AsPathSegment, ElemType, NetworkPrefix, Origin};
