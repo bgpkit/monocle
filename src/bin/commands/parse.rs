@@ -5,6 +5,7 @@ use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
 use clap::Args;
 
+use monocle::lens::parse::filter_file::{load_prefix_file, merge_prefix_file, FilterFile};
 use monocle::lens::parse::{ParseFilters, ParseLens};
 use monocle::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
 
@@ -43,6 +44,16 @@ pub(crate) struct ParseArgs {
     #[clap(long, value_enum, default_value = "unix")]
     pub time_format: TimestampFormat,
 
+    /// Load filters from a JSON file (prefixes, origin_asns, peer_asns, etc.)
+    /// Merged with CLI filter flags (AND across dimensions, union within each)
+    #[clap(long, value_name = "PATH")]
+    pub filter_file: Option<PathBuf>,
+
+    /// Load a newline-delimited list of prefixes from a file
+    /// Lines starting with # and blank lines are ignored
+    #[clap(long, value_name = "PATH")]
+    pub prefix_file: Option<PathBuf>,
+
     /// Filter by AS path regex string
     #[clap(flatten)]
     pub filters: ParseFilters,
@@ -57,8 +68,27 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
         order_by,
         order,
         time_format,
-        filters,
+        filter_file,
+        prefix_file,
+        mut filters,
     } = args;
+
+    // Load and merge file-based filters into CLI filters
+    if let Some(ref pf) = filter_file {
+        if let Err(e) = FilterFile::load(pf).and_then(|ff| ff.merge_into(&mut filters)) {
+            eprintln!("ERROR: {}", e);
+            std::process::exit(1);
+        }
+    }
+    if let Some(ref pf) = prefix_file {
+        match load_prefix_file(pf) {
+            Ok(prefixes) => merge_prefix_file(prefixes, &mut filters),
+            Err(e) => {
+                eprintln!("ERROR: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     // Parse and validate fields (false = parse command, no collector in defaults)
     let fields = match parse_fields(&fields_arg, false) {

@@ -64,6 +64,8 @@
 //! let elems = lens.parse_with_progress(&filters, "file.mrt", Some(callback))?;
 //! ```
 
+pub mod filter_file;
+
 use crate::lens::time::TimeLens;
 use anyhow::anyhow;
 use anyhow::Result;
@@ -155,6 +157,11 @@ impl Display for ParseElemType {
 ///
 /// All filter fields support multiple comma-separated values with OR logic.
 /// Values can be prefixed with `!` for negation (exclusion).
+///
+/// For large filter sets, filters can also be loaded from files using the
+/// [`filter_file`](crate::lens::parse::filter_file) module (`--filter-file` for
+/// JSON, `--prefix-file` for newline-delimited prefixes). File-based filters
+/// are merged with CLI flags: union within each dimension, AND across dimensions.
 ///
 /// # Example
 ///
