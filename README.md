@@ -341,7 +341,7 @@ Options:
           [default: asc]
 
       --time-format <TIME_FORMAT>
-          Timestamp output format for non-JSON output (unix or rfc3339)
+          Timestamp output format (unix or rfc3339), applied to all output formats including JSON
 
           Possible values:
           - unix:    Unix timestamp (integer or float) - default for backward compatibility
@@ -529,13 +529,14 @@ monocle parse file.mrt --order-by prefix --order desc
 
 #### Timestamp Format
 
-Use `--time-format` to change timestamp output format:
+Use `--time-format` to change timestamp output format (applies to all output formats
+including `json`, `json-line`, and `json-pretty`):
 
 ```bash
-# Unix timestamp (default)
+# Unix timestamp (default) — numeric `timestamp` field in JSON
 monocle parse file.mrt --time-format unix
 
-# RFC3339/ISO 8601 format
+# RFC3339/ISO 8601 format — string `timestamp` field in JSON
 monocle parse file.mrt --time-format rfc3339
 ```
 
@@ -665,7 +666,7 @@ Options:
           [default: asc]
 
       --time-format <TIME_FORMAT>
-          Timestamp output format for non-JSON output (unix or rfc3339)
+          Timestamp output format (unix or rfc3339), applied to all output formats including JSON
 
           Possible values:
           - unix:    Unix timestamp (integer or float) - default for backward compatibility

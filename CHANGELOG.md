@@ -11,6 +11,12 @@ All notable changes to this project will be documented in this file.
   CLI flags — union within each dimension (OR), AND across dimensions. Supports the
   RIB-extract → filter-updates workflow at scale (#117).
 
+### Bug Fixes
+
+* Fixed `--time-format rfc3339` being ignored for `json`, `json-line`, and `json-pretty`
+  output formats. JSON output now honors `--time-format`: `unix` (default) emits a numeric
+  `timestamp` field (backward compatible); `rfc3339` emits an RFC 3339 string (#123).
+
 ## v1.3.0 - 2026-05-27
 
 ### Breaking Changes

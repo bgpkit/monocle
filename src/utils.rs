@@ -687,9 +687,9 @@ impl FromStr for OrderDirection {
 
 /// Format for timestamp output in parse and search commands
 ///
-/// This enum controls how timestamps are displayed in non-JSON output formats
-/// (table, psv, markdown). JSON output always uses Unix timestamps as numbers
-/// for backward compatibility.
+/// This enum controls how timestamps are displayed across output formats
+/// (table, psv, markdown, and JSON). `Unix` (default) emits a numeric timestamp;
+/// `Rfc3339` emits an RFC 3339 / ISO 8601 string.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
