@@ -240,7 +240,8 @@ pub fn get_field_value_with_time_format(
 
 /// Format a BgpElem according to the output format and selected fields.
 /// The `collector` parameter provides the collector value for the "collector" field.
-/// The `time_format` parameter controls how timestamps are displayed in non-JSON formats.
+/// The `time_format` parameter controls how timestamps are displayed, including JSON
+/// output: `Unix` (default) emits a numeric timestamp; `Rfc3339` emits an RFC 3339 string.
 /// Note: For Table format, this returns an empty string - use format_elems_table() instead
 /// after collecting all elements.
 pub fn format_elem(
@@ -252,13 +253,11 @@ pub fn format_elem(
 ) -> Option<String> {
     match output_format {
         OutputFormat::Json | OutputFormat::JsonLine => {
-            // JSON always uses Unix timestamp as number for backward compatibility
-            let obj = build_json_object(elem, fields, collector);
+            let obj = build_json_object(elem, fields, collector, time_format);
             Some(serde_json::to_string(&obj).unwrap_or_else(|_| elem.to_string()))
         }
         OutputFormat::JsonPretty => {
-            // JSON always uses Unix timestamp as number for backward compatibility
-            let obj = build_json_object(elem, fields, collector);
+            let obj = build_json_object(elem, fields, collector, time_format);
             Some(serde_json::to_string_pretty(&obj).unwrap_or_else(|_| elem.to_string()))
         }
         OutputFormat::Psv => {
@@ -287,21 +286,43 @@ pub fn format_elem(
 
 /// Build a JSON object with only the selected fields
 /// The `collector` parameter provides the collector value for the "collector" field.
+/// The `time_format` parameter controls the `timestamp` field representation:
+/// `Unix` (default) emits a numeric f64; `Rfc3339` emits a formatted string.
 pub fn build_json_object(
     elem: &BgpElem,
     fields: &[&str],
     collector: Option<&str>,
+    time_format: TimestampFormat,
 ) -> serde_json::Value {
-    // If all default parse fields are selected and no collector field, use the original serialization
+    // If all default parse fields are selected and no collector field, use the
+    // original element serialization to preserve the full JSON shape (which
+    // includes fields like `origin_asns`, `only_to_customer`, etc. that are not
+    // listed in DEFAULT_FIELDS_PARSE). When RFC3339 timestamps are requested,
+    // override just the `timestamp` key on top of the native serialization.
     if fields == DEFAULT_FIELDS_PARSE && !fields.contains(&"collector") {
-        return json!(elem);
+        let mut obj = json!(elem);
+        if time_format != TimestampFormat::Unix {
+            if let Some(map) = obj.as_object_mut() {
+                map.insert(
+                    "timestamp".to_string(),
+                    json!(time_format.format_timestamp(elem.timestamp)),
+                );
+            }
+        }
+        return obj;
     }
 
     let mut obj = serde_json::Map::new();
     for field in fields {
         let value = match *field {
             "type" => json!(elem.elem_type),
-            "timestamp" => json!(elem.timestamp),
+            "timestamp" => {
+                if time_format == TimestampFormat::Unix {
+                    json!(elem.timestamp)
+                } else {
+                    json!(time_format.format_timestamp(elem.timestamp))
+                }
+            }
             "peer_ip" => json!(elem.peer_ip.to_string()),
             "peer_asn" => json!(elem.peer_asn),
             "prefix" => json!(elem.prefix.to_string()),
@@ -430,4 +451,127 @@ pub fn sort_elems(
             OrderDirection::Desc => cmp.reverse(),
         }
     });
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use bgpkit_parser::models::{AsPath, AsPathSegment, ElemType, NetworkPrefix, Origin};
+    use bgpkit_parser::BgpElem;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::str::FromStr;
+
+    fn test_elem() -> BgpElem {
+        BgpElem {
+            timestamp: 1234567890.0,
+            elem_type: ElemType::ANNOUNCE,
+            peer_ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+            peer_asn: 65000.into(),
+            prefix: NetworkPrefix::from_str("10.0.0.0/8").unwrap(),
+            next_hop: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))),
+            as_path: Some(AsPath {
+                segments: vec![AsPathSegment::AsSequence(vec![65000.into(), 65001.into()])],
+            }),
+            origin_asns: Some(vec![65001.into()]),
+            origin: Some(Origin::IGP),
+            local_pref: Some(100),
+            med: Some(0),
+            communities: None,
+            atomic: false,
+            aggr_asn: None,
+            aggr_ip: None,
+            only_to_customer: None,
+            unknown: None,
+            deprecated: None,
+        }
+    }
+
+    #[test]
+    fn test_json_timestamp_unix_is_numeric() {
+        let elem = test_elem();
+        let fields = vec!["timestamp", "prefix"];
+        let obj = build_json_object(&elem, &fields, None, TimestampFormat::Unix);
+        let ts = obj.get("timestamp").unwrap();
+        assert_eq!(ts.as_f64().unwrap(), 1234567890.0);
+    }
+
+    #[test]
+    fn test_json_timestamp_rfc3339_is_string() {
+        let elem = test_elem();
+        let fields = vec!["timestamp", "prefix"];
+        let obj = build_json_object(&elem, &fields, None, TimestampFormat::Rfc3339);
+        let ts = obj.get("timestamp").unwrap();
+        assert!(ts.is_string(), "expected string for rfc3339 timestamp");
+        let s = ts.as_str().unwrap();
+        assert!(s.contains("2009"));
+        assert!(s.contains('T'));
+    }
+
+    #[test]
+    fn test_json_line_format_unix_vs_rfc3339() {
+        let elem = test_elem();
+        let fields = vec!["timestamp", "prefix"];
+
+        let unix_out = format_elem(
+            &elem,
+            OutputFormat::JsonLine,
+            &fields,
+            None,
+            TimestampFormat::Unix,
+        )
+        .unwrap();
+        let rfc_out = format_elem(
+            &elem,
+            OutputFormat::JsonLine,
+            &fields,
+            None,
+            TimestampFormat::Rfc3339,
+        )
+        .unwrap();
+
+        let unix_json: serde_json::Value = serde_json::from_str(&unix_out).unwrap();
+        let rfc_json: serde_json::Value = serde_json::from_str(&rfc_out).unwrap();
+
+        assert!(unix_json.get("timestamp").unwrap().is_number());
+        assert!(rfc_json.get("timestamp").unwrap().is_string());
+    }
+
+    #[test]
+    fn test_table_timestamp_rfc3339() {
+        let elem = test_elem();
+        let value =
+            get_field_value_with_time_format(&elem, "timestamp", None, TimestampFormat::Rfc3339);
+        assert!(value.contains('T'));
+    }
+
+    #[test]
+    fn test_default_fields_unix_falls_back_to_native_serialization() {
+        let elem = test_elem();
+        let obj = build_json_object(&elem, DEFAULT_FIELDS_PARSE, None, TimestampFormat::Unix);
+        // With default fields, build_json_object should use native elem serialization
+        // which contains fields NOT in DEFAULT_FIELDS_PARSE (e.g. `origin_asns`).
+        // If the fallback broke, origin_asns would be absent from the output.
+        assert!(
+            obj.get("origin_asns").is_some(),
+            "native serialization should include origin_asns (not in DEFAULT_FIELDS_PARSE)"
+        );
+        // Timestamp stays numeric for Unix
+        assert!(obj.get("timestamp").unwrap().is_number());
+    }
+
+    #[test]
+    fn test_default_fields_rfc3339_preserves_shape_overrides_timestamp() {
+        let elem = test_elem();
+        let obj = build_json_object(&elem, DEFAULT_FIELDS_PARSE, None, TimestampFormat::Rfc3339);
+        // The full native shape should be preserved (origin_asns present)
+        assert!(
+            obj.get("origin_asns").is_some(),
+            "rfc3339 should still use native serialization shape, not field-filtered map"
+        );
+        // But the timestamp should be overridden to a string
+        let ts = obj.get("timestamp").unwrap();
+        assert!(ts.is_string(), "rfc3339 timestamp should be a string");
+        assert!(ts.as_str().unwrap().contains('T'));
+    }
 }

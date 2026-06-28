@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased changes
+
+### Bug Fixes
+
+* Fixed `--time-format rfc3339` being ignored for `json`, `json-line`, and `json-pretty`
+  output formats. JSON output now honors `--time-format`: `unix` (default) emits a numeric
+  `timestamp` field (backward compatible); `rfc3339` emits an RFC 3339 string (#123).
+
 ## v1.3.0 - 2026-05-27
 
 ### Breaking Changes

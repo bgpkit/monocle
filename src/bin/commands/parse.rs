@@ -39,7 +39,7 @@ pub(crate) struct ParseArgs {
     #[clap(long, value_enum, default_value = "asc")]
     pub order: OrderDirection,
 
-    /// Timestamp output format for non-JSON output (unix or rfc3339)
+    /// Timestamp output format (unix or rfc3339), applied to all output formats including JSON
     #[clap(long, value_enum, default_value = "unix")]
     pub time_format: TimestampFormat,
 
