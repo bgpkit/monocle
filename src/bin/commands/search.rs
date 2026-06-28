@@ -10,6 +10,7 @@ use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::BgpElem;
 use clap::Args;
 use monocle::database::MsgStore;
+use monocle::lens::parse::filter_file::{load_prefix_file, merge_prefix_file, FilterFile};
 use monocle::lens::search::SearchFilters;
 use monocle::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat};
 use monocle::MonocleConfig;
@@ -58,6 +59,16 @@ pub struct SearchArgs {
     /// Timestamp output format for non-JSON output (unix or rfc3339)
     #[clap(long, value_enum, default_value = "unix")]
     pub time_format: TimestampFormat,
+
+    /// Load filters from a JSON file (prefixes, origin_asns, peer_asns, etc.)
+    /// Merged with CLI filter flags (AND across dimensions, union within each)
+    #[clap(long, value_name = "PATH")]
+    pub filter_file: Option<PathBuf>,
+
+    /// Load a newline-delimited list of prefixes from a file
+    /// Lines starting with # and blank lines are ignored
+    #[clap(long, value_name = "PATH")]
+    pub prefix_file: Option<PathBuf>,
 
     /// Use the default XDG cache directory ($XDG_CACHE_HOME/monocle) for MRT files.
     /// Overridden by --cache-dir if both are specified.
@@ -541,10 +552,32 @@ pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat
         order_by,
         order,
         time_format,
+        filter_file,
+        prefix_file,
         use_cache,
         cache_dir,
-        filters,
+        mut filters,
     } = args;
+
+    // Load and merge file-based filters into CLI filters
+    if let Some(ref pf) = filter_file {
+        match FilterFile::load(pf) {
+            Ok(ff) => ff.merge_into(&mut filters.parse_filters),
+            Err(e) => {
+                eprintln!("ERROR: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+    if let Some(ref pf) = prefix_file {
+        match load_prefix_file(pf) {
+            Ok(prefixes) => merge_prefix_file(prefixes, &mut filters.parse_filters),
+            Err(e) => {
+                eprintln!("ERROR: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     let cache_dir = match cache_dir {
         Some(cache_dir) => Some(cache_dir),

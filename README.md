@@ -20,6 +20,7 @@ See through all Border Gateway Protocol (BGP) data with a monocle.
 - [Usage](#usage)
   - [`monocle parse`](#monocle-parse)
     - [Output Format](#output-format)
+    - [Filter Files](#filter-files)
   - [`monocle search`](#monocle-search)
   - [`monocle rib`](#monocle-rib)
   - [`monocle time`](#monocle-time)
@@ -348,6 +349,12 @@ Options:
           
           [default: unix]
 
+      --filter-file <PATH>
+          Load filters from a JSON file (prefixes, origin_asns, peer_asns, etc.) Merged with CLI filter flags (AND across dimensions, union within each)
+
+      --prefix-file <PATH>
+          Load a newline-delimited list of prefixes from a file Lines starting with # and blank lines are ignored
+
   -o, --origin-asn <ORIGIN_ASN>
           Filter by origin AS Number(s), comma-separated. Prefix with ! to exclude
 
@@ -425,6 +432,76 @@ monocle parse file.mrt -o '!13335,!15169'
 ```
 
 Note: Cannot mix positive and negative values in the same filter.
+
+#### Filter Files
+
+For large filter sets that exceed command-line argument limits, or for reusable
+filter definitions, use `--filter-file` (JSON) or `--prefix-file` (newline text).
+
+**`--prefix-file`** — a plain text file with one prefix per line. Blank lines and
+`#` comments are ignored. This is the most ergonomic option for the common
+RIB-extract → filter-updates workflow:
+
+```bash
+# Step 1: Extract prefix list from a RIB dump
+monocle parse -o 64496 rib.gz | cut -d'|' -f5 | sort -u > prefixes.txt
+
+# Step 2: Filter subsequent updates using the prefix file
+monocle parse --prefix-file prefixes.txt updates.gz
+```
+
+Prefix file format:
+
+```text
+# Prefixes originated by AS64496 (extracted from RIB)
+192.0.2.0/24
+198.51.100.0/24
+
+# IPv6 prefixes
+2001:db8::/32
+```
+
+**`--filter-file`** — a structured JSON file supporting all filter dimensions:
+
+```json
+{
+  "prefixes": ["192.0.2.0/24", "2001:db8::/32"],
+  "origin_asns": ["64496"],
+  "peer_asns": ["174", "6939"],
+  "communities": ["64496:100", "*:200"],
+  "as_path_regex": "174 64496$",
+  "elem_type": "w",
+  "include_sub": true,
+  "start_ts": "2025-01-01T00:00:00Z",
+  "end_ts": "2025-01-01T01:00:00Z"
+}
+```
+
+All fields are optional — include only the dimensions you need. String-typed
+fields use the same syntax as CLI flags, including `!` prefix for negation.
+
+**Combining with CLI flags** — file-based filters merge with CLI filter flags.
+Within each dimension, values are unioned (OR logic). For example:
+
+```bash
+# CLI prefix + file prefixes are unioned
+monocle parse -p 10.0.0.0/8 --filter-file filters.json updates.gz
+```
+
+For scalar fields (`as_path_regex`, `elem_type`, time fields), CLI flags take
+precedence over file values. Boolean flags (`include_super`, `include_sub`)
+are OR-ed.
+
+**Using both file types together**:
+
+```bash
+monocle parse \
+  --filter-file as_filters.json \
+  --prefix-file extra_prefixes.txt \
+  updates.gz
+```
+
+Prefixes from both sources are unioned into a single prefix filter.
 
 #### Field Selection
 
@@ -595,6 +672,12 @@ Options:
           - rfc3339: RFC3339/ISO 8601 format (e.g., "2023-10-11T15:00:00Z")
           
           [default: unix]
+
+      --filter-file <PATH>
+          Load filters from a JSON file (prefixes, origin_asns, peer_asns, etc.) Merged with CLI filter flags (AND across dimensions, union within each)
+
+      --prefix-file <PATH>
+          Load a newline-delimited list of prefixes from a file Lines starting with # and blank lines are ignored
 
       --use-cache
           Use the default XDG cache directory ($XDG_CACHE_HOME/monocle) for MRT files. Overridden by --cache-dir if both are specified

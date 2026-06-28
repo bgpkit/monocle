@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased changes
+
+### New Features
+
+* Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to `monocle parse`
+  and `monocle search` for loading large filter sets from files. File filters merge with
+  CLI flags — union within each dimension (OR), AND across dimensions. Supports the
+  RIB-extract → filter-updates workflow at scale (#117).
+
 ## v1.3.0 - 2026-05-27
 
 ### Breaking Changes
