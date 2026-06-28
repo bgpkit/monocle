@@ -357,15 +357,36 @@ impl FilterFile {
     /// assert!(filters.include_sub);
     /// ```
     pub fn merge_into(self, filters: &mut ParseFilters) -> Result<()> {
-        // Vec fields: union CLI + file values
-        filters.prefix.extend(self.prefixes);
-        filters.origin_asn.extend(self.origin_asns);
-        filters.peer_asn.extend(self.peer_asns);
-        filters.communities.extend(self.communities);
+        // Vec fields: union CLI + file values, trimming whitespace and dropping empties
+        filters.prefix.extend(
+            self.prefixes
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
+        filters.origin_asn.extend(
+            self.origin_asns
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
+        filters.peer_asn.extend(
+            self.peer_asns
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
+        filters.communities.extend(
+            self.communities
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
 
         // peer_ip is Vec<IpAddr> — parse string values, error on invalid
         for ip_str in self.peer_ips {
-            let ip: IpAddr = ip_str.trim().parse().map_err(|_| {
+            let trimmed = ip_str.trim();
+            let ip: IpAddr = trimmed.parse().map_err(|_| {
                 anyhow!(
                     "Invalid peer IP '{}' in filter file: must be a valid IP address",
                     ip_str
@@ -381,6 +402,7 @@ impl FilterFile {
         if filters.elem_type.is_none() {
             // Map string "a"/"w" to ParseElemType, error on unrecognized
             if let Some(et) = self.elem_type.as_deref() {
+                let et = et.trim();
                 filters.elem_type = match et.to_lowercase().as_str() {
                     "a" | "announce" | "announcement" => Some(ParseElemType::A),
                     "w" | "withdraw" | "withdrawal" => Some(ParseElemType::W),
@@ -782,6 +804,56 @@ mod tests {
         };
         file.merge_into(&mut filters).unwrap();
         assert_eq!(filters.communities, vec!["13335:100", "64496:200"]);
+    }
+
+    #[test]
+    fn test_merge_into_vec_fields_trimmed() {
+        let mut filters = ParseFilters::default();
+        let file = FilterFile {
+            prefixes: vec!["  192.0.2.0/24  ".to_string()],
+            origin_asns: vec!["  64496  ".to_string()],
+            peer_asns: vec!["  174 ".to_string()],
+            communities: vec!["  64496:100  ".to_string()],
+            ..Default::default()
+        };
+        file.merge_into(&mut filters).unwrap();
+        assert_eq!(filters.prefix, vec!["192.0.2.0/24"]);
+        assert_eq!(filters.origin_asn, vec!["64496"]);
+        assert_eq!(filters.peer_asn, vec!["174"]);
+        assert_eq!(filters.communities, vec!["64496:100"]);
+    }
+
+    #[test]
+    fn test_merge_into_vec_fields_empty_strings_dropped() {
+        let mut filters = ParseFilters::default();
+        let file = FilterFile {
+            prefixes: vec!["".to_string(), "  ".to_string(), "192.0.2.0/24".to_string()],
+            ..Default::default()
+        };
+        file.merge_into(&mut filters).unwrap();
+        assert_eq!(filters.prefix, vec!["192.0.2.0/24"]);
+    }
+
+    #[test]
+    fn test_merge_into_elem_type_trimmed() {
+        let mut filters = ParseFilters::default();
+        let file = FilterFile {
+            elem_type: Some("  W  ".to_string()),
+            ..Default::default()
+        };
+        file.merge_into(&mut filters).unwrap();
+        assert!(matches!(filters.elem_type, Some(ParseElemType::W)));
+    }
+
+    #[test]
+    fn test_merge_into_peer_ip_trimmed() {
+        let mut filters = ParseFilters::default();
+        let file = FilterFile {
+            peer_ips: vec!["  192.0.2.1  ".to_string()],
+            ..Default::default()
+        };
+        file.merge_into(&mut filters).unwrap();
+        assert_eq!(filters.peer_ip.len(), 1);
     }
 
     #[test]

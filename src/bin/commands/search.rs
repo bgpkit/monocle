@@ -582,7 +582,7 @@ pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat
     // mistakes fail fast with actionable errors instead of failing per-file later.
     if let Err(e) = filters.parse_filters.validate() {
         eprintln!("ERROR: {}", e);
-        return;
+        std::process::exit(1);
     }
 
     let cache_dir = match cache_dir {
