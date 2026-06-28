@@ -561,12 +561,11 @@ pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat
 
     // Load and merge file-based filters into CLI filters
     if let Some(ref pf) = filter_file {
-        match FilterFile::load(pf) {
-            Ok(ff) => ff.merge_into(&mut filters.parse_filters),
-            Err(e) => {
-                eprintln!("ERROR: {}", e);
-                std::process::exit(1);
-            }
+        if let Err(e) =
+            FilterFile::load(pf).and_then(|ff| ff.merge_into(&mut filters.parse_filters))
+        {
+            eprintln!("ERROR: {}", e);
+            std::process::exit(1);
         }
     }
     if let Some(ref pf) = prefix_file {
@@ -577,6 +576,13 @@ pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat
                 std::process::exit(1);
             }
         }
+    }
+
+    // Validate merged parse filters (prefixes, ASNs, communities) early so file-based
+    // mistakes fail fast with actionable errors instead of failing per-file later.
+    if let Err(e) = filters.parse_filters.validate() {
+        eprintln!("ERROR: {}", e);
+        return;
     }
 
     let cache_dir = match cache_dir {

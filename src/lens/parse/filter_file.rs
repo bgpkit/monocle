@@ -102,7 +102,7 @@
 //!     prefix: vec!["10.0.0.0/8".to_string()],
 //!     ..Default::default()
 //! };
-//! file.merge_into(&mut filters);
+//! file.merge_into(&mut filters).unwrap();
 //!
 //! // Now filters.prefix == ["10.0.0.0/8", <prefixes from file>...]
 //! assert!(filters.prefix.len() >= 1);
@@ -168,6 +168,7 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::path::Path;
 
 use super::{ParseElemType, ParseFilters};
@@ -211,6 +212,7 @@ use super::{ParseElemType, ParseFilters};
 ///
 /// All values within a dimension must be either all positive or all negated.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilterFile {
     /// Prefix filters (CIDR notation, `!` prefix for negation).
     ///
@@ -345,7 +347,7 @@ impl FilterFile {
     ///     prefix: vec!["10.0.0.0/8".to_string()], // CLI value
     ///     ..Default::default()
     /// };
-    /// file.merge_into(&mut filters);
+    /// file.merge_into(&mut filters).unwrap();
     ///
     /// // Prefixes unioned: both CLI and file values
     /// assert_eq!(filters.prefix, vec!["10.0.0.0/8", "192.0.2.0/24"]);
@@ -354,18 +356,22 @@ impl FilterFile {
     /// // Boolean OR'd
     /// assert!(filters.include_sub);
     /// ```
-    pub fn merge_into(self, filters: &mut ParseFilters) {
+    pub fn merge_into(self, filters: &mut ParseFilters) -> Result<()> {
         // Vec fields: union CLI + file values
         filters.prefix.extend(self.prefixes);
         filters.origin_asn.extend(self.origin_asns);
         filters.peer_asn.extend(self.peer_asns);
         filters.communities.extend(self.communities);
 
-        // peer_ip is Vec<IpAddr> — parse string values
+        // peer_ip is Vec<IpAddr> — parse string values, error on invalid
         for ip_str in self.peer_ips {
-            if let Ok(ip) = ip_str.trim().parse() {
-                filters.peer_ip.push(ip);
-            }
+            let ip: IpAddr = ip_str.trim().parse().map_err(|_| {
+                anyhow!(
+                    "Invalid peer IP '{}' in filter file: must be a valid IP address",
+                    ip_str
+                )
+            })?;
+            filters.peer_ip.push(ip);
         }
 
         // Scalar/Option fields: only set from file if CLI didn't set them
@@ -373,12 +379,17 @@ impl FilterFile {
             filters.as_path = self.as_path_regex;
         }
         if filters.elem_type.is_none() {
-            // Map string "a"/"w" to ParseElemType
+            // Map string "a"/"w" to ParseElemType, error on unrecognized
             if let Some(et) = self.elem_type.as_deref() {
                 filters.elem_type = match et.to_lowercase().as_str() {
                     "a" | "announce" | "announcement" => Some(ParseElemType::A),
                     "w" | "withdraw" | "withdrawal" => Some(ParseElemType::W),
-                    _ => None,
+                    _ => {
+                        return Err(anyhow!(
+                            "Invalid elem_type '{}' in filter file: must be 'a' (announce) or 'w' (withdraw)",
+                            et
+                        ));
+                    }
                 };
             }
         }
@@ -399,6 +410,8 @@ impl FilterFile {
         if filters.duration.is_none() {
             filters.duration = self.duration;
         }
+
+        Ok(())
     }
 }
 
@@ -535,6 +548,15 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_file_deny_unknown_fields() {
+        // Typo: "origin_asn" instead of "origin_asns" should fail
+        let json = r#"{"origin_asn": ["64496"]}"#;
+        let result = serde_json::from_str::<FilterFile>(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unknown field"));
+    }
+
+    #[test]
     fn test_filter_file_serialize_roundtrip() {
         let file = FilterFile {
             prefixes: vec!["10.0.0.0/8".to_string()],
@@ -564,7 +586,7 @@ mod tests {
             ..Default::default()
         };
         let mut filters = ParseFilters::default();
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         assert_eq!(filters.prefix, vec!["192.0.2.0/24"]);
         assert_eq!(filters.origin_asn, vec!["64496"]);
@@ -584,7 +606,7 @@ mod tests {
             origin_asns: vec!["64496".to_string()],
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         assert_eq!(filters.prefix, vec!["10.0.0.0/8", "192.0.2.0/24"]);
         assert_eq!(filters.origin_asn, vec!["13335", "64496"]);
@@ -602,7 +624,7 @@ mod tests {
             start_ts: Some("2025-01-01T00:00:00Z".to_string()),
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         assert_eq!(filters.as_path.as_deref(), Some("CLI_PATH"));
         assert_eq!(filters.start_ts.as_deref(), Some("2025-06-01T00:00:00Z"));
@@ -616,7 +638,7 @@ mod tests {
             elem_type: Some("w".to_string()),
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         assert_eq!(filters.as_path.as_deref(), Some("FILE_PATH"));
         assert!(matches!(filters.elem_type, Some(ParseElemType::W)));
@@ -637,7 +659,7 @@ mod tests {
                 elem_type: Some(input.to_string()),
                 ..Default::default()
             };
-            file.merge_into(&mut filters);
+            file.merge_into(&mut filters).unwrap();
             match (&filters.elem_type, is_a) {
                 (Some(ParseElemType::A), true) => {}
                 (Some(ParseElemType::W), false) => {}
@@ -647,14 +669,18 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_into_elem_type_invalid_ignored() {
+    fn test_merge_into_elem_type_invalid_errors() {
         let mut filters = ParseFilters::default();
         let file = FilterFile {
             elem_type: Some("invalid".to_string()),
             ..Default::default()
         };
-        file.merge_into(&mut filters);
-        assert!(filters.elem_type.is_none());
+        let result = file.merge_into(&mut filters);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid elem_type"));
     }
 
     #[test]
@@ -667,7 +693,7 @@ mod tests {
             elem_type: Some("w".to_string()),
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
         // CLI value (A) preserved, file value (w) ignored
         assert!(matches!(filters.elem_type, Some(ParseElemType::A)));
     }
@@ -682,7 +708,7 @@ mod tests {
             include_sub: true,
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         assert!(filters.include_super);
         assert!(filters.include_sub);
@@ -698,7 +724,7 @@ mod tests {
             include_sub: false, // file says false, but CLI already true
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
         assert!(filters.include_sub);
     }
 
@@ -709,22 +735,21 @@ mod tests {
             peer_ips: vec!["192.0.2.1".to_string(), "10.0.0.1".to_string()],
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         assert_eq!(filters.peer_ip.len(), 2);
     }
 
     #[test]
-    fn test_merge_into_peer_ips_invalid_skipped() {
+    fn test_merge_into_peer_ips_invalid_errors() {
         let mut filters = ParseFilters::default();
         let file = FilterFile {
-            peer_ips: vec!["valid_ip".to_string(), "192.0.2.1".to_string()],
+            peer_ips: vec!["not_an_ip".to_string(), "192.0.2.1".to_string()],
             ..Default::default()
         };
-        file.merge_into(&mut filters);
-
-        // Only the valid IP is added; invalid one silently skipped
-        assert_eq!(filters.peer_ip.len(), 1);
+        let result = file.merge_into(&mut filters);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid peer IP"));
     }
 
     #[test]
@@ -738,7 +763,7 @@ mod tests {
             end_ts: Some("2025-01-01T01:00:00Z".to_string()),
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         // CLI duration preserved, file end_ts applied (CLI didn't set it)
         assert_eq!(filters.duration.as_deref(), Some("1h"));
@@ -755,7 +780,7 @@ mod tests {
             communities: vec!["64496:200".to_string()],
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
         assert_eq!(filters.communities, vec!["13335:100", "64496:200"]);
     }
 
@@ -934,7 +959,7 @@ mod tests {
 
         let file = FilterFile::load(&path).unwrap();
         let mut filters = ParseFilters::default();
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         // The merged filters should pass validation
         assert!(filters.validate().is_ok());
@@ -964,7 +989,7 @@ mod tests {
 
         let file = FilterFile::load(&path).unwrap();
         let mut filters = ParseFilters::default();
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         // Validation should catch the invalid prefix
         assert!(filters.validate().is_err());
@@ -979,7 +1004,7 @@ mod tests {
         let path = write_temp_file("filter_neg.json", json);
         let file = FilterFile::load(&path).unwrap();
         let mut filters = ParseFilters::default();
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
         assert!(filters.validate().is_ok());
         let _ = std::fs::remove_file(&path);
     }
@@ -997,7 +1022,7 @@ mod tests {
         let extra_prefixes = load_prefix_file(&prefix_path).unwrap();
 
         let mut filters = ParseFilters::default();
-        filter_file.merge_into(&mut filters);
+        filter_file.merge_into(&mut filters).unwrap();
         merge_prefix_file(extra_prefixes, &mut filters);
 
         // Both dimensions populated
@@ -1025,7 +1050,7 @@ mod tests {
             prefix: vec!["10.0.0.0/8".to_string()],
             ..Default::default()
         };
-        file.merge_into(&mut filters);
+        file.merge_into(&mut filters).unwrap();
 
         // Union of CLI + file prefixes
         assert_eq!(

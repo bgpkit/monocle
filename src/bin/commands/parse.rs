@@ -75,12 +75,9 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
 
     // Load and merge file-based filters into CLI filters
     if let Some(ref pf) = filter_file {
-        match FilterFile::load(pf) {
-            Ok(ff) => ff.merge_into(&mut filters),
-            Err(e) => {
-                eprintln!("ERROR: {}", e);
-                std::process::exit(1);
-            }
+        if let Err(e) = FilterFile::load(pf).and_then(|ff| ff.merge_into(&mut filters)) {
+            eprintln!("ERROR: {}", e);
+            std::process::exit(1);
         }
     }
     if let Some(ref pf) = prefix_file {
