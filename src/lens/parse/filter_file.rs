@@ -383,13 +383,16 @@ impl FilterFile {
                 .filter(|s| !s.is_empty()),
         );
 
-        // peer_ip is Vec<IpAddr> — parse string values, error on invalid
+        // peer_ip is Vec<IpAddr> — trim, skip empties, parse, error on invalid
         for ip_str in self.peer_ips {
             let trimmed = ip_str.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
             let ip: IpAddr = trimmed.parse().map_err(|_| {
                 anyhow!(
                     "Invalid peer IP '{}' in filter file: must be a valid IP address",
-                    ip_str
+                    trimmed
                 )
             })?;
             filters.peer_ip.push(ip);
@@ -853,6 +856,18 @@ mod tests {
             ..Default::default()
         };
         file.merge_into(&mut filters).unwrap();
+        assert_eq!(filters.peer_ip.len(), 1);
+    }
+
+    #[test]
+    fn test_merge_into_peer_ip_empty_skipped() {
+        let mut filters = ParseFilters::default();
+        let file = FilterFile {
+            peer_ips: vec!["".to_string(), "  ".to_string(), "192.0.2.1".to_string()],
+            ..Default::default()
+        };
+        file.merge_into(&mut filters).unwrap();
+        // Empty/whitespace-only entries skipped, valid IP parsed
         assert_eq!(filters.peer_ip.len(), 1);
     }
 
