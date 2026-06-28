@@ -294,14 +294,22 @@ pub fn build_json_object(
     collector: Option<&str>,
     time_format: TimestampFormat,
 ) -> serde_json::Value {
-    // If all default parse fields are selected, no collector field, and the default
-    // Unix timestamp format is in use, fall back to the original element serialization
-    // to preserve backward-compatible output byte-for-byte.
-    if fields == DEFAULT_FIELDS_PARSE
-        && !fields.contains(&"collector")
-        && time_format == TimestampFormat::Unix
-    {
-        return json!(elem);
+    // If all default parse fields are selected and no collector field, use the
+    // original element serialization to preserve the full JSON shape (which
+    // includes fields like `origin_asns`, `only_to_customer`, etc. that are not
+    // listed in DEFAULT_FIELDS_PARSE). When RFC3339 timestamps are requested,
+    // override just the `timestamp` key on top of the native serialization.
+    if fields == DEFAULT_FIELDS_PARSE && !fields.contains(&"collector") {
+        let mut obj = json!(elem);
+        if time_format != TimestampFormat::Unix {
+            if let Some(map) = obj.as_object_mut() {
+                map.insert(
+                    "timestamp".to_string(),
+                    json!(time_format.format_timestamp(elem.timestamp)),
+                );
+            }
+        }
+        return obj;
     }
 
     let mut obj = serde_json::Map::new();
@@ -540,8 +548,29 @@ mod tests {
     fn test_default_fields_unix_falls_back_to_native_serialization() {
         let elem = test_elem();
         let obj = build_json_object(&elem, DEFAULT_FIELDS_PARSE, None, TimestampFormat::Unix);
-        // With default fields + Unix, build_json_object should use native elem serialization
-        // which contains the full element (e.g. a `peer_ip` field).
-        assert!(obj.get("peer_ip").is_some());
+        // With default fields, build_json_object should use native elem serialization
+        // which contains fields NOT in DEFAULT_FIELDS_PARSE (e.g. `origin_asns`).
+        // If the fallback broke, origin_asns would be absent from the output.
+        assert!(
+            obj.get("origin_asns").is_some(),
+            "native serialization should include origin_asns (not in DEFAULT_FIELDS_PARSE)"
+        );
+        // Timestamp stays numeric for Unix
+        assert!(obj.get("timestamp").unwrap().is_number());
+    }
+
+    #[test]
+    fn test_default_fields_rfc3339_preserves_shape_overrides_timestamp() {
+        let elem = test_elem();
+        let obj = build_json_object(&elem, DEFAULT_FIELDS_PARSE, None, TimestampFormat::Rfc3339);
+        // The full native shape should be preserved (origin_asns present)
+        assert!(
+            obj.get("origin_asns").is_some(),
+            "rfc3339 should still use native serialization shape, not field-filtered map"
+        );
+        // But the timestamp should be overridden to a string
+        let ts = obj.get("timestamp").unwrap();
+        assert!(ts.is_string(), "rfc3339 timestamp should be a string");
+        assert!(ts.as_str().unwrap().contains('T'));
     }
 }
