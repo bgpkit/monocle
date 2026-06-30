@@ -133,7 +133,27 @@ impl Default for SystemInfoResponse {
         Self {
             server_version: env!("CARGO_PKG_VERSION").to_string(),
             api_version: "v1",
-            endpoints: vec!["/health", "/api/v1/system/info", "/api/v1/search/stream"],
+            endpoints: vec![
+                "/health",
+                "/api/v1/system/info",
+                "/api/v1/search/stream",
+                "/api/v1/time/parse",
+                "/api/v1/country/lookup",
+                "/api/v1/ip/lookup",
+                "/api/v1/ip/public",
+                "/api/v1/rpki/roa/lookup",
+                "/api/v1/rpki/aspa/lookup",
+                "/api/v1/rpki/roa/validate",
+                "/api/v1/rpki/aspa/validate",
+                "/api/v1/pfx2as/lookup",
+                "/api/v1/as2rel/search",
+                "/api/v1/as2rel/relationship",
+                "/api/v1/as2rel/refresh",
+                "/api/v1/inspect/query",
+                "/api/v1/inspect/refresh",
+                "/api/v1/database/status",
+                "/api/v1/database/refresh",
+            ],
         }
     }
 }
@@ -142,13 +162,40 @@ impl Default for SystemInfoResponse {
 // Router
 // =============================================================================
 
-/// Build the Axum router for MVP REST endpoints under `/api/v1`.
+/// Build the Axum router for all REST endpoints under `/api/v1`.
 ///
 /// Takes `ServerState` by value; Axum's `with_state` consumes it.
 pub fn router(state: ServerState) -> AxumRouter {
+    use crate::server::rest;
+
     AxumRouter::new()
+        // System
         .route("/system/info", get(system_info))
+        // Search (SSE)
         .route("/search/stream", post(crate::server::search::stream_search))
+        // Tier 1: Stateless
+        .route("/time/parse", post(rest::time::time_parse))
+        .route("/country/lookup", post(rest::country::country_lookup))
+        .route("/ip/lookup", post(rest::ip::ip_lookup))
+        .route("/ip/public", get(rest::ip::ip_public))
+        // Tier 2: Database read-only
+        .route("/database/status", get(rest::database::database_status))
+        .route("/rpki/roa/lookup", get(rest::rpki::roa_lookup))
+        .route("/rpki/aspa/lookup", get(rest::rpki::aspa_lookup))
+        .route("/pfx2as/lookup", get(rest::pfx2as::pfx2as_lookup))
+        .route(
+            "/as2rel/relationship",
+            get(rest::as2rel::as2rel_relationship),
+        )
+        .route("/as2rel/search", post(rest::as2rel::as2rel_search))
+        // Tier 3: Database refresh
+        .route("/database/refresh", post(rest::database::database_refresh))
+        .route("/inspect/refresh", post(rest::database::inspect_refresh))
+        .route("/as2rel/refresh", post(rest::as2rel::as2rel_refresh))
+        // Tier 4: Composite query
+        .route("/rpki/roa/validate", post(rest::rpki::roa_validate))
+        .route("/rpki/aspa/validate", post(rest::rpki::aspa_validate))
+        .route("/inspect/query", post(rest::inspect::inspect_query))
         .with_state(state)
 }
 

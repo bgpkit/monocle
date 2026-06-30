@@ -427,29 +427,39 @@ const reader = res.body.getReader();
 // parse SSE frames from chunks
 ```
 
-### Future endpoints (post-MVP, not part of this design's implementation)
+### Phase 2 REST endpoints
+
+All non-streaming REST endpoints, organized by tier:
 
 ```http
+# Tier 1: Stateless (no database)
 POST /api/v1/time/parse
+POST /api/v1/country/lookup
 POST /api/v1/ip/lookup
 GET  /api/v1/ip/public
-POST /api/v1/rpki/validate
-GET  /api/v1/rpki/roas
-GET  /api/v1/rpki/aspas
-POST /api/v1/as2rel/search
-GET  /api/v1/as2rel/relationship
-POST /api/v1/as2rel/update
-GET  /api/v1/pfx2as/lookup
-POST /api/v1/inspect/query
-POST /api/v1/inspect/search
-POST /api/v1/inspect/refresh
+
+# Tier 2: Database read-only (cache-only; return NOT_INITIALIZED if missing)
 GET  /api/v1/database/status
+GET  /api/v1/rpki/roa/lookup
+GET  /api/v1/rpki/aspa/lookup
+GET  /api/v1/pfx2as/lookup
+GET  /api/v1/as2rel/relationship
+POST /api/v1/as2rel/search
+
+# Tier 3: Database refresh (explicit operations, no progress streaming)
 POST /api/v1/database/refresh
+POST /api/v1/inspect/refresh
+POST /api/v1/as2rel/refresh
+
+# Tier 4: Composite query (cache-only for MVP)
+POST /api/v1/rpki/roa/validate
+POST /api/v1/rpki/aspa/validate
+POST /api/v1/inspect/query
 ```
 
-These are listed for context only. They require a refresh policy design
-(Section 12) and handler decoupling from WebSocket envelopes, both of which are
-separate follow-up work.
+All endpoints work in cache-only mode for MVP — no `auto_refresh` /
+`force_refresh` knobs. If required local data is missing, return
+`NOT_INITIALIZED`. Users refresh via the explicit `/refresh` endpoints.
 
 ## 8. Configuration
 
@@ -738,12 +748,20 @@ Goal: ship the core — search streaming over HTTP.
 
 ### Phase 2: Full REST API coverage (parallel with 3–4)
 
-Goal: convert remaining handlers to REST.
+Goal: add non-streaming REST endpoints for all Monocle capabilities.
 
-1. Decouple handler logic from `WsOpSink`/`ResponseEnvelope`.
-2. Add REST routes for time, IP, RPKI, AS2Rel, Pfx2AS, Inspect, database.
-3. Requires the refresh policy design (Section 12) for local-db endpoints.
-4. Add endpoint tests and a catalog.
+1. Add `MonocleDatabase` to `ServerState` (shared `Arc<MonocleDatabase>`
+   opened at startup).
+2. Tier 1 — stateless: `time/parse`, `country/lookup`, `ip/lookup`, `ip/public`.
+3. Tier 2 — DB read-only (cache-only): `database/status`, `rpki/roa/lookup`,
+   `rpki/aspa/lookup`, `pfx2as/lookup`, `as2rel/relationship`, `as2rel/search`.
+4. Tier 3 — DB refresh: `database/refresh`, `inspect/refresh`, `as2rel/refresh`.
+   Return JSON summary on completion; no progress streaming.
+5. Tier 4 — composite query (cache-only): `rpki/roa/validate`,
+   `rpki/aspa/validate`, `inspect/query`.
+6. All DB-backed endpoints return `NOT_INITIALIZED` if required data is missing.
+7. No refresh policy knobs (`auto_refresh`/`force_refresh`) — deferred.
+8. Add endpoint tests.
 
 ### Phase 3: Authentication (parallel with 2, 4)
 

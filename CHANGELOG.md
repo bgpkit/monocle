@@ -35,6 +35,19 @@ All notable changes to this project will be documented in this file.
 * Bounded mpsc channel (capacity 32) with backpressure: element batches are
   never dropped; progress events may be coalesced under backpressure.
 * Terminal event invariant: exactly one of `completed`, `cancelled`, or `error`.
+* Added Phase 2 REST API endpoints:
+  - Tier 1 (stateless): `POST /time/parse`, `POST /country/lookup`,
+    `POST /ip/lookup`, `GET /ip/public`
+  - Tier 2 (DB read-only, cache-only): `GET /database/status`,
+    `GET /rpki/roa/lookup`, `GET /rpki/aspa/lookup`, `GET /pfx2as/lookup`,
+    `GET /as2rel/relationship`, `POST /as2rel/search`
+  - Tier 3 (DB refresh): `POST /database/refresh`, `POST /inspect/refresh`,
+    `POST /as2rel/refresh`
+  - Tier 4 (composite, cache-only): `POST /rpki/roa/validate`,
+    `POST /rpki/aspa/validate`, `POST /inspect/query`
+  All DB-backed endpoints return `NOT_INITIALIZED` (HTTP 503) if required
+  data is missing. No refresh policy knobs — users refresh via explicit
+  `/refresh` endpoints.
 
 ### Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to `monocle parse`
   and `monocle search` for loading large filter sets from files. File filters merge with

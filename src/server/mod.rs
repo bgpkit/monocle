@@ -21,6 +21,7 @@
 //! ```
 
 pub mod http;
+pub mod rest;
 pub mod search;
 
 use axum::routing::get;
