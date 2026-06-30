@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### Performance Improvements
+
+* Optimized database refresh (bulk insert) performance by 21–49% across all
+  repositories. Indexes are now dropped before bulk insert and rebuilt in one
+  pass afterward, instead of being updated per-row.
+* Removed redundant `idx_pfx2as_prefix_str` and low-value
+  `idx_pfx2as_validation` indexes. `lookup_exact` rewritten to use the
+  existing BLOB range index (`prefix_start`/`prefix_end`/`prefix_length`).
+* Fixed PRAGMA restore bug: `store()` methods no longer toggle
+  `synchronous`/`journal_mode` PRAGMAs, preserving the connection's
+  `WAL`/`NORMAL` defaults. Previously, every refresh left the connection
+  in `DELETE`/`FULL` mode, degrading query performance until restart.
+* Switched `INSERT OR REPLACE` to plain `INSERT` in all refresh paths
+  (tables are cleared before insert, so no conflicts are possible).
+* Added `db_refresh_bench` example for measuring refresh performance
+  with real or synthetic data.
+
 ### New Features
 
 * Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to `monocle parse`

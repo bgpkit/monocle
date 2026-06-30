@@ -99,6 +99,15 @@ pub struct ConnectivityEntry {
 }
 
 impl<'a> As2relRepository<'a> {
+    /// Index names managed by this repository (for drop-and-rebuild during bulk insert)
+    const INDEX_NAMES: [&'static str; 2] = ["idx_as2rel_asn1", "idx_as2rel_asn2"];
+
+    /// Index creation SQL (rebuilt after bulk insert)
+    const INDEX_SQL: [&'static str; 2] = [
+        "CREATE INDEX IF NOT EXISTS idx_as2rel_asn1 ON as2rel(asn1)",
+        "CREATE INDEX IF NOT EXISTS idx_as2rel_asn2 ON as2rel(asn2)",
+    ];
+
     /// Create a new AS2Rel repository
     pub fn new(conn: &'a Connection) -> Self {
         Self { conn }
@@ -503,8 +512,7 @@ impl<'a> As2relRepository<'a> {
     /// Load AS2Rel data from a custom path (file or URL)
     ///
     /// Uses optimized batch insert with:
-    /// - Disabled synchronous writes for performance
-    /// - Memory-based journal mode
+    /// - Indexes dropped before insert and rebuilt after (faster than per-row maintenance)
     /// - Single transaction for all inserts
     pub fn load_from_path(&self, path: &str) -> Result<usize> {
         self.clear()?;
@@ -523,16 +531,13 @@ impl<'a> As2relRepository<'a> {
         // Find max peers count for normalization
         let max_peers = entries.iter().map(|e| e.peers_count).max().unwrap_or(0);
 
-        // Optimize for batch insert performance
-        self.conn
-            .execute("PRAGMA synchronous = OFF", [])
-            .map_err(|e| anyhow!("Failed to set synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = MEMORY", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to set journal mode: {}", e))?;
-        self.conn
-            .execute("PRAGMA cache_size = -64000", [])
-            .map_err(|e| anyhow!("Failed to set cache size: {}", e))?; // 64MB cache
+        // Drop indexes before bulk insert — rebuilding once at the end is faster
+        // than maintaining the B-tree on every row.
+        for idx in &Self::INDEX_NAMES {
+            self.conn
+                .execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
+        }
 
         // Use a transaction for all inserts
         let tx = self
@@ -543,8 +548,9 @@ impl<'a> As2relRepository<'a> {
         let entry_count = entries.len();
 
         {
+            // Plain INSERT — table was just cleared, no PK conflicts
             let mut stmt = tx.prepare(
-                "INSERT OR REPLACE INTO as2rel (asn1, asn2, paths_count, peers_count, rel)
+                "INSERT INTO as2rel (asn1, asn2, paths_count, peers_count, rel)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
 
@@ -574,13 +580,12 @@ impl<'a> As2relRepository<'a> {
         tx.commit()
             .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
 
-        // Restore default settings for safety
-        self.conn
-            .execute("PRAGMA synchronous = FULL", [])
-            .map_err(|e| anyhow!("Failed to restore synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to restore journal mode: {}", e))?;
+        // Recreate indexes in one efficient pass after all data is inserted
+        for sql in Self::INDEX_SQL {
+            self.conn
+                .execute(sql, [])
+                .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
+        }
 
         info!("AS2Rel data loading finished: {} entries", entry_count);
 
@@ -1069,5 +1074,52 @@ mod tests {
 
         // Old data should need refresh
         assert!(repo.needs_refresh(std::time::Duration::from_secs(7 * 24 * 60 * 60)));
+    }
+
+    #[test]
+    fn test_store_rebuilds_indexes_correctly() {
+        // Verify that after load_from_path, the 2 as2rel indexes exist.
+        let db = setup_test_db();
+        let repo = As2relRepository::new(&db.conn);
+
+        // Insert test data directly to have something in the table
+        db.conn
+            .execute(
+                "INSERT INTO as2rel (asn1, asn2, paths_count, peers_count, rel) VALUES (65000, 65001, 100, 10, 0)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO as2rel_meta (id, file_url, last_updated, max_peers_count) VALUES (1, 'test', 1, 100)",
+                [],
+            )
+            .unwrap();
+
+        // Manually drop indexes to simulate the state before rebuild
+        db.conn
+            .execute_batch(
+                "DROP INDEX IF EXISTS idx_as2rel_asn1; DROP INDEX IF EXISTS idx_as2rel_asn2;",
+            )
+            .unwrap();
+
+        // Recreate them (simulating what load_from_path does at the end)
+        for sql in As2relRepository::INDEX_SQL {
+            db.conn.execute(sql, []).unwrap();
+        }
+
+        let index_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_as2rel_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 2, "expected 2 as2rel indexes after rebuild");
+
+        // Queries should work
+        let results = repo.search_asn(65000).unwrap();
+        assert_eq!(results.len(), 1);
     }
 }

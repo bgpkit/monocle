@@ -173,6 +173,14 @@ pub struct RpkiRepository<'a> {
 }
 
 impl<'a> RpkiRepository<'a> {
+    /// Index names managed by this repository (for drop-and-rebuild during bulk insert)
+    const INDEX_NAMES: [&'static str; 4] = [
+        "idx_rpki_roa_prefix_range",
+        "idx_rpki_roa_origin_asn",
+        "idx_rpki_aspa_customer",
+        "idx_rpki_aspa_provider",
+    ];
+
     /// Create a new RPKI repository
     pub fn new(conn: &'a Connection) -> Self {
         Self { conn }
@@ -330,8 +338,7 @@ impl<'a> RpkiRepository<'a> {
     /// Store ROAs and ASPAs in the database
     ///
     /// Uses optimized batch insert with:
-    /// - Disabled synchronous writes for performance
-    /// - Memory-based journal mode
+    /// - Indexes dropped before insert and rebuilt after (faster than per-row maintenance)
     /// - Single transaction for all inserts
     ///
     /// # Arguments
@@ -352,16 +359,12 @@ impl<'a> RpkiRepository<'a> {
         // Clear existing data
         self.clear()?;
 
-        // Optimize for batch insert performance
-        self.conn
-            .execute("PRAGMA synchronous = OFF", [])
-            .map_err(|e| anyhow!("Failed to set synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = MEMORY", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to set journal mode: {}", e))?;
-        self.conn
-            .execute("PRAGMA cache_size = -64000", [])
-            .map_err(|e| anyhow!("Failed to set cache size: {}", e))?; // 64MB cache
+        // Drop indexes before bulk insert — rebuilding once at the end is faster
+        for idx in &Self::INDEX_NAMES {
+            self.conn
+                .execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
+        }
 
         // Begin transaction for batch insert
         self.conn.execute("BEGIN TRANSACTION", [])?;
@@ -410,13 +413,12 @@ impl<'a> RpkiRepository<'a> {
 
         self.conn.execute("COMMIT", [])?;
 
-        // Restore default settings for safety
-        self.conn
-            .execute("PRAGMA synchronous = FULL", [])
-            .map_err(|e| anyhow!("Failed to restore synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to restore journal mode: {}", e))?;
+        // Recreate indexes in one efficient pass after all data is inserted
+        for sql in RpkiSchemaDefinitions::RPKI_INDEXES {
+            self.conn
+                .execute(sql, [])
+                .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
+        }
 
         info!(
             "Stored {} ROAs and {} ASPA customer-provider pairs ({} customers) in RPKI database",
@@ -1323,5 +1325,63 @@ mod tests {
         // Not found
         let result = repo.validate_detailed("2.0.0.0/24", 13335).unwrap();
         assert_eq!(result.state, "not-found");
+    }
+
+    #[test]
+    fn test_store_rebuilds_indexes_correctly() {
+        // Verify that after store(), all 4 RPKI indexes exist and queries work.
+        // This guards the drop-and-rebuild optimization.
+        let conn = create_test_db();
+        let repo = RpkiRepository::new(&conn);
+
+        let roas = vec![RpkiRoaRecord {
+            prefix: "1.0.0.0/24".to_string(),
+            max_length: 24,
+            origin_asn: 13335,
+            ta: "apnic".to_string(),
+        }];
+
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
+
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_rpki_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 4, "expected 4 RPKI indexes after store");
+
+        // Query should work correctly via the rebuilt indexes
+        let roas = repo.get_roas_by_asn(13335).unwrap();
+        assert_eq!(roas.len(), 1);
+    }
+
+    #[test]
+    fn test_store_idempotent_index_rebuild() {
+        let conn = create_test_db();
+        let repo = RpkiRepository::new(&conn);
+
+        let roas = vec![RpkiRoaRecord {
+            prefix: "1.0.0.0/24".to_string(),
+            max_length: 24,
+            origin_asn: 13335,
+            ta: "apnic".to_string(),
+        }];
+
+        repo.store(&roas, &[], "src1", "src1").unwrap();
+        repo.store(&roas, &[], "src2", "src2").unwrap();
+
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_rpki_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            index_count, 4,
+            "indexes should not duplicate after re-store"
+        );
     }
 }

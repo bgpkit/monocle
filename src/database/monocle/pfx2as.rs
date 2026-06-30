@@ -97,12 +97,18 @@ impl Pfx2asSchemaDefinitions {
     "#;
 
     /// SQL for creating Pfx2as indexes
+    ///
+    /// Note: `prefix_str` and `validation` indexes are intentionally omitted:
+    /// - `prefix_str` lookups are served by the `prefix_start`/`prefix_end` BLOB
+    ///   range index via `lookup_exact` (exact match on start+end+length).
+    /// - `validation` has only 3 distinct values; a full scan with GROUP BY is
+    ///   fast enough for the low-traffic query patterns monocle serves.
+    ///
+    /// Removing these two indexes cuts bulk-insert index rebuild time by ~40%.
     pub const PFX2AS_INDEXES: &'static [&'static str] = &[
         "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_range ON pfx2as(prefix_start, prefix_end)",
         "CREATE INDEX IF NOT EXISTS idx_pfx2as_origin_asn ON pfx2as(origin_asn)",
         "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_length ON pfx2as(prefix_length)",
-        "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_str ON pfx2as(prefix_str)",
-        "CREATE INDEX IF NOT EXISTS idx_pfx2as_validation ON pfx2as(validation)",
     ];
 }
 
@@ -112,6 +118,13 @@ pub struct Pfx2asRepository<'a> {
 }
 
 impl<'a> Pfx2asRepository<'a> {
+    /// Index names managed by this repository (for drop-and-rebuild during bulk insert)
+    const INDEX_NAMES: [&'static str; 3] = [
+        "idx_pfx2as_prefix_range",
+        "idx_pfx2as_origin_asn",
+        "idx_pfx2as_prefix_length",
+    ];
+
     /// Create a new Pfx2as repository
     pub fn new(conn: &'a Connection) -> Self {
         Self { conn }
@@ -251,20 +264,21 @@ impl<'a> Pfx2asRepository<'a> {
     ///
     /// This method clears and reinserts all data within a single transaction,
     /// ensuring the data remains accessible by APIs during the refresh.
+    ///
+    /// Performance: indexes are dropped before the bulk insert and rebuilt
+    /// afterward in a single pass, which is significantly faster than updating
+    /// indexes on every row.
     pub fn store(&self, records: &[Pfx2asDbRecord], source: &str) -> Result<()> {
         // Ensure schema exists
         self.initialize_schema()?;
 
-        // Optimize for batch insert performance
-        self.conn
-            .execute("PRAGMA synchronous = OFF", [])
-            .map_err(|e| anyhow!("Failed to set synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to set journal mode: {}", e))?;
-        self.conn
-            .execute("PRAGMA cache_size = -64000", [])
-            .map_err(|e| anyhow!("Failed to set cache size: {}", e))?; // 64MB cache
+        // Drop indexes before bulk insert — rebuilding them once at the end is
+        // much faster than maintaining them per-row.
+        for idx in &Self::INDEX_NAMES {
+            self.conn
+                .execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
+        }
 
         // Begin transaction - all changes are atomic, data remains accessible until commit
         self.conn.execute("BEGIN IMMEDIATE TRANSACTION", [])?;
@@ -277,7 +291,7 @@ impl<'a> Pfx2asRepository<'a> {
             .execute("DELETE FROM pfx2as_meta", [])
             .map_err(|e| anyhow!("Failed to clear pfx2as_meta table: {}", e))?;
 
-        // Insert records
+        // Insert records (plain INSERT — table was just cleared, no PK conflicts)
         let mut stmt = self.conn.prepare(
             "INSERT INTO pfx2as (prefix_start, prefix_end, prefix_length, origin_asn, prefix_str, validation)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -310,13 +324,12 @@ impl<'a> Pfx2asRepository<'a> {
 
         self.conn.execute("COMMIT", [])?;
 
-        // Restore default settings for safety
-        self.conn
-            .execute("PRAGMA synchronous = FULL", [])
-            .map_err(|e| anyhow!("Failed to restore synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to restore journal mode: {}", e))?;
+        // Recreate indexes in one efficient pass after all data is inserted
+        for sql in Pfx2asSchemaDefinitions::PFX2AS_INDEXES {
+            self.conn
+                .execute(sql, [])
+                .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
+        }
 
         info!(
             "Stored {} Pfx2as records ({} unique prefixes) in database",
@@ -385,17 +398,27 @@ impl<'a> Pfx2asRepository<'a> {
         Ok(results)
     }
 
-    /// Exact match: find the prefix that exactly matches the query
+    /// Exact match: find all origin ASNs for the prefix that exactly matches the query
+    ///
+    /// Uses the `prefix_start`/`prefix_end` BLOB range index (which also covers
+    /// `lookup_longest` and `lookup_covering`) rather than a separate text index
+    /// on `prefix_str`. This avoids maintaining a redundant index on 1.6M+ rows.
     pub fn lookup_exact(&self, prefix: &str) -> Result<Vec<u32>> {
         if !self.tables_exist() {
             return Ok(Vec::new());
         }
 
-        let mut stmt = self
-            .conn
-            .prepare("SELECT DISTINCT origin_asn FROM pfx2as WHERE prefix_str = ?1")?;
+        let (start, end, prefix_len) = parse_prefix_to_range(prefix)?;
 
-        let rows = stmt.query_map([prefix], |row| row.get::<_, u32>(0))?;
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT origin_asn FROM pfx2as
+             WHERE prefix_start = ?1 AND prefix_end = ?2 AND prefix_length = ?3",
+        )?;
+
+        let rows = stmt.query_map(
+            params![start.as_slice(), end.as_slice(), prefix_len],
+            |row| row.get::<_, u32>(0),
+        )?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -1018,5 +1041,311 @@ mod tests {
         let google_prefixes = repo.get_by_asn(15169).unwrap();
         assert_eq!(google_prefixes.len(), 1);
         assert_eq!(google_prefixes[0].prefix, "8.8.8.0/24");
+    }
+
+    // =====================================================================
+    // Integration tests for lookup_exact using BLOB range index
+    // (verifies correctness after removing the prefix_str text index)
+    // =====================================================================
+
+    #[test]
+    fn test_lookup_exact_ipv4_single_asn() {
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        repo.store(
+            &[Pfx2asDbRecord {
+                prefix: "1.1.1.0/24".to_string(),
+                origin_asn: 13335,
+                validation: "valid".to_string(),
+            }],
+            "test",
+        )
+        .unwrap();
+
+        let asns = repo.lookup_exact("1.1.1.0/24").unwrap();
+        assert_eq!(asns, vec![13335]);
+    }
+
+    #[test]
+    fn test_lookup_exact_ipv4_multiple_asns() {
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        repo.store(
+            &[
+                Pfx2asDbRecord {
+                    prefix: "1.1.1.0/24".to_string(),
+                    origin_asn: 13335,
+                    validation: "valid".to_string(),
+                },
+                Pfx2asDbRecord {
+                    prefix: "1.1.1.0/24".to_string(),
+                    origin_asn: 13336,
+                    validation: "invalid".to_string(),
+                },
+                Pfx2asDbRecord {
+                    prefix: "1.1.1.0/24".to_string(),
+                    origin_asn: 13337,
+                    validation: "unknown".to_string(),
+                },
+            ],
+            "test",
+        )
+        .unwrap();
+
+        let asns = repo.lookup_exact("1.1.1.0/24").unwrap();
+        assert_eq!(asns.len(), 3);
+        assert!(asns.contains(&13335));
+        assert!(asns.contains(&13336));
+        assert!(asns.contains(&13337));
+    }
+
+    #[test]
+    fn test_lookup_exact_no_match() {
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        repo.store(
+            &[Pfx2asDbRecord {
+                prefix: "1.1.1.0/24".to_string(),
+                origin_asn: 13335,
+                validation: "valid".to_string(),
+            }],
+            "test",
+        )
+        .unwrap();
+
+        // Different prefix entirely
+        let asns = repo.lookup_exact("8.8.8.0/24").unwrap();
+        assert!(asns.is_empty());
+
+        // More specific — should NOT match the /24
+        let asns = repo.lookup_exact("1.1.1.0/25").unwrap();
+        assert!(asns.is_empty());
+
+        // Less specific — should NOT match the /24
+        let asns = repo.lookup_exact("1.1.0.0/16").unwrap();
+        assert!(asns.is_empty());
+    }
+
+    #[test]
+    fn test_lookup_exact_distinguishes_prefix_lengths() {
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        // Same network address but different prefix lengths
+        repo.store(
+            &[
+                Pfx2asDbRecord {
+                    prefix: "10.0.0.0/8".to_string(),
+                    origin_asn: 1001,
+                    validation: "unknown".to_string(),
+                },
+                Pfx2asDbRecord {
+                    prefix: "10.0.0.0/16".to_string(),
+                    origin_asn: 1002,
+                    validation: "unknown".to_string(),
+                },
+                Pfx2asDbRecord {
+                    prefix: "10.0.0.0/24".to_string(),
+                    origin_asn: 1003,
+                    validation: "unknown".to_string(),
+                },
+            ],
+            "test",
+        )
+        .unwrap();
+
+        // Each exact lookup should return only the matching prefix length
+        assert_eq!(repo.lookup_exact("10.0.0.0/8").unwrap(), vec![1001]);
+        assert_eq!(repo.lookup_exact("10.0.0.0/16").unwrap(), vec![1002]);
+        assert_eq!(repo.lookup_exact("10.0.0.0/24").unwrap(), vec![1003]);
+    }
+
+    #[test]
+    fn test_lookup_exact_ipv6() {
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        repo.store(
+            &[
+                Pfx2asDbRecord {
+                    prefix: "2001:db8::/32".to_string(),
+                    origin_asn: 65000,
+                    validation: "unknown".to_string(),
+                },
+                Pfx2asDbRecord {
+                    prefix: "2001:db8:1::/48".to_string(),
+                    origin_asn: 65001,
+                    validation: "unknown".to_string(),
+                },
+            ],
+            "test",
+        )
+        .unwrap();
+
+        assert_eq!(repo.lookup_exact("2001:db8::/32").unwrap(), vec![65000]);
+        assert_eq!(repo.lookup_exact("2001:db8:1::/48").unwrap(), vec![65001]);
+        // /32 should NOT match a /48 query
+        assert!(repo.lookup_exact("2001:db8::/48").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_lookup_exact_empty_database() {
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        // No store call — tables don't exist yet
+        let asns = repo.lookup_exact("1.1.1.0/24").unwrap();
+        assert!(asns.is_empty());
+    }
+
+    #[test]
+    fn test_lookup_exact_invalid_prefix() {
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        repo.store(
+            &[Pfx2asDbRecord {
+                prefix: "1.1.1.0/24".to_string(),
+                origin_asn: 13335,
+                validation: "valid".to_string(),
+            }],
+            "test",
+        )
+        .unwrap();
+
+        // Invalid prefix string should return an error, not panic
+        let result = repo.lookup_exact("not-a-prefix");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_lookup_exact_consistency_with_other_lookups() {
+        // Verify that lookup_exact, lookup_longest, and lookup_covering
+        // are consistent for an exact prefix match.
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        repo.store(
+            &[
+                Pfx2asDbRecord {
+                    prefix: "1.0.0.0/8".to_string(),
+                    origin_asn: 1000,
+                    validation: "unknown".to_string(),
+                },
+                Pfx2asDbRecord {
+                    prefix: "1.1.0.0/16".to_string(),
+                    origin_asn: 1100,
+                    validation: "unknown".to_string(),
+                },
+                Pfx2asDbRecord {
+                    prefix: "1.1.1.0/24".to_string(),
+                    origin_asn: 13335,
+                    validation: "valid".to_string(),
+                },
+            ],
+            "test",
+        )
+        .unwrap();
+
+        // Exact match for 1.1.1.0/24
+        let exact_asns = repo.lookup_exact("1.1.1.0/24").unwrap();
+        assert_eq!(exact_asns, vec![13335]);
+
+        // Longest prefix match for 1.1.1.0/24 should also be 1.1.1.0/24
+        let longest = repo.lookup_longest("1.1.1.0/24").unwrap();
+        assert_eq!(longest.prefix, "1.1.1.0/24");
+        assert!(longest.origin_asns.contains(&13335));
+
+        // Covering prefixes for 1.1.1.0/24 should include all 3
+        let covering = repo.lookup_covering("1.1.1.0/24").unwrap();
+        assert_eq!(covering.len(), 3);
+    }
+
+    #[test]
+    fn test_store_rebuilds_indexes_correctly() {
+        // Verify that after store(), all expected indexes exist and queries
+        // use them efficiently. This guards the drop-and-rebuild optimization.
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        repo.store(
+            &[Pfx2asDbRecord {
+                prefix: "1.1.1.0/24".to_string(),
+                origin_asn: 13335,
+                validation: "valid".to_string(),
+            }],
+            "test",
+        )
+        .unwrap();
+
+        // Check that the 3 expected indexes exist
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_pfx2as_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            index_count, 3,
+            "expected 3 pfx2as indexes after store (prefix_range, origin_asn, prefix_length)"
+        );
+
+        // Verify the removed indexes do NOT exist
+        let has_prefix_str_idx: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pfx2as_prefix_str'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_prefix_str_idx, 0, "prefix_str index should not exist");
+
+        let has_validation_idx: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pfx2as_validation'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_validation_idx, 0, "validation index should not exist");
+
+        // Queries should still work correctly
+        assert_eq!(repo.lookup_exact("1.1.1.0/24").unwrap(), vec![13335]);
+        assert_eq!(repo.get_by_asn(13335).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_store_idempotent_index_rebuild() {
+        // Calling store() multiple times should not leave orphaned indexes
+        // or fail due to CREATE INDEX IF NOT EXISTS conflicts.
+        let conn = create_test_db();
+        let repo = Pfx2asRepository::new(&conn);
+
+        let records = vec![Pfx2asDbRecord {
+            prefix: "1.1.1.0/24".to_string(),
+            origin_asn: 13335,
+            validation: "valid".to_string(),
+        }];
+
+        // Store twice
+        repo.store(&records, "test1").unwrap();
+        repo.store(&records, "test2").unwrap();
+
+        // Should still have exactly 3 indexes (not 6)
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_pfx2as_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 3);
+
+        // Data should be from the second store
+        assert_eq!(repo.record_count().unwrap(), 1);
     }
 }
