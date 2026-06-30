@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Monocle SSE Search Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #d4d4d4; }
+        #log { white-space: pre-wrap; border: 1px solid #555; padding: 10px; height: 70vh; overflow-y: scroll; }
+        .event-started { color: #569cd6; }
+        .event-progress { color: #dcdcaa; }
+        .event-elements { color: #4ec9b0; }
+        .event-completed { color: #6a9955; }
+        .event-cancelled { color: #ce9178; }
+        .event-error { color: #f44747; }
+        button { padding: 8px 16px; font-size: 14px; cursor: pointer; }
+        input { padding: 4px; font-family: monospace; width: 400px; }
+    </style>
+</head>
+<body>
+    <h2>Monocle SSE Search Stream</h2>
+    <p>
+        <label>Server URL: <input id="url" value="http://127.0.0.1:8080/api/v1/search/stream"></label>
+    </p>
+    <p>
+        <button id="start">Start Search</button>
+        <button id="cancel" disabled>Cancel (close connection)</button>
+    </p>
+    <div id="log"></div>
+
+<script>
+const log = document.getElementById('log');
+const startBtn = document.getElementById('start');
+const cancelBtn = document.getElementById('cancel');
+let controller = null;
+
+function append(text, className) {
+    const span = document.createElement('span');
+    span.className = className;
+    span.textContent = text + '\n';
+    log.appendChild(span);
+    log.scrollTop = log.scrollHeight;
+}
+
+const request = {
+    filters: {
+        start_ts: "2024-01-01T00:00:00Z",
+        end_ts: "2024-01-01T00:02:00Z",
+        collector: "rrc00",
+        project: "riperis",
+        dump_type: "updates"
+    },
+    batch_size: 5,
+    max_results: 10
+};
+
+startBtn.onclick = async () => {
+    log.innerHTML = '';
+    startBtn.disabled = true;
+    cancelBtn.disabled = false;
+    controller = new AbortController();
+
+    try {
+        const res = await fetch(document.getElementById('url').value, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream',
+            },
+            body: JSON.stringify(request),
+            signal: controller.signal,
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            append(`HTTP ${res.status}: ${JSON.stringify(err)}`, 'event-error');
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Parse SSE frames (separated by \n\n)
+            const frames = buffer.split('\n\n');
+            buffer = frames.pop(); // keep partial frame in buffer
+
+            for (const frame of frames) {
+                const lines = frame.split('\n');
+                let eventType = 'message';
+                let data = '';
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) eventType = line.slice(7);
+                    if (line.startsWith('data: ')) data = line.slice(6);
+                }
+
+                const cls = `event-${eventType}`;
+
+                if (eventType === 'elements') {
+                    const batch = JSON.parse(data);
+                    append(`[${eventType}] ${batch.elements.length} elements (total_so_far: ${batch.total_so_far}, collector: ${batch.collector})`, cls);
+                    // Log first element's prefix for a quick peek
+                    if (batch.elements.length > 0) {
+                        append(`  e.g.: ${batch.elements[0].prefix} from AS${batch.elements[0].peer_asn} at ${batch.elements[0].timestamp}`, cls);
+                    }
+                } else if (eventType === 'progress') {
+                    append(`[${eventType}] ${data}`, cls);
+                } else if (eventType === 'completed') {
+                    append(`[${eventType}] ${data}`, cls);
+                } else if (eventType === 'error') {
+                    append(`[${eventType}] ${data}`, cls);
+                } else {
+                    append(`[${eventType}] ${data}`, cls);
+                }
+            }
+        }
+        append('--- connection closed ---', '');
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            append('--- cancelled by user ---', 'event-cancelled');
+        } else {
+            append(`Error: ${err.message}`, 'event-error');
+        }
+    } finally {
+        startBtn.disabled = false;
+        cancelBtn.disabled = true;
+        controller = null;
+    }
+};
+
+cancelBtn.onclick = () => {
+    if (controller) controller.abort();
+};
+</script>
+</body>
+</html>

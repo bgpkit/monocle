@@ -4,9 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### Breaking Changes
+
+* Replaced WebSocket server with HTTP/SSE service. The `server` subcommand now
+  starts an HTTP server with REST endpoints and SSE search streaming instead of
+  a WebSocket server. All WebSocket modules (`protocol`, `handler`, `sink`,
+  `op_sink`, `router`, `operations`, `handlers/*`) have been removed.
+* Updated `axum` to 0.8 and `tower-http` to 0.6.
+* Removed `uuid` and `async-trait` dependencies (no longer needed without
+  WebSocket operation tracking).
+* Updated `ServerArgs` CLI flags: removed `--data-dir`, `--max-concurrent-ops`,
+  `--max-message-size`, `--connection-timeout-secs`, `--ping-interval-secs`;
+  added `--max-search-batch-size`, `--max-search-results`, `--search-timeout-secs`.
+  `--address` and `--port` are now optional (default to config values).
+
 ### New Features
 
-* Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to `monocle parse`
+* Added HTTP/SSE server with three MVP endpoints:
+  - `GET /health` — health check for container orchestration
+  - `GET /api/v1/system/info` — server metadata and endpoint list
+  - `POST /api/v1/search/stream` — SSE streaming BGP search with progress,
+    element batches, cancellation on disconnect, and max-results limit
+* Added server configuration fields to `MonocleConfig`: `server_address`,
+  `server_port`, `server_max_search_batch_size`, `server_max_search_results`,
+  `server_search_timeout_secs`. All configurable via `monocle.toml` and
+  `MONOCLE_*` environment variables.
+* SSE search streaming uses sequential file processing with `Arc<AtomicBool>`
+  cancellation — no new lens method needed. The server calls existing
+  `SearchFilters` utility methods (`to_broker_items`, `to_parser`) directly.
+* Bounded mpsc channel (capacity 32) with backpressure: element batches are
+  never dropped; progress events may be coalesced under backpressure.
+* Terminal event invariant: exactly one of `completed`, `cancelled`, or `error`.
+
+### Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to `monocle parse`
   and `monocle search` for loading large filter sets from files. File filters merge with
   CLI flags — union within each dimension (OR), AND across dimensions. Supports the
   RIB-extract → filter-updates workflow at scale (#117).

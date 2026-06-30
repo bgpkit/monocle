@@ -9,6 +9,21 @@ use serde::Serialize;
 /// Default TTL for all data sources: 7 days in seconds
 pub const DEFAULT_CACHE_TTL_SECS: u64 = 604800;
 
+/// Default server bind address
+pub const DEFAULT_SERVER_ADDRESS: &str = "127.0.0.1";
+
+/// Default server port
+pub const DEFAULT_SERVER_PORT: u16 = 8080;
+
+/// Default maximum elements per SSE batch
+pub const DEFAULT_SERVER_MAX_SEARCH_BATCH_SIZE: usize = 100;
+
+/// Default maximum search results per request (0 = unlimited)
+pub const DEFAULT_SERVER_MAX_SEARCH_RESULTS: u64 = 0;
+
+/// Default search timeout in seconds (0 = no timeout)
+pub const DEFAULT_SERVER_SEARCH_TIMEOUT_SECS: u64 = 0;
+
 #[derive(Clone)]
 pub struct MonocleConfig {
     /// Path to the directory to hold Monocle's data
@@ -38,6 +53,21 @@ pub struct MonocleConfig {
 
     /// If true, do not fall back to Cloudflare when RTR fails (default: false)
     pub rpki_rtr_no_fallback: bool,
+
+    /// HTTP server bind address (default: 127.0.0.1)
+    pub server_address: String,
+
+    /// HTTP server port (default: 8080)
+    pub server_port: u16,
+
+    /// Maximum elements per SSE search batch (default: 100)
+    pub server_max_search_batch_size: usize,
+
+    /// Maximum search results per request, 0 = unlimited (default: 0)
+    pub server_max_search_results: u64,
+
+    /// Search timeout in seconds, 0 = no timeout (default: 0)
+    pub server_search_timeout_secs: u64,
 }
 
 const EMPTY_CONFIG: &str = r#"### monocle configuration file
@@ -61,6 +91,17 @@ const EMPTY_CONFIG: &str = r#"### monocle configuration file
 # rpki_rtr_timeout_secs = 10
 ### If true, error out instead of falling back to Cloudflare when RTR fails
 # rpki_rtr_no_fallback = false
+
+### HTTP service configuration
+### These settings control the monocle HTTP/SSE server.
+# server_address = "127.0.0.1"
+# server_port = 8080
+### Maximum elements per SSE search batch
+# server_max_search_batch_size = 100
+### Maximum search results per request (0 = unlimited)
+# server_max_search_results = 0
+### Search timeout in seconds (0 = no timeout)
+# server_search_timeout_secs = 0
 "#;
 
 #[derive(Debug, Clone)]
@@ -168,6 +209,11 @@ impl Default for MonocleConfig {
             rpki_rtr_port: 8282,
             rpki_rtr_timeout_secs: 10,
             rpki_rtr_no_fallback: false,
+            server_address: DEFAULT_SERVER_ADDRESS.to_string(),
+            server_port: DEFAULT_SERVER_PORT,
+            server_max_search_batch_size: DEFAULT_SERVER_MAX_SEARCH_BATCH_SIZE,
+            server_max_search_results: DEFAULT_SERVER_MAX_SEARCH_RESULTS,
+            server_search_timeout_secs: DEFAULT_SERVER_SEARCH_TIMEOUT_SECS,
         }
     }
 }
@@ -279,6 +325,28 @@ impl MonocleConfig {
             .map(|s| s.to_lowercase() == "true")
             .unwrap_or(false);
 
+        // Parse HTTP service configuration
+        let server_address = config
+            .get("server_address")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_SERVER_ADDRESS.to_string());
+        let server_port = config
+            .get("server_port")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_SERVER_PORT);
+        let server_max_search_batch_size = config
+            .get("server_max_search_batch_size")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_SERVER_MAX_SEARCH_BATCH_SIZE);
+        let server_max_search_results = config
+            .get("server_max_search_results")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_SERVER_MAX_SEARCH_RESULTS);
+        let server_search_timeout_secs = config
+            .get("server_search_timeout_secs")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_SERVER_SEARCH_TIMEOUT_SECS);
+
         Ok(MonocleConfig {
             data_dir,
             asinfo_cache_ttl_secs,
@@ -289,6 +357,11 @@ impl MonocleConfig {
             rpki_rtr_port,
             rpki_rtr_timeout_secs,
             rpki_rtr_no_fallback,
+            server_address,
+            server_port,
+            server_max_search_batch_size,
+            server_max_search_results,
+            server_search_timeout_secs,
         })
     }
 
@@ -350,6 +423,22 @@ impl MonocleConfig {
         if let Some((host, port)) = self.rtr_endpoint() {
             lines.push(format!("RTR Endpoint:       {}:{}", host, port));
         }
+
+        // HTTP service configuration
+        lines.push(format!("Server Address:     {}", self.server_address));
+        lines.push(format!("Server Port:        {}", self.server_port));
+        lines.push(format!(
+            "Search Batch Size:  {}",
+            self.server_max_search_batch_size
+        ));
+        lines.push(format!(
+            "Search Max Results: {}",
+            self.server_max_search_results
+        ));
+        lines.push(format!(
+            "Search Timeout:     {} seconds",
+            self.server_search_timeout_secs
+        ));
 
         // Check if cache directories exist and show status
         let cache_dir = self.cache_dir();
@@ -813,20 +902,31 @@ mod tests {
         assert_eq!(config.rpki_rtr_port, 8282);
         assert_eq!(config.rpki_rtr_timeout_secs, 10);
         assert!(!config.rpki_rtr_no_fallback);
+
+        // Server config defaults
+        assert_eq!(config.server_address, DEFAULT_SERVER_ADDRESS);
+        assert_eq!(config.server_port, DEFAULT_SERVER_PORT);
+        assert_eq!(
+            config.server_max_search_batch_size,
+            DEFAULT_SERVER_MAX_SEARCH_BATCH_SIZE
+        );
+        assert_eq!(
+            config.server_max_search_results,
+            DEFAULT_SERVER_MAX_SEARCH_RESULTS
+        );
+        assert_eq!(
+            config.server_search_timeout_secs,
+            DEFAULT_SERVER_SEARCH_TIMEOUT_SECS
+        );
     }
 
     #[test]
     fn test_paths() {
         let config = MonocleConfig {
             data_dir: "/test/dir".to_string(),
-            asinfo_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
-            as2rel_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
             rpki_cache_ttl_secs: 3600,
             pfx2as_cache_ttl_secs: 86400,
-            rpki_rtr_host: None,
-            rpki_rtr_port: 8282,
-            rpki_rtr_timeout_secs: 10,
-            rpki_rtr_no_fallback: false,
+            ..Default::default()
         };
 
         assert_eq!(config.sqlite_path(), "/test/dir/monocle-data.sqlite3");
@@ -844,10 +944,7 @@ mod tests {
             as2rel_cache_ttl_secs: 2000,
             rpki_cache_ttl_secs: 7200,
             pfx2as_cache_ttl_secs: 3600,
-            rpki_rtr_host: None,
-            rpki_rtr_port: 8282,
-            rpki_rtr_timeout_secs: 10,
-            rpki_rtr_no_fallback: false,
+            ..Default::default()
         };
 
         assert_eq!(
@@ -878,14 +975,12 @@ mod tests {
         // RTR configured
         let config = MonocleConfig {
             data_dir: "/test".to_string(),
-            asinfo_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
-            as2rel_cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
             rpki_cache_ttl_secs: 3600,
             pfx2as_cache_ttl_secs: 86400,
             rpki_rtr_host: Some("rtr.example.com".to_string()),
             rpki_rtr_port: 8282,
             rpki_rtr_timeout_secs: 30,
-            rpki_rtr_no_fallback: false,
+            ..Default::default()
         };
         assert!(config.has_rtr_endpoint());
         assert_eq!(

@@ -1,14 +1,13 @@
 use chrono_humanize::HumanTime;
 use clap::{Args, Subcommand};
+use monocle::config::MonocleConfig;
 use monocle::config::{
     format_size, get_data_source_info, get_sqlite_info, DataSource, DataSourceStatus,
     SqliteDatabaseInfo,
 };
 use monocle::database::{MonocleDatabase, Pfx2asDbRecord};
 use monocle::lens::rpki::RpkiLens;
-use monocle::server::ServerConfig;
 use monocle::utils::OutputFormat;
-use monocle::MonocleConfig;
 use serde::Serialize;
 use std::path::Path;
 use std::time::Instant;
@@ -103,21 +102,19 @@ struct CacheTtlConfig {
 struct ServerDefaults {
     address: String,
     port: u16,
-    max_concurrent_ops: usize,
-    max_message_size: usize,
-    connection_timeout_secs: u64,
-    ping_interval_secs: u64,
+    max_search_batch_size: usize,
+    max_search_results: u64,
+    search_timeout_secs: u64,
 }
 
-impl From<&ServerConfig> for ServerDefaults {
-    fn from(config: &ServerConfig) -> Self {
+impl From<&MonocleConfig> for ServerDefaults {
+    fn from(config: &MonocleConfig) -> Self {
         Self {
-            address: config.address.clone(),
-            port: config.port,
-            max_concurrent_ops: config.max_concurrent_ops,
-            max_message_size: config.max_message_size,
-            connection_timeout_secs: config.connection_timeout_secs,
-            ping_interval_secs: config.ping_interval_secs,
+            address: config.server_address.clone(),
+            port: config.server_port,
+            max_search_batch_size: config.server_max_search_batch_size,
+            max_search_results: config.server_max_search_results,
+            search_timeout_secs: config.server_search_timeout_secs,
         }
     }
 }
@@ -162,7 +159,7 @@ fn run_status(config: &MonocleConfig, verbose: bool, output_format: OutputFormat
 
     // Get database info
     let database_info = get_sqlite_info(config);
-    let server_defaults = ServerDefaults::from(&ServerConfig::default());
+    let server_defaults = ServerDefaults::from(config);
 
     // Collect file info if verbose
     let files = if verbose {
@@ -361,24 +358,20 @@ fn print_config_table(info: &ConfigInfo, verbose: bool) {
 
     println!("Server Defaults:");
     println!(
-        "  Address:        {}:{}",
+        "  Address:           {}:{}",
         info.server_defaults.address, info.server_defaults.port
     );
     println!(
-        "  Max concurrent: {} operations",
-        info.server_defaults.max_concurrent_ops
+        "  Search batch size: {} elements",
+        info.server_defaults.max_search_batch_size
     );
     println!(
-        "  Max message:    {} bytes",
-        info.server_defaults.max_message_size
+        "  Search max results: {} (0 = unlimited)",
+        info.server_defaults.max_search_results
     );
     println!(
-        "  Timeout:        {} seconds",
-        info.server_defaults.connection_timeout_secs
-    );
-    println!(
-        "  Ping interval:  {} seconds",
-        info.server_defaults.ping_interval_secs
+        "  Search timeout:    {} seconds (0 = no timeout)",
+        info.server_defaults.search_timeout_secs
     );
 
     if verbose {
