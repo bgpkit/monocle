@@ -88,11 +88,12 @@ docker run --rm bgpkit/monocle:latest inspect 13335
 # Run with persistent data directory
 docker run --rm -v monocle-data:/data bgpkit/monocle:latest inspect 13335
 
-# Start the WebSocket server
+# Start the HTTP/SSE server
 docker run --rm -p 8080:8080 -v monocle-data:/data bgpkit/monocle:latest server --address 0.0.0.0 --port 8080
 
 # Using docker compose for server mode
 docker compose up -d
+curl http://localhost:8080/health
 ```
 
 ## Library Usage
@@ -787,6 +788,29 @@ Use `--broker-files` to see the list of MRT files that would be queried without 
 ➜  monocle search -t 2024-01-01T00:00:00Z -T 2024-01-01T01:00:00Z \
     -c rrc00 --broker-files
 ```
+
+#### Remote Search
+
+Use `--remote-url` to run search against a remote Monocle HTTP service instead
+of locally. This is useful when the service is deployed with pre-loaded data or
+when you want to offload parsing to a dedicated server.
+
+```text
+➜  monocle search -t 2024-01-01T00:00:00Z -T 2024-01-01T00:01:00Z \
+    -c rrc00 \
+    --remote-url http://monocle.example.net:8080/api/v1/search/stream
+```
+
+If the remote server has auth enabled, provide the token with `--remote-token`:
+
+```text
+➜  monocle search -t 2024-01-01T00:00:00Z -T 2024-01-01T00:01:00Z \
+    -c rrc00 \
+    --remote-url http://monocle.example.net:8080/api/v1/search/stream \
+    --remote-token my-secret-token
+```
+
+Output is formatted using the same formatters as local search (`--format`, `--json`, etc.).
 
 ### `monocle rib`
 
@@ -1611,94 +1635,97 @@ Notes:
 
 ### `monocle server`
 
-Start a WebSocket server for programmatic access to monocle functionality.
+Start the Monocle HTTP/SSE service for programmatic access via REST and
+Server-Sent Events.
 
 ```text
 ➜  monocle server --help
-Start the WebSocket server (ws://<address>:<port>/ws, health: http://<address>:<port>/health)
-
-Note: This requires building with the `server` feature enabled.
+Start the Monocle HTTP service (REST: /api/v1, search stream: /api/v1/search/stream)
 
 Usage: monocle server [OPTIONS]
 
 Options:
       --address <ADDRESS>
-          Address to bind to (default: 127.0.0.1)
-          
-          [default: 127.0.0.1]
+          Address to bind to (overrides config server_address)
+
+      --port <PORT>
+          Port to listen on (overrides config server_port)
+
+      --max-search-batch-size <MAX_SEARCH_BATCH_SIZE>
+          Maximum number of elements per SSE batch (overrides config)
+
+      --max-search-results <MAX_SEARCH_RESULTS>
+          Maximum search results per request (0 = unlimited, overrides config)
+
+      --search-timeout-secs <SEARCH_TIMEOUT_SECS>
+          Search timeout in seconds (0 = no timeout, overrides config)
+
+      --auth-enabled <AUTH_ENABLED>
+          Enable token auth for /api/v1/* endpoints (overrides config)
+
+      --auth-token <AUTH_TOKEN>
+          Bearer token for auth (overrides config)
 
       --debug
           Print debug information
 
-      --port <PORT>
-          Port to listen on (default: 8080)
-          
-          [default: 8080]
-
-      --data-dir <DATA_DIR>
-          Monocle data directory (default: $XDG_DATA_HOME/monocle)
-
-      --format <FORMAT>
-          Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
-
-      --json
-          Output as JSON objects (shortcut for --format json-pretty)
-
-      --max-concurrent-ops <MAX_CONCURRENT_OPS>
-          Maximum concurrent operations per connection (0 = unlimited)
-
-      --max-message-size <MAX_MESSAGE_SIZE>
-          Maximum websocket message size in bytes
-
-      --no-update
-          Disable automatic database updates (use existing cached data only)
-
-      --connection-timeout-secs <CONNECTION_TIMEOUT_SECS>
-          Idle timeout in seconds
-
-      --ping-interval-secs <PING_INTERVAL_SECS>
-          Ping interval in seconds
+      --config <CONFIG>
+          Path to monocle.toml config file
 
   -h, --help
-          Print help (see a summary with '-h')
-
-  -V, --version
-          Print version
+          Print help
 ```
 
 **Endpoints:**
-- WebSocket: `ws://<address>:<port>/ws`
-- Health check: `http://<address>:<port>/health`
 
-**Features:**
-- JSON-RPC style request/response protocol
-- Streaming support with progress reporting for parse/search operations
-- Operation cancellation via `op_id`
-- DB-first policy: queries read from local SQLite cache
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check (always open) |
+| GET | `/api/v1/system/info` | Server metadata and endpoint list |
+| POST | `/api/v1/search/stream` | SSE streaming BGP search |
+| POST | `/api/v1/time/parse` | Parse time strings |
+| POST | `/api/v1/country/lookup` | Country code/name lookup |
+| POST | `/api/v1/ip/lookup` | IP geolocation lookup |
+| GET | `/api/v1/ip/public` | Caller's public IP info |
+| GET | `/api/v1/database/status` | Database state (no side effects) |
+| POST | `/api/v1/database/refresh` | Refresh a data source |
+| GET | `/api/v1/rpki/roa/lookup` | List ROAs from cache |
+| GET | `/api/v1/rpki/aspa/lookup` | List ASPAs from cache |
+| POST | `/api/v1/rpki/roa/validate` | Validate prefix+ASN against ROAs |
+| GET | `/api/v1/pfx2as/lookup` | Prefix-to-ASN mapping lookup |
+| GET | `/api/v1/as2rel/relationship` | AS relationship between two ASNs |
+| POST | `/api/v1/as2rel/search` | Search AS relationships |
+| POST | `/api/v1/as2rel/refresh` | Refresh AS2REL data |
+| POST | `/api/v1/inspect/query` | Unified AS/prefix/country lookup |
+| POST | `/api/v1/inspect/refresh` | Refresh all inspect data sources |
 
-**Available methods:**
-- `system.info`, `system.methods` - Server introspection
-- `time.parse` - Time string parsing
-- `ip.lookup`, `ip.public` - IP information lookup
-- `rpki.validate`, `rpki.roas`, `rpki.aspas` - RPKI operations
-- `as2rel.search`, `as2rel.relationship`, `as2rel.update` - AS relationships
-- `pfx2as.lookup` - Prefix-to-ASN mapping
-- `country.lookup` - Country code/name lookup
-- `inspect.query`, `inspect.refresh` - Unified AS/prefix inspection
-- `parse.start`, `parse.cancel` - MRT file parsing (streaming)
-- `search.start`, `search.cancel` - BGP message search (streaming)
-- `database.status`, `database.refresh` - Database management
-
-For detailed protocol specification, see [`src/server/README.md`](src/server/README.md).
+For detailed API specification, see [`src/server/README.md`](src/server/README.md).
 
 Example:
 
 ```text
 ➜  monocle server
-Starting WebSocket server on 127.0.0.1:8080
-  WebSocket: ws://127.0.0.1:8080/ws
-  Health: http://127.0.0.1:8080/health
+Starting HTTP server on 127.0.0.1:8080 (auth: false)
 
 ➜  monocle server --address 0.0.0.0 --port 3000
-Starting WebSocket server on 0.0.0.0:3000
+Starting HTTP server on 0.0.0.0:3000 (auth: false)
+
+➜  monocle server --auth-enabled true --auth-token my-secret
+Starting HTTP server on 127.0.0.1:8080 (auth: true)
+```
+
+Search via SSE:
+
+```bash
+curl -N -H 'Accept: text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{"filters":{"start_ts":"2024-01-01T00:00:00Z","end_ts":"2024-01-01T00:01:00Z","collector":"rrc00","project":"riperis","dump_type":"updates"},"batch_size":100}' \
+  http://127.0.0.1:8080/api/v1/search/stream
+```
+
+Deploy with Docker:
+
+```bash
+docker compose up -d
+curl http://localhost:8080/health
 ```
