@@ -108,7 +108,7 @@ monocle = "1.1"
 # Library only - all lenses and database operations
 monocle = { version = "1.1", default-features = false, features = ["lib"] }
 
-# Library + WebSocket server
+# Library + HTTP server
 monocle = { version = "1.1", default-features = false, features = ["server"] }
 ```
 
@@ -119,7 +119,7 @@ Monocle uses a simplified feature system with three options:
 | Feature | Description | Implies |
 |---------|-------------|---------|
 | `lib` | Complete library (database + all lenses + display) | - |
-| `server` | WebSocket server for programmatic API access | `lib` |
+| `server` | HTTP/SSE server for programmatic API access | `lib` |
 | `cli` (default) | Full CLI binary with all functionality | `lib`, `server` |
 
 ### Documentation
@@ -133,7 +133,7 @@ The following documentation files are available in the repository:
 | [`DEVELOPMENT.md`](DEVELOPMENT.md) | Contributor guide for adding lenses and fixing bugs |
 | [`AGENTS.md`](AGENTS.md) | AI coding agent guidelines and code style |
 | [`CHANGELOG.md`](CHANGELOG.md) | Version history and breaking changes |
-| [`src/server/README.md`](src/server/README.md) | WebSocket API specification |
+| [`src/server/README.md`](src/server/README.md) | HTTP/SSE API specification |
 | [`src/lens/README.md`](src/lens/README.md) | Lens module patterns and conventions |
 | [`src/database/README.md`](src/database/README.md) | Database module overview |
 | [`examples/README.md`](examples/README.md) | Usage examples by feature tier |
@@ -158,7 +158,7 @@ The library is organized into the following core modules:
   - `as2rel`: AS-level relationships lens
   - `inspect`: Unified AS/prefix inspection lens
 
-- **`server`**: WebSocket API server (requires `server` feature)
+- **`server`**: HTTP/SSE API server (requires `server` feature)
 
 For detailed architecture documentation, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -233,7 +233,7 @@ Subcommands:
 - `parse`: parse individual MRT files
 - `search`: search for matching messages from all available public MRT files
 - `rib`: reconstruct final RIB state at one or more arbitrary timestamps
-- `server`: start a WebSocket server for programmatic access
+- `server`: start a HTTP/SSE server for programmatic access
 - `inspect`: unified AS and prefix information lookup
 - `country`: utility to look up country name and code
 - `time`: utility to convert time between unix timestamp and RFC3339 string
@@ -264,7 +264,7 @@ Commands:
   parse    Parse individual MRT files given a file path, local or remote
   search   Search BGP messages from all available public MRT files
   rib      Reconstruct final RIB state at one or more arbitrary timestamps
-  server   Start the WebSocket server (ws://<address>:<port>/ws, health: http://<address>:<port>/health)
+  server   Start the Monocle HTTP service (REST: /api/v1, search stream: /api/v1/search/stream)
   inspect  Unified AS and prefix information lookup
   country  Country name and code lookup utilities
   time     Time conversion utilities
