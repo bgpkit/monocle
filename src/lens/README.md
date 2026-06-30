@@ -3,7 +3,7 @@
 The `lens` module is Monocle's **use‑case layer**. Each lens exposes a cohesive set of operations (search, parse, RPKI lookup, etc.) through a stable, programmatic API that can be reused by:
 
 - the `monocle` CLI,
-- the WebSocket server (`monocle server`),
+- the HTTP/SSE server (`monocle server`),
 - GUI frontends (planned: GPUI),
 - other Rust applications embedding Monocle as a library.
 
@@ -76,7 +76,7 @@ The `lib` feature includes:
 Lenses are designed to be called from multiple frontends:
 
 - **CLI**: commands call into lenses and print results using `OutputFormat`.
-- **WebSocket**: handlers call lenses and stream progress/results via `WsOpSink`.
+- **HTTP/SSE**: REST handlers call lenses and return JSON; SSE search streams progress/elements via bounded channel.
 - **GUI**: a UI can call lenses on a worker thread and stream progress/results back to the UI.
 - **Library**: users can call lens APIs directly without going through CLI argument parsing.
 
@@ -280,7 +280,7 @@ For a detailed contributor walkthrough, see `DEVELOPMENT.md`. In short:
     ```
 4. Wire into (optional):
    - CLI command module under `src/bin/commands/`
-   - WebSocket handler under `src/server/handlers/`
+   - REST handler under `src/server/rest/`
 
 ---
 
@@ -315,6 +315,6 @@ Consistent naming makes lenses predictable:
 
 - `ARCHITECTURE.md` (project-level architecture)
 - `DEVELOPMENT.md` (contributor guide)
-- `src/server/README.md` (WebSocket API protocol)
+- `src/server/README.md` (HTTP/SSE API specification)
 - `src/database/README.md` (database module overview)
 - `examples/README.md` (example code by feature tier)

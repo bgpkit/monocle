@@ -96,7 +96,7 @@ pub enum CountryOutputFormat {
 /// This struct works in multiple contexts:
 /// - CLI: with clap derives (when `cli` feature is enabled)
 /// - REST API: as query parameters or JSON body (via serde)
-/// - WebSocket: as JSON message payload (via serde)
+/// - HTTP/SSE: as JSON request/response body (via serde)
 /// - Library: constructed programmatically
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::Args))]
