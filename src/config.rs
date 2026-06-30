@@ -24,6 +24,9 @@ pub const DEFAULT_SERVER_MAX_SEARCH_RESULTS: u64 = 0;
 /// Default search timeout in seconds (0 = no timeout)
 pub const DEFAULT_SERVER_SEARCH_TIMEOUT_SECS: u64 = 0;
 
+/// Default: auth disabled
+pub const DEFAULT_SERVER_AUTH_ENABLED: bool = false;
+
 #[derive(Clone)]
 pub struct MonocleConfig {
     /// Path to the directory to hold Monocle's data
@@ -68,6 +71,12 @@ pub struct MonocleConfig {
 
     /// Search timeout in seconds, 0 = no timeout (default: 0)
     pub server_search_timeout_secs: u64,
+
+    /// Enable token auth for /api/v1/* endpoints (default: false)
+    pub server_auth_enabled: bool,
+
+    /// Bearer token for auth (required when server_auth_enabled = true)
+    pub server_auth_token: String,
 }
 
 const EMPTY_CONFIG: &str = r#"### monocle configuration file
@@ -102,6 +111,12 @@ const EMPTY_CONFIG: &str = r#"### monocle configuration file
 # server_max_search_results = 0
 ### Search timeout in seconds (0 = no timeout)
 # server_search_timeout_secs = 0
+
+### Auth (token-based, disabled by default)
+### When enabled, requests to /api/v1/* require Authorization: Bearer <token>
+### /health stays open for container health checks
+# server_auth_enabled = false
+# server_auth_token = ""
 "#;
 
 #[derive(Debug, Clone)]
@@ -214,6 +229,8 @@ impl Default for MonocleConfig {
             server_max_search_batch_size: DEFAULT_SERVER_MAX_SEARCH_BATCH_SIZE,
             server_max_search_results: DEFAULT_SERVER_MAX_SEARCH_RESULTS,
             server_search_timeout_secs: DEFAULT_SERVER_SEARCH_TIMEOUT_SECS,
+            server_auth_enabled: DEFAULT_SERVER_AUTH_ENABLED,
+            server_auth_token: String::new(),
         }
     }
 }
@@ -347,6 +364,13 @@ impl MonocleConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_SERVER_SEARCH_TIMEOUT_SECS);
 
+        // Parse auth configuration
+        let server_auth_enabled = config
+            .get("server_auth_enabled")
+            .map(|s| s.to_lowercase() == "true")
+            .unwrap_or(DEFAULT_SERVER_AUTH_ENABLED);
+        let server_auth_token = config.get("server_auth_token").cloned().unwrap_or_default();
+
         Ok(MonocleConfig {
             data_dir,
             asinfo_cache_ttl_secs,
@@ -362,6 +386,8 @@ impl MonocleConfig {
             server_max_search_batch_size,
             server_max_search_results,
             server_search_timeout_secs,
+            server_auth_enabled,
+            server_auth_token,
         })
     }
 
@@ -439,6 +465,7 @@ impl MonocleConfig {
             "Search Timeout:     {} seconds",
             self.server_search_timeout_secs
         ));
+        lines.push(format!("Auth Enabled:       {}", self.server_auth_enabled));
 
         // Check if cache directories exist and show status
         let cache_dir = self.cache_dir();
@@ -918,6 +945,8 @@ mod tests {
             config.server_search_timeout_secs,
             DEFAULT_SERVER_SEARCH_TIMEOUT_SECS
         );
+        assert!(!config.server_auth_enabled);
+        assert_eq!(config.server_auth_token, "");
     }
 
     #[test]

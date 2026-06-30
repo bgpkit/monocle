@@ -118,6 +118,14 @@ struct ServerArgs {
     /// Search timeout in seconds (0 = no timeout, overrides config)
     #[clap(long)]
     search_timeout_secs: Option<u64>,
+
+    /// Enable token auth for /api/v1/* endpoints (overrides config)
+    #[clap(long)]
+    auth_enabled: Option<bool>,
+
+    /// Bearer token for auth (overrides config)
+    #[clap(long)]
+    auth_token: Option<String>,
 }
 
 fn main() {
@@ -197,6 +205,12 @@ fn main() {
                 }
                 if let Some(v) = args.search_timeout_secs {
                     server_config.server_search_timeout_secs = v;
+                }
+                if let Some(v) = args.auth_enabled {
+                    server_config.server_auth_enabled = v;
+                }
+                if let Some(v) = args.auth_token {
+                    server_config.server_auth_token = v;
                 }
 
                 // Start server (blocks current thread until shutdown)

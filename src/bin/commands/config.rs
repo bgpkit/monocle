@@ -105,6 +105,7 @@ struct ServerDefaults {
     max_search_batch_size: usize,
     max_search_results: u64,
     search_timeout_secs: u64,
+    auth_enabled: bool,
 }
 
 impl From<&MonocleConfig> for ServerDefaults {
@@ -115,6 +116,7 @@ impl From<&MonocleConfig> for ServerDefaults {
             max_search_batch_size: config.server_max_search_batch_size,
             max_search_results: config.server_max_search_results,
             search_timeout_secs: config.server_search_timeout_secs,
+            auth_enabled: config.server_auth_enabled,
         }
     }
 }
@@ -373,6 +375,7 @@ fn print_config_table(info: &ConfigInfo, verbose: bool) {
         "  Search timeout:    {} seconds (0 = no timeout)",
         info.server_defaults.search_timeout_secs
     );
+    println!("  Auth enabled:      {}", info.server_defaults.auth_enabled);
 
     if verbose {
         if let Some(ref files) = info.files {

@@ -48,6 +48,14 @@ All notable changes to this project will be documented in this file.
   ASPA validation (`/rpki/aspa/validate`) is deferred — it requires full
   AS path validation combined with AS relationship inference data (as2rel),
   not a simple membership check.
+* Added token-based auth middleware (Phase 3):
+  - Config fields `server_auth_enabled` (default: false) and
+    `server_auth_token` in `MonocleConfig`
+  - CLI flags `--auth-enabled` and `--auth-token`
+  - Env vars `MONOCLE_SERVER_AUTH_ENABLED` and `MONOCLE_SERVER_AUTH_TOKEN`
+  - When enabled, `/api/v1/*` requires `Authorization: Bearer <token>`;
+    `/health` stays open for container health checks
+  - Server refuses to start if auth is enabled but token is empty
   All DB-backed endpoints return `NOT_INITIALIZED` (HTTP 503) if required
   data is missing. No refresh policy knobs — users refresh via explicit
   `/refresh` endpoints.
