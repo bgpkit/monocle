@@ -56,6 +56,12 @@ All notable changes to this project will be documented in this file.
   - When enabled, `/api/v1/*` requires `Authorization: Bearer <token>`;
     `/health` stays open for container health checks
   - Server refuses to start if auth is enabled but token is empty
+* Added CLI remote search mode (Phase 4):
+  - `--remote-url` flag on `monocle search` sends the query to a remote
+    Monocle HTTP service instead of running locally
+  - `--remote-token` provides the Bearer token for auth
+  - Consumes SSE stream and formats results with existing CLI output
+    formatters (PSV, JSON, table, markdown)
   All DB-backed endpoints return `NOT_INITIALIZED` (HTTP 503) if required
   data is missing. No refresh policy knobs — users refresh via explicit
   `/refresh` endpoints.

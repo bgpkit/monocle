@@ -1,3 +1,6 @@
+use super::search_remote;
+pub use search_remote::{RemoteSearchFilters, RemoteSearchRequest};
+
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -84,6 +87,15 @@ pub struct SearchArgs {
     /// Filter by AS path regex string
     #[clap(flatten)]
     pub filters: SearchFilters,
+
+    /// Remote Monocle server URL (e.g., http://localhost:8080/api/v1/search/stream).
+    /// When set, search runs against the remote server instead of locally.
+    #[clap(long, value_name = "URL")]
+    pub remote_url: Option<String>,
+
+    /// Bearer token for remote server auth.
+    #[clap(long, value_name = "TOKEN")]
+    pub remote_token: Option<String>,
 }
 
 /// Maximum number of retry attempts (3 attempts total including the first attempt)
@@ -557,7 +569,22 @@ pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat
         use_cache,
         cache_dir,
         mut filters,
+        remote_url,
+        remote_token,
     } = args;
+
+    // If remote-url is set, dispatch to the remote search client and return.
+    if let Some(url) = remote_url {
+        run_remote_search_wrapper(
+            &url,
+            remote_token.as_deref(),
+            &filters,
+            fields_arg.as_deref(),
+            output_format,
+            time_format,
+        );
+        return;
+    }
 
     // Load and merge file-based filters into CLI filters
     if let Some(ref pf) = filter_file {
@@ -1420,5 +1447,81 @@ mod tests {
 
         let result = url_to_cache_path(&cache_dir, collector, url);
         assert_eq!(result, None);
+    }
+}
+
+/// Wrapper to convert local SearchFilters to wire RemoteSearchFilters and run
+/// the async remote search client on a tokio runtime.
+fn run_remote_search_wrapper(
+    url: &str,
+    auth_token: Option<&str>,
+    filters: &SearchFilters,
+    fields_arg: Option<&str>,
+    output_format: OutputFormat,
+    time_format: TimestampFormat,
+) {
+    // Convert internal SearchFilters to wire RemoteSearchFilters
+    let wire = RemoteSearchFilters {
+        prefix: filters.parse_filters.prefix.clone(),
+        include_super: filters.parse_filters.include_super,
+        include_sub: filters.parse_filters.include_sub,
+        origin_asn: filters.parse_filters.origin_asn.clone(),
+        peer_asn: filters.parse_filters.peer_asn.clone(),
+        peer_ip: filters
+            .parse_filters
+            .peer_ip
+            .iter()
+            .map(|ip| ip.to_string())
+            .collect(),
+        communities: filters.parse_filters.communities.clone(),
+        elem_type: None,
+        as_path: filters.parse_filters.as_path.clone(),
+        start_ts: filters.parse_filters.start_ts.clone().unwrap_or_default(),
+        end_ts: filters.parse_filters.end_ts.clone().unwrap_or_default(),
+        collector: filters.collector.clone(),
+        project: filters.project.clone(),
+        dump_type: Some(
+            match filters.dump_type {
+                monocle::lens::search::SearchDumpType::Updates => "updates",
+                monocle::lens::search::SearchDumpType::Rib => "rib",
+                monocle::lens::search::SearchDumpType::RibUpdates => "rib_updates",
+            }
+            .to_string(),
+        ),
+    };
+
+    let request = RemoteSearchRequest {
+        filters: wire,
+        batch_size: None,
+        max_results: None,
+    };
+
+    // Parse fields
+    let fields = match parse_fields(&fields_arg.map(|s| s.to_string()), true) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("ERROR: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Failed to create tokio runtime: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = rt.block_on(search_remote::run_remote_search(
+        url,
+        auth_token,
+        request,
+        output_format,
+        &fields,
+        time_format,
+    )) {
+        eprintln!("Remote search failed: {e}");
+        std::process::exit(1);
     }
 }
