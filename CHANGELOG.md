@@ -44,7 +44,10 @@ All notable changes to this project will be documented in this file.
   - Tier 3 (DB refresh): `POST /database/refresh`, `POST /inspect/refresh`,
     `POST /as2rel/refresh`
   - Tier 4 (composite, cache-only): `POST /rpki/roa/validate`,
-    `POST /rpki/aspa/validate`, `POST /inspect/query`
+    `POST /inspect/query`
+  ASPA validation (`/rpki/aspa/validate`) is deferred — it requires full
+  AS path validation combined with AS relationship inference data (as2rel),
+  not a simple membership check.
   All DB-backed endpoints return `NOT_INITIALIZED` (HTTP 503) if required
   data is missing. No refresh policy knobs — users refresh via explicit
   `/refresh` endpoints.

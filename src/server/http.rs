@@ -144,7 +144,6 @@ impl Default for SystemInfoResponse {
                 "/api/v1/rpki/roa/lookup",
                 "/api/v1/rpki/aspa/lookup",
                 "/api/v1/rpki/roa/validate",
-                "/api/v1/rpki/aspa/validate",
                 "/api/v1/pfx2as/lookup",
                 "/api/v1/as2rel/search",
                 "/api/v1/as2rel/relationship",
@@ -194,7 +193,6 @@ pub fn router(state: ServerState) -> AxumRouter {
         .route("/as2rel/refresh", post(rest::as2rel::as2rel_refresh))
         // Tier 4: Composite query
         .route("/rpki/roa/validate", post(rest::rpki::roa_validate))
-        .route("/rpki/aspa/validate", post(rest::rpki::aspa_validate))
         .route("/inspect/query", post(rest::inspect::inspect_query))
         .with_state(state)
 }

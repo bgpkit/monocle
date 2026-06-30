@@ -453,8 +453,8 @@ POST /api/v1/as2rel/refresh
 
 # Tier 4: Composite query (cache-only for MVP)
 POST /api/v1/rpki/roa/validate
-POST /api/v1/rpki/aspa/validate
 POST /api/v1/inspect/query
+# TODO: POST /api/v1/rpki/aspa/validate (needs full AS path + as2rel inference)
 ```
 
 All endpoints work in cache-only mode for MVP — no `auto_refresh` /

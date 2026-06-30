@@ -267,86 +267,13 @@ pub async fn roa_validate(
 }
 
 // =============================================================================
-// ASPA Validation
+// ASPA Validation (TODO — not exposed)
 // =============================================================================
+// Proper ASPA validation requires checking full AS paths against ASPA records
+// combined with AS relationship inference data (as2rel). This is deferred.
+// The simple membership-check approach is insufficient and has been removed.
+//
+// See: RFC 8481 and ASPA Internet-Drafts for the full validation algorithm.
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct AspaValidateRequest {
-    /// Customer ASN.
-    pub customer_asn: u32,
-    /// Provider ASN to check.
-    pub provider_asn: u32,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AspaValidateResult {
-    pub customer_asn: u32,
-    pub provider_asn: u32,
-    /// Whether the provider is in the customer's authorized ASPA list.
-    pub authorized: bool,
-    /// All authorized providers for this customer (if data is available).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub authorized_providers: Option<Vec<u32>>,
-}
-
-pub async fn aspa_validate(
-    State(state): State<ServerState>,
-    Json(req): Json<AspaValidateRequest>,
-) -> Result<Json<AspaValidateResult>, ApiError> {
-    let data_dir = state.config.data_dir.clone();
-    let customer_asn = req.customer_asn;
-    let provider_asn = req.provider_asn;
-
-    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<AspaValidateResult> {
-        let db = MonocleDatabase::open_in_dir(&data_dir)?;
-        let rpki = db.rpki();
-
-        if rpki.is_empty() {
-            anyhow::bail!("NOT_INITIALIZED:RPKI");
-        }
-
-        let aspas = rpki.get_aspas_by_customer(customer_asn)?;
-        if aspas.is_empty() {
-            anyhow::bail!("NOT_INITIALIZED:RPKI");
-        }
-
-        // aspas is a Vec<RpkiAspaRecord> — each has customer_asn and provider_asns
-        let all_providers: Vec<u32> = aspas
-            .into_iter()
-            .filter(|a| a.customer_asn == customer_asn)
-            .flat_map(|a| a.provider_asns.into_iter())
-            .collect();
-
-        if all_providers.is_empty() {
-            anyhow::bail!("NOT_INITIALIZED:RPKI");
-        }
-
-        let authorized = all_providers.contains(&provider_asn);
-        Ok(AspaValidateResult {
-            customer_asn,
-            provider_asn,
-            authorized,
-            authorized_providers: Some(all_providers),
-        })
-    })
-    .await
-    .map_err(|e| ApiError::internal(format!("Task join error: {}", e)))?;
-
-    match result {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("NOT_INITIALIZED") {
-                Err(ApiError::new(
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                    ApiErrorResponse::new(
-                        ApiErrorCode::NotInitialized,
-                        "RPKI ASPA data not initialized. Run database/refresh first.",
-                    ),
-                ))
-            } else {
-                Err(ApiError::internal(msg))
-            }
-        }
-    }
-}
+// pub async fn aspa_validate(...) — TODO: implement with full AS path validation
+//   using ASPA records + as2rel relationship inference data.
