@@ -62,6 +62,12 @@ All notable changes to this project will be documented in this file.
   - `--remote-token` provides the Bearer token for auth
   - Consumes SSE stream and formats results with existing CLI output
     formatters (PSV, JSON, table, markdown)
+* Added Docker Compose deployment config (Phase 5):
+  - Updated `Dockerfile` with volume mounts for `/data/monocle` and
+    `/cache/monocle`
+  - `docker-compose.yml` with health check, persistent volumes, and
+    env-based configuration
+  - `monocle.toml.example` showing all service configuration options
   All DB-backed endpoints return `NOT_INITIALIZED` (HTTP 503) if required
   data is missing. No refresh policy knobs — users refresh via explicit
   `/refresh` endpoints.

@@ -1,0 +1,63 @@
+# Monocle HTTP/SSE Service Configuration
+#
+# This file shows all available configuration options for running Monocle
+# as an HTTP service. Place it at $XDG_CONFIG_HOME/monocle/monocle.toml
+# or pass via --config.
+#
+# All values can also be set via MONOCLE_* environment variables
+# (e.g., server_port → MONOCLE_SERVER_PORT).
+
+# =============================================================================
+# HTTP Service
+# =============================================================================
+
+# Bind address (use 0.0.0.0 for Docker/remote access, 127.0.0.1 for local)
+server_address = "0.0.0.0"
+server_port = 8080
+
+# Maximum elements per SSE search batch
+server_max_search_batch_size = 100
+
+# Maximum search results per request (0 = unlimited)
+server_max_search_results = 10000
+
+# Search timeout in seconds (0 = no timeout)
+server_search_timeout_secs = 300
+
+# =============================================================================
+# Auth (token-based, disabled by default)
+# =============================================================================
+
+# When enabled, /api/v1/* requires Authorization: Bearer <token>
+# /health stays open for container health checks
+server_auth_enabled = false
+server_auth_token = ""
+
+# =============================================================================
+# Data Directory
+# =============================================================================
+
+# Directory for SQLite database and cached data
+# Defaults to $XDG_DATA_HOME/monocle or ~/.local/share/monocle
+# data_dir = "/data/monocle"
+
+# =============================================================================
+# Cache TTL Settings (seconds, default: 7 days = 604800)
+# =============================================================================
+
+# asinfo_cache_ttl_secs = 604800
+# as2rel_cache_ttl_secs = 604800
+# rpki_cache_ttl_secs = 604800
+# pfx2as_cache_ttl_secs = 604800
+
+# =============================================================================
+# RPKI RTR Endpoint (optional)
+# =============================================================================
+
+# If set, ROAs are fetched via RTR protocol instead of Cloudflare JSON API
+# ASPAs are always fetched from Cloudflare (RTR v1 doesn't support ASPA)
+# rpki_rtr_host = "rtr.rpki.cloudflare.com"
+# rpki_rtr_port = 8282
+# rpki_rtr_timeout_secs = 10
+# If true, error out instead of falling back to Cloudflare when RTR fails
+# rpki_rtr_no_fallback = false
