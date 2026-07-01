@@ -8,6 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/monocle /usr/local/bin/monocle
 
+# Run as a non-root user for security
+RUN groupadd --system monocle && useradd --system --gid monocle --no-create-home --shell /usr/sbin/nologin monocle
+RUN mkdir -p /data/monocle /cache/monocle && chown -R monocle:monocle /data/monocle /cache/monocle
+USER monocle
+
 # Default config: bind to all interfaces, port 8080
 ENV MONOCLE_SERVER_ADDRESS=0.0.0.0 \
     MONOCLE_SERVER_PORT=8080

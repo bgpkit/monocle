@@ -28,8 +28,12 @@ pub async fn pfx2as_lookup(
     let prefix = query.prefix.clone();
     let mode_str = query.mode.clone().unwrap_or_else(|| "longest".to_string());
 
-    // Validate mode before spawning the blocking task so invalid input
-    // returns 400 (client error) rather than 500 (server error).
+    // Validate prefix and mode before spawning the blocking task so invalid
+    // input returns 400 (client error) rather than 500 (server error).
+    prefix
+        .parse::<ipnet::IpNet>()
+        .map_err(|e| ApiError::invalid_params(format!("Invalid prefix: {}", e)))?;
+
     let mode = match mode_str.as_str() {
         "exact" => Pfx2asLookupMode::Exact,
         "longest" => Pfx2asLookupMode::Longest,

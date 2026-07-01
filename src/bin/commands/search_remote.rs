@@ -188,26 +188,38 @@ pub async fn run_remote_search(
                             summary.duration_secs
                         );
                     }
-                    break;
+                    // Flush table output before returning success
+                    if is_table && !buffered_elems.is_empty() {
+                        let table = format_elems_table(&buffered_elems, fields, time_format);
+                        println!("{}", table);
+                    }
+                    return Ok(());
                 }
                 "cancelled" => {
                     eprintln!("[cancelled]");
-                    break;
+                    // Flush any partial results before returning error
+                    if is_table && !buffered_elems.is_empty() {
+                        let table = format_elems_table(&buffered_elems, fields, time_format);
+                        println!("{}", table);
+                    }
+                    return Err(anyhow::anyhow!("remote search was cancelled"));
                 }
                 "error" => {
                     eprintln!("[error] {}", data_line);
-                    break;
+                    if is_table && !buffered_elems.is_empty() {
+                        let table = format_elems_table(&buffered_elems, fields, time_format);
+                        println!("{}", table);
+                    }
+                    return Err(anyhow::anyhow!("remote search failed: {}", data_line));
                 }
                 _ => {}
             }
         }
     }
 
-    // Flush table output
-    if is_table && !buffered_elems.is_empty() {
-        let table = format_elems_table(&buffered_elems, fields, time_format);
-        println!("{}", table);
-    }
-
-    Ok(())
+    // If the stream ended without a `completed`, `cancelled`, or `error` event,
+    // treat it as an error (e.g. connection dropped mid-stream).
+    Err(anyhow::anyhow!(
+        "remote search ended without completion event"
+    ))
 }

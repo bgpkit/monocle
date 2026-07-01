@@ -32,6 +32,12 @@ pub async fn roa_lookup(
     let prefix = query.prefix.clone();
     let asn = query.asn;
 
+    // Validate prefix format up front so invalid input returns 400, not 500.
+    if let Some(ref p) = prefix {
+        p.parse::<ipnet::IpNet>()
+            .map_err(|e| ApiError::invalid_params(format!("Invalid prefix: {}", e)))?;
+    }
+
     let results =
         tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<RpkiRoaEntryResponse>> {
             let db = MonocleDatabase::open_in_dir(&data_dir)?;

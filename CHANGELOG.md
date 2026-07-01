@@ -109,6 +109,12 @@ All notable changes to this project will be documented in this file.
 * Fixed `--time-format rfc3339` being ignored for `json`, `json-line`, and `json-pretty`
   output formats. JSON output now honors `--time-format`: `unix` (default) emits a numeric
   `timestamp` field (backward compatible); `rfc3339` emits an RFC 3339 string (#123).
+* Validated `prefix` input in `pfx2as_lookup` and `roa_lookup` REST endpoints before
+  spawning blocking tasks, so invalid prefixes return 400 instead of 500.
+* Remote search client now exits with a non-zero status when the SSE stream ends
+  with an `error` or `cancelled` event, or when the connection drops without a
+  `completed` event.
+* Docker runtime image now runs as a dedicated non-root `monocle` user.
 
 ## v1.3.0 - 2026-05-27
 
