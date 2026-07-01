@@ -2,7 +2,7 @@
 //!
 //! This module defines the argument structures for AS2Rel operations.
 //! These arguments are designed to be reusable across CLI, REST API,
-//! WebSocket, and GUI interfaces.
+//! HTTP/SSE, and GUI interfaces.
 
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +31,7 @@ pub enum RelationshipFilter {
 /// This struct can be used in multiple contexts:
 /// - CLI: with clap derives (when `cli` feature is enabled)
 /// - REST API: as query parameters (via serde)
-/// - WebSocket: as JSON message payload (via serde)
+/// - HTTP/SSE: as JSON request/response body (via serde)
 /// - GUI: as form state (via serde)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::Args))]

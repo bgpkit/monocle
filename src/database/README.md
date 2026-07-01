@@ -147,7 +147,7 @@ let pfx2as = db.pfx2as();
 // Check if refresh is needed
 if pfx2as.needs_refresh(DEFAULT_PFX2AS_CACHE_TTL)? {
     // Refresh via CLI: monocle config update --pfx2as
-    // Or via WebSocket: database.refresh with source: "pfx2as"
+    // (HTTP API refresh for pfx2as is not yet implemented)
 }
 
 // Exact prefix match
@@ -295,4 +295,4 @@ fn test_with_temp_db() {
 - [Architecture Overview](../../ARCHITECTURE.md) - System architecture
 - [Lens Module](../lens/README.md) - Lens patterns and conventions
 - [DEVELOPMENT.md](../../DEVELOPMENT.md) - Contributor guide
-- [Server README](../server/README.md) - WebSocket API (database.status, database.refresh)
+- [Server README](../server/README.md) - HTTP/SSE API (database.status, database.refresh)

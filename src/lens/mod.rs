@@ -2,7 +2,7 @@
 //!
 //! This module provides high-level "lens" abstractions that combine business logic
 //! with output formatting. Lenses are designed to be reusable across different
-//! interfaces (CLI, REST API, WebSocket, GUI).
+//! interfaces (CLI, REST API, HTTP/SSE, GUI).
 //!
 //! # Feature Requirements
 //!
@@ -10,7 +10,7 @@
 //!
 //! **Quick Guide:**
 //! - Need the CLI binary? Use `cli` feature (includes everything)
-//! - Need WebSocket server without CLI? Use `server` feature (includes lib)
+//! - Need HTTP/SSE server without CLI? Use `server` feature (includes lib)
 //! - Need only library/data access? Use `lib` feature (this module)
 //!
 //! | Lens | Description | Dependencies |

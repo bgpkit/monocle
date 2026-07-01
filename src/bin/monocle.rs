@@ -61,7 +61,7 @@ enum Commands {
     /// Reconstruct final RIB state at one or more arbitrary timestamps.
     Rib(RibArgs),
 
-    /// Start the WebSocket server (ws://<address>:<port>/ws, health: http://<address>:<port>/health)
+    /// Start the Monocle HTTP service (REST: /api/v1, search stream: /api/v1/search/stream)
     ///
     /// Note: This requires building with the `server` feature enabled.
     Server(ServerArgs),
@@ -99,33 +99,33 @@ enum Commands {
 
 #[derive(Args, Debug, Clone)]
 struct ServerArgs {
-    /// Address to bind to (default: 127.0.0.1)
-    #[clap(long, default_value = "127.0.0.1")]
-    address: String,
-
-    /// Port to listen on (default: 8080)
-    #[clap(long, default_value_t = 8080)]
-    port: u16,
-
-    /// Monocle data directory (default: $XDG_DATA_HOME/monocle)
+    /// Address to bind to (overrides config server_address)
     #[clap(long)]
-    data_dir: Option<String>,
+    address: Option<String>,
 
-    /// Maximum concurrent operations per connection (0 = unlimited)
+    /// Port to listen on (overrides config server_port)
     #[clap(long)]
-    max_concurrent_ops: Option<usize>,
+    port: Option<u16>,
 
-    /// Maximum websocket message size in bytes
+    /// Maximum number of elements per SSE batch (overrides config)
     #[clap(long)]
-    max_message_size: Option<usize>,
+    max_search_batch_size: Option<usize>,
 
-    /// Idle timeout in seconds
+    /// Maximum search results per request (0 = unlimited, overrides config)
     #[clap(long)]
-    connection_timeout_secs: Option<u64>,
+    max_search_results: Option<u64>,
 
-    /// Ping interval in seconds
+    /// Search timeout in seconds (0 = no timeout, overrides config)
     #[clap(long)]
-    ping_interval_secs: Option<u64>,
+    search_timeout_secs: Option<u64>,
+
+    /// Enable token auth for /api/v1/* endpoints (overrides config)
+    #[clap(long)]
+    auth_enabled: Option<bool>,
+
+    /// Bearer token for auth (overrides config)
+    #[clap(long)]
+    auth_token: Option<String>,
 }
 
 fn main() {
@@ -189,30 +189,28 @@ fn main() {
             // binary as the entrypoint, but compile this arm only when `server` is enabled.
             #[cfg(feature = "cli")]
             {
-                // Create context from config, optionally overriding the data directory
                 let mut server_config = config.clone();
-                if let Some(data_dir) = args.data_dir {
-                    server_config.data_dir = data_dir;
-                }
 
-                let router = monocle::server::create_router();
-                let context = monocle::server::WsContext::from_config(server_config);
-
-                let mut server_config = monocle::server::ServerConfig::default()
-                    .with_address(args.address)
-                    .with_port(args.port);
-
-                if let Some(v) = args.max_concurrent_ops {
-                    server_config.max_concurrent_ops = v;
+                if let Some(addr) = args.address {
+                    server_config.server_address = addr;
                 }
-                if let Some(v) = args.max_message_size {
-                    server_config.max_message_size = v;
+                if let Some(port) = args.port {
+                    server_config.server_port = port;
                 }
-                if let Some(v) = args.connection_timeout_secs {
-                    server_config.connection_timeout_secs = v;
+                if let Some(v) = args.max_search_batch_size {
+                    server_config.server_max_search_batch_size = v;
                 }
-                if let Some(v) = args.ping_interval_secs {
-                    server_config.ping_interval_secs = v;
+                if let Some(v) = args.max_search_results {
+                    server_config.server_max_search_results = v;
+                }
+                if let Some(v) = args.search_timeout_secs {
+                    server_config.server_search_timeout_secs = v;
+                }
+                if let Some(v) = args.auth_enabled {
+                    server_config.server_auth_enabled = v;
+                }
+                if let Some(v) = args.auth_token {
+                    server_config.server_auth_token = v;
                 }
 
                 // Start server (blocks current thread until shutdown)
@@ -223,11 +221,7 @@ fn main() {
                         std::process::exit(1);
                     }
                 };
-                if let Err(e) = rt.block_on(monocle::server::start_server(
-                    router,
-                    context,
-                    server_config,
-                )) {
+                if let Err(e) = rt.block_on(monocle::server::start_server(server_config)) {
                     eprintln!("Server failed: {e}");
                     std::process::exit(1);
                 }

@@ -27,7 +27,7 @@ cargo run --example <name> --features lib
 | Example | Description |
 |---------|-------------|
 | `database` | Low-level database operations |
-| `ws_client_all` | WebSocket client demo |
+| `sse_browser_test.html` | Browser-based SSE search streaming test page |
 
 ## Usage
 

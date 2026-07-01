@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### Breaking Changes
+
+* Replaced WebSocket server with HTTP/SSE service. The `server` subcommand now
+  starts an HTTP server with REST endpoints and SSE search streaming instead of
+  a WebSocket server. All WebSocket modules (`protocol`, `handler`, `sink`,
+  `op_sink`, `router`, `operations`, `handlers/*`) have been removed.
+* Updated `axum` to 0.8 and `tower-http` to 0.6.
+* Removed `uuid` and `async-trait` dependencies (no longer needed without
+  WebSocket operation tracking).
+* Updated `ServerArgs` CLI flags: removed `--data-dir`, `--max-concurrent-ops`,
+  `--max-message-size`, `--connection-timeout-secs`, `--ping-interval-secs`;
+  added `--max-search-batch-size`, `--max-search-results`, `--search-timeout-secs`.
+  `--address` and `--port` are now optional (default to config values).
+
 ### Performance Improvements
 
 * Optimized database refresh (bulk insert) performance by 21–49% across all
@@ -33,7 +47,59 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
-* Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to `monocle parse`
+* Added HTTP/SSE server with three MVP endpoints:
+  - `GET /health` — health check for container orchestration
+  - `GET /api/v1/system/info` — server metadata and endpoint list
+  - `POST /api/v1/search/stream` — SSE streaming BGP search with progress,
+    element batches, cancellation on disconnect, and max-results limit
+* Added server configuration fields to `MonocleConfig`: `server_address`,
+  `server_port`, `server_max_search_batch_size`, `server_max_search_results`,
+  `server_search_timeout_secs`. All configurable via `monocle.toml` and
+  `MONOCLE_*` environment variables.
+* SSE search streaming uses sequential file processing with `Arc<AtomicBool>`
+  cancellation — no new lens method needed. The server calls existing
+  `SearchFilters` utility methods (`to_broker_items`, `to_parser`) directly.
+* Bounded mpsc channel (capacity 32) with backpressure: element batches are
+  never dropped; progress events may be coalesced under backpressure.
+* Terminal event invariant: exactly one of `completed`, `cancelled`, or `error`.
+* Added Phase 2 REST API endpoints:
+  - Tier 1 (stateless): `POST /time/parse`, `POST /country/lookup`,
+    `POST /ip/lookup`, `GET /ip/public`
+  - Tier 2 (DB read-only, cache-only): `GET /database/status`,
+    `GET /rpki/roa/lookup`, `GET /rpki/aspa/lookup`, `GET /pfx2as/lookup`,
+    `GET /as2rel/relationship`, `POST /as2rel/search`
+  - Tier 3 (DB refresh): `POST /database/refresh`, `POST /inspect/refresh`,
+    `POST /as2rel/refresh`
+  - Tier 4 (composite, cache-only): `POST /rpki/roa/validate`,
+    `POST /inspect/query`
+  ASPA validation (`/rpki/aspa/validate`) is deferred — it requires full
+  AS path validation combined with AS relationship inference data (as2rel),
+  not a simple membership check.
+* Added token-based auth middleware (Phase 3):
+  - Config fields `server_auth_enabled` (default: false) and
+    `server_auth_token` in `MonocleConfig`
+  - CLI flags `--auth-enabled` and `--auth-token`
+  - Env vars `MONOCLE_SERVER_AUTH_ENABLED` and `MONOCLE_SERVER_AUTH_TOKEN`
+  - When enabled, `/api/v1/*` requires `Authorization: Bearer <token>`;
+    `/health` stays open for container health checks
+  - Server refuses to start if auth is enabled but token is empty
+* Added CLI remote search mode (Phase 4):
+  - `--remote-url` flag on `monocle search` sends the query to a remote
+    Monocle HTTP service instead of running locally
+  - `--remote-token` provides the Bearer token for auth
+  - Consumes SSE stream and formats results with existing CLI output
+    formatters (PSV, JSON, table, markdown)
+* Added Docker Compose deployment config (Phase 5):
+  - Updated `Dockerfile` with volume mounts for `/data/monocle` and
+    `/cache/monocle`
+  - `docker-compose.yml` with health check, persistent volumes, and
+    env-based configuration
+  - `monocle.toml.example` showing all service configuration options
+  All DB-backed endpoints return `NOT_INITIALIZED` (HTTP 503) if required
+  data is missing. No refresh policy knobs — users refresh via explicit
+  `/refresh` endpoints.
+
+### Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to `monocle parse`
   and `monocle search` for loading large filter sets from files. File filters merge with
   CLI flags — union within each dimension (OR), AND across dimensions. Supports the
   RIB-extract → filter-updates workflow at scale (#117).
@@ -43,6 +109,21 @@ All notable changes to this project will be documented in this file.
 * Fixed `--time-format rfc3339` being ignored for `json`, `json-line`, and `json-pretty`
   output formats. JSON output now honors `--time-format`: `unix` (default) emits a numeric
   `timestamp` field (backward compatible); `rfc3339` emits an RFC 3339 string (#123).
+* Validated `prefix` input in `pfx2as_lookup` and `roa_lookup` REST endpoints before
+  spawning blocking tasks, so invalid prefixes return 400 instead of 500.
+* Remote search client now exits with a non-zero status when the SSE stream ends
+  with an `error` or `cancelled` event, or when the connection drops without a
+  `completed` event.
+* Docker runtime image now runs as a dedicated non-root `monocle` user.
+* Remote search now applies `--filter-file` / `--prefix-file` merging and filter
+  validation before dispatching, matching local search behavior.
+* Auth middleware now accepts case-insensitive `Bearer` scheme tokens per RFC 7235.
+* `POST /api/v1/database/refresh` with `source=pfx2as` now returns HTTP 501
+  instead of 200, so automation can detect the operation is not implemented.
+* SSE search now returns 400 on invalid `peer_ip` values instead of silently
+  dropping them.
+* `GET /api/v1/rpki/roa/lookup` now applies AND semantics when both `prefix`
+  and `asn` are provided (filters covering ROAs by origin ASN).
 
 ## v1.3.0 - 2026-05-27
 

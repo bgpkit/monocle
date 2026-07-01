@@ -14,7 +14,7 @@
 //! | Feature | Description | Implies |
 //! |---------|-------------|---------|
 //! | `lib` | Complete library (database + all lenses + display) | - |
-//! | `server` | WebSocket server for programmatic API access | `lib` |
+//! | `server` | HTTP/SSE server for programmatic API access | `lib` |
 //! | `cli` | Full CLI binary with all functionality | `lib`, `server` |
 //!
 //! ## Choosing Features
@@ -23,7 +23,7 @@
 //! # Library-only - all lenses and database operations
 //! monocle = { version = "1.0", default-features = false, features = ["lib"] }
 //!
-//! # Library + WebSocket server
+//! # Library + HTTP server
 //! monocle = { version = "1.0", default-features = false, features = ["server"] }
 //!
 //! # Default (full CLI binary)
@@ -50,7 +50,7 @@
 //!   - `as2rel`: AS-level relationships
 //!   - `inspect`: Unified AS/prefix lookup
 //!
-//! - **[`server`]**: WebSocket API server (requires `server` feature)
+//! - **[`server`]**: HTTP/SSE API server (requires `server` feature)
 //!
 //! - **[`config`]**: Configuration management (always available)
 //!
@@ -207,11 +207,8 @@ pub use utils::OutputFormat;
 // =============================================================================
 
 // =============================================================================
-// Server Module (WebSocket API) - requires "server" feature
+// Server Module (HTTP/SSE API) - requires "server" feature
 // =============================================================================
 
 #[cfg(feature = "server")]
-pub use server::{
-    create_router, start_server, Dispatcher, OperationRegistry, Router, ServerConfig, ServerState,
-    WsContext, WsError, WsMethod, WsRequest, WsResult, WsSink,
-};
+pub use server::{start_server, ServerState};

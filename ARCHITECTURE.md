@@ -1,6 +1,6 @@
 # Monocle Architecture
 
-This document describes the architecture of the `monocle` project: a BGP information toolkit that can be used as both a Rust library, a command-line application, and a WebSocket server.
+This document describes the architecture of the `monocle` project: a BGP information toolkit that can be used as both a Rust library, a command-line application, and an HTTP/SSE server.
 
 ## Goals and Design Principles
 
@@ -119,23 +119,21 @@ src/
 │   └── time/                 # Time parsing and formatting
 │       └── mod.rs
 │
-├── server/                   # WebSocket server (requires `server` feature)
-│   ├── mod.rs                # Server startup, handle_socket
-│   ├── protocol.rs           # Core protocol types (RequestEnvelope, ResponseEnvelope)
-│   ├── router.rs             # Router + Dispatcher
-│   ├── handler.rs            # WsMethod trait, WsContext
-│   ├── sink.rs               # WsSink (transport primitive)
-│   ├── op_sink.rs            # WsOpSink (terminal-guarded)
-│   ├── operations.rs         # Operation registry for cancellation
-│   └── handlers/             # Method handlers
+├── server/                   # HTTP/SSE server (requires `server` feature)
+│   ├── mod.rs                # Server state, startup, /health, auth wiring
+│   ├── http.rs               # REST router, API error types, system/info
+│   ├── search.rs             # SSE search streaming handler
+│   ├── auth.rs               # Token auth middleware
+│   └── rest/                 # REST endpoint handlers
 │       ├── mod.rs
-│       ├── inspect.rs        # inspect.query, inspect.refresh
-│       ├── rpki.rs           # rpki.validate, rpki.roas, rpki.aspas
-│       ├── as2rel.rs         # as2rel.search, as2rel.relationship
-│       ├── database.rs       # database.status, database.refresh
-│       ├── parse.rs          # parse.start, parse.cancel (streaming)
-│       ├── search.rs         # search.start, search.cancel (streaming)
-│       └── ...
+│       ├── time.rs           # time/parse
+│       ├── country.rs        # country/lookup
+│       ├── ip.rs             # ip/lookup, ip/public
+│       ├── rpki.rs           # rpki/roa/lookup, rpki/aspa/lookup, rpki/roa/validate
+│       ├── pfx2as.rs         # pfx2as/lookup
+│       ├── as2rel.rs         # as2rel/search, as2rel/relationship, as2rel/refresh
+│       ├── inspect.rs        # inspect/query
+│       └── database.rs       # database/status, database/refresh, inspect/refresh
 │
 └── bin/
     ├── monocle.rs            # CLI entry point
@@ -190,23 +188,28 @@ The Pfx2as repository (`Pfx2asRepository`) provides:
 
 Note: The file-based cache has been removed; all pfx2as data now uses SQLite.
 
-### `server` - WebSocket API
+### `server` - HTTP/SSE API
 
-The WebSocket server (`monocle server`) provides programmatic access to monocle functionality:
+The HTTP/SSE server (`monocle server`) provides programmatic access to monocle functionality:
 
-- **Protocol**: JSON-RPC style with request/response envelopes
-- **Streaming**: Progress updates for long-running operations (parse, search)
-- **Terminal guard**: `WsOpSink` ensures exactly one terminal response per operation
-- **Operation tracking**: `OperationRegistry` for cancellation support via `op_id`
-- **DB-first policy**: Queries read from local SQLite cache
+- **Protocol**: HTTP REST with JSON request/response bodies
+- **Streaming**: SSE (`text/event-stream`) for search with progress, element batches, and terminal events
+- **Cancellation**: Client closes HTTP connection; server detects drop via `Arc<AtomicBool>`
+- **Backpressure**: Bounded mpsc channel (capacity 32); element batches never dropped
+- **Terminal invariant**: Exactly one terminal event (`completed`, `cancelled`, or `error`)
+- **Auth**: Optional token-based middleware (`Authorization: Bearer <token>`)
+- **DB access**: Per-request `MonocleDatabase` in `spawn_blocking` (connection is `!Send`)
 
-Available method namespaces:
-- `system.*`: Server introspection (info, methods)
-- `time.*`, `ip.*`, `country.*`: Utility lookups
-- `rpki.*`, `as2rel.*`, `pfx2as.*`: BGP data queries
-- `inspect.*`: Unified AS/prefix inspection
-- `parse.*`, `search.*`: Streaming MRT operations
-- `database.*`: Database management
+Available endpoint groups:
+- `/health`: Health check (always open)
+- `/api/v1/system/*`: Server introspection
+- `/api/v1/search/*`: SSE streaming BGP search
+- `/api/v1/time/*`, `/api/v1/ip/*`, `/api/v1/country/*`: Utility lookups
+- `/api/v1/rpki/*`: RPKI ROA/ASPA lookup and validation
+- `/api/v1/as2rel/*`: AS relationship queries
+- `/api/v1/pfx2as/*`: Prefix-to-ASN mapping
+- `/api/v1/inspect/*`: Unified AS/prefix inspection
+- `/api/v1/database/*`: Database status and refresh
 
 ## Module Architecture
 
@@ -309,13 +312,14 @@ The CLI should not duplicate core logic. It should:
 3. Application calls lens methods
 4. Application consumes typed results directly, or uses `OutputFormat` to format for display
 
-### WebSocket flow (conceptual)
+### HTTP/SSE flow (conceptual)
 
-1. Client connects and sends JSON request envelope
-2. Router dispatches to appropriate handler
-3. Handler creates lens with database reference
-4. Lens executes operation (may send progress via `WsOpSink`)
-5. Handler sends terminal result/error via `WsOpSink`
+1. Client sends HTTP request (POST with JSON body, or GET)
+2. Axum router dispatches to handler
+3. Handler opens `MonocleDatabase` in `spawn_blocking` (for DB-backed endpoints)
+4. Handler calls lens methods, formats result as JSON response
+5. For search: handler returns `Sse` stream; worker sends events via bounded channel
+6. Client disconnect cancels the search worker via `Arc<AtomicBool>`
 
 ## Feature Flags
 
@@ -332,7 +336,7 @@ cli (default)
 
 **Quick Guide:**
 - **Need the CLI binary?** Use `cli` (includes everything)
-- **Need WebSocket server without CLI?** Use `server` (includes lib)
+- **Need HTTP/SSE server without CLI?** Use `server` (includes lib)
 - **Need only library/data access?** Use `lib` (database + all lenses + display)
 
 ### Feature Descriptions
@@ -340,7 +344,7 @@ cli (default)
 | Feature | Description | Key Dependencies |
 |---------|-------------|------------------|
 | `lib` | Complete library: database + all lenses + display | `rusqlite`, `bgpkit-parser`, `bgpkit-broker`, `tabled`, etc. |
-| `server` | WebSocket server (implies `lib`) | `axum`, `tokio`, `serde_json` |
+| `server` | HTTP/SSE server (implies `lib`) | `axum`, `tokio`, `serde_json` |
 | `cli` | Full CLI binary with progress bars (implies `lib` and `server`) | `clap`, `indicatif` |
 
 ### Use Case Scenarios
@@ -366,28 +370,30 @@ let lens = InspectLens::new(&db);
 let result = lens.query("AS13335", &InspectQueryOptions::default())?;
 ```
 
-#### Scenario 2: Library with WebSocket Server
+#### Scenario 2: Library with HTTP/SSE Server
 **Features**: `server`
 
 Use when building applications that need:
 - Everything in `lib`
-- WebSocket server for remote API access
+- HTTP/SSE server for remote API access
 
 ```toml
 monocle = { version = "1.1", default-features = false, features = ["server"] }
 ```
 
 ```rust
+use monocle::config::MonocleConfig;
 use monocle::server::start_server;
 
-// Start WebSocket server on default port
-start_server("127.0.0.1:3000").await?;
+let config = MonocleConfig::new(&None)?;
+// Start HTTP/SSE server on default port
+start_server(config).await?;
 ```
 
 #### Scenario 3: CLI Binary (Default)
 **Features**: `cli` (default)
 
-The full CLI binary with all features, WebSocket server, and terminal UI:
+The full CLI binary with all features, HTTP/SSE server, and terminal UI:
 
 ```toml
 monocle = "1.1"
@@ -407,7 +413,7 @@ All of these combinations compile successfully:
 |-------------|----------|
 | (none) | Config types only, no functionality |
 | `lib` | Full library functionality |
-| `server` | Library + WebSocket server |
+| `server` | Library + HTTP/SSE server |
 | `cli` | Full CLI (includes everything) |
 
 ### Feature Dependencies
@@ -422,7 +428,7 @@ When you enable a higher-tier feature, lower-tier features are automatically inc
 - `README.md` — user-facing CLI and library overview
 - `CHANGELOG.md` — version history and breaking changes
 - `DEVELOPMENT.md` — contributor guide for adding lenses and fixing bugs
-- `src/server/README.md` — WebSocket API protocol specification
+- `src/server/README.md` — HTTP/SSE API specification
 - `src/database/README.md` — database module notes
 - `src/lens/README.md` — lens module patterns and conventions
 - `examples/README.md` — example code organized by feature tier

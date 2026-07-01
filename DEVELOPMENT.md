@@ -52,12 +52,12 @@ src/
 │       ├── rpki.rs           # RPKI ROA/ASPA (blob-based prefix storage)
 │       └── pfx2as.rs         # Prefix-to-ASN (blob-based prefix storage)
 │
-├── server/                   # WebSocket server (requires `server` feature)
-│   ├── mod.rs                # Server startup, handle_socket
-│   ├── protocol.rs           # Core protocol types
-│   ├── router.rs             # Router + Dispatcher
-│   ├── handler.rs            # WsMethod trait, WsContext
-│   └── handlers/             # Method handlers
+├── server/                   # HTTP/SSE server (requires `server` feature)
+│   ├── mod.rs                # Server state, startup, /health, auth wiring
+│   ├── http.rs               # REST router, API error types
+│   ├── search.rs             # SSE search streaming handler
+│   ├── auth.rs               # Token auth middleware
+│   └── rest/                 # REST endpoint handlers
 │       ├── inspect.rs        # inspect.query, inspect.refresh
 │       ├── rpki.rs           # rpki.validate, rpki.roas, rpki.aspas
 │       ├── as2rel.rs         # as2rel.search, as2rel.relationship
@@ -333,7 +333,7 @@ Use this guide to locate where to make changes for specific issues:
 | Argument parsing | `src/lens/{lens_name}/args.rs` | Args struct and validation |
 | Output formatting | `src/lens/{lens_name}/mod.rs` or `src/lens/utils.rs` | Format methods |
 | CLI behavior | `src/bin/commands/{lens_name}.rs` | CLI handler |
-| WebSocket handler | `src/server/handlers/{handler}.rs` | WebSocket method handler |
+| REST handler | `src/server/rest/{handler}.rs` | HTTP endpoint handler |
 | Database queries | `src/database/monocle/{table}.rs` | Repository implementation |
 | Schema issues | `src/database/core/schema.rs` | Schema definitions |
 | Configuration | `src/config.rs` | Config loading |
@@ -505,7 +505,7 @@ pub mod my_lens;
 
 Feature tiers (simplified):
 - `lib`: Complete library (database + all lenses + display)
-- `server`: WebSocket server (implies lib)
+- `server`: HTTP/SSE server (implies lib)
 - `cli`: Full CLI binary (implies lib and server)
 
 ### Output Formatting
@@ -532,15 +532,15 @@ Before submitting a PR for a new lens:
 - [ ] Documentation with examples
 - [ ] Module exported in `src/lens/mod.rs`
 - [ ] CLI command (if applicable)
-- [ ] WebSocket handler (if applicable)
+- [ ] REST handler (if applicable)
 - [ ] README updated with new lens description
-- [ ] `src/server/README.md` updated (if adding WebSocket handler)
+- [ ] `src/server/README.md` updated (if adding REST endpoint)
 
 ## Getting Help
 
 - Check existing lens implementations for patterns
 - Review `src/lens/README.md` for lens architecture
 - Review `ARCHITECTURE.md` for overall project structure
-- Review `src/server/README.md` for WebSocket API patterns
+- Review `src/server/README.md` for HTTP/SSE API patterns
 - Check `examples/README.md` for usage examples by feature tier
 - Open an issue for design questions before implementing

@@ -97,7 +97,7 @@ pub struct MyResult { ... }
 
 Feature flags (3 simple options):
 - `lib`: Complete library (database + all lenses + display)
-- `server`: WebSocket server (implies lib)
+- `server`: HTTP/SSE server (implies lib)
 - `cli`: Full CLI binary (implies lib and server)
 
 ## Project Structure
@@ -118,8 +118,11 @@ src/
 │   ├── search/         # BGP search
 │   ├── rpki/           # RPKI validation
 │   └── inspect/        # Unified inspection
-├── server/             # WebSocket server (requires `server` feature)
-│   └── handlers/       # Method handlers
+├── server/             # HTTP/SSE server (requires `server` feature)
+│   ├── http.rs         # REST router, API error types
+│   ├── search.rs       # SSE search streaming handler
+│   ├── auth.rs         # Token auth middleware
+│   └── rest/           # REST endpoint handlers (time, ip, rpki, etc.)
 └── bin/
     ├── monocle.rs      # CLI entry point
     └── commands/       # CLI command handlers
@@ -209,5 +212,5 @@ impl<'a> MyLens<'a> {
 
 - `ARCHITECTURE.md` - Overall project structure
 - `DEVELOPMENT.md` - Adding new lenses and fixing bugs
-- `src/server/README.md` - WebSocket API specification
+- `src/server/README.md` - HTTP/SSE API specification
 - `examples/README.md` - Usage examples by feature tier

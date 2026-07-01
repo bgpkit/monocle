@@ -1,61 +1,57 @@
-# Docker Compose configuration for monocle
+# Monocle HTTP/SSE Service
 #
 # Usage:
-#   docker compose up -d              # Start server in background
-#   docker compose run monocle <cmd>  # Run a one-off command
-#   docker compose logs -f            # View logs
-#   docker compose down               # Stop and remove containers
-#
-# Examples:
-#   docker compose run monocle inspect 13335
-#   docker compose run monocle search --start-ts "1 hour ago" --prefix 1.1.1.0/24
-#   docker compose run monocle rpki validate 13335 1.1.1.0/24
+#   docker compose up -d
+#   curl http://localhost:8080/health
+#   curl -N -H 'Accept: text/event-stream' \
+#     -H 'Content-Type: application/json' \
+#     -d '{"filters":{"start_ts":"2024-01-01T00:00:00Z","end_ts":"2024-01-01T00:01:00Z","collector":"rrc00","project":"riperis","dump_type":"updates"},"batch_size":100}' \
+#     http://localhost:8080/api/v1/search/stream
 
 services:
   monocle:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: bgpkit/monocle:latest
+    build: .
+    image: monocle:latest
     container_name: monocle
-
-    # Persist monocle data (database, config) across container restarts
-    volumes:
-      - monocle-data:/data
-
-    # Server mode configuration
+    restart: unless-stopped
     ports:
       - "8080:8080"
-
-    # Override default command to run the WebSocket server
-    # Comment this out if you want to use monocle as a CLI tool only
-    command: ["server", "--address", "0.0.0.0", "--port", "8080"]
-
-    # Environment variables
+    volumes:
+      # Persistent data (SQLite database for RPKI, AS2Rel, Pfx2as, ASInfo)
+      - monocle-data:/data/monocle
+      # Cache directory (MRT file cache if used)
+      - monocle-cache:/cache/monocle
     environment:
-      - MONOCLE_DATA_DIR=/data
-      # Uncomment to accept invalid TLS certificates (useful for corporate proxies)
-      # - ONEIO_ACCEPT_INVALID_CERTS=true
+      # Server config
+      MONOCLE_SERVER_ADDRESS: "0.0.0.0"
+      MONOCLE_SERVER_PORT: "8080"
+      MONOCLE_DATA_DIR: "/data/monocle"
 
-    # Health check for server mode
+      # Search limits
+      MONOCLE_SERVER_MAX_SEARCH_BATCH_SIZE: "100"
+      MONOCLE_SERVER_MAX_SEARCH_RESULTS: "10000"
+      MONOCLE_SERVER_SEARCH_TIMEOUT_SECS: "300"
+
+      # Auth (uncomment to enable)
+      # MONOCLE_SERVER_AUTH_ENABLED: "true"
+      # MONOCLE_SERVER_AUTH_TOKEN: "change-me"
+
+      # Cache TTLs (in seconds, default: 7 days = 604800)
+      # MONOCLE_ASINFO_CACHE_TTL_SECS: "604800"
+      # MONOCLE_AS2REL_CACHE_TTL_SECS: "604800"
+      # MONOCLE_RPKI_CACHE_TTL_SECS: "604800"
+      # MONOCLE_PFX2AS_CACHE_TTL_SECS: "604800"
+
+      # RPKI RTR endpoint (optional, overrides Cloudflare JSON API for ROAs)
+      # MONOCLE_RPKI_RTR_HOST: "rtr.rpki.cloudflare.com"
+      # MONOCLE_RPKI_RTR_PORT: "8282"
     healthcheck:
-      test: ["CMD", "monocle", "--help"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
       start_period: 10s
 
-    # Resource limits (optional, adjust as needed)
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 256M
-
-    # Restart policy
-    restart: unless-stopped
-
 volumes:
   monocle-data:
-    driver: local
+  monocle-cache:
