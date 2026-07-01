@@ -48,15 +48,29 @@ pub async fn roa_lookup(
             }
 
             let records: Vec<RpkiRoaEntryResponse> = if let Some(asn) = asn {
-                rpki.get_roas_by_asn(asn)?
-                    .into_iter()
-                    .map(|r| RpkiRoaEntryResponse {
-                        prefix: r.prefix,
-                        max_length: r.max_length,
-                        origin_asn: r.origin_asn,
-                        ta: r.ta,
-                    })
-                    .collect()
+                if let Some(ref prefix) = prefix {
+                    // Both asn and prefix: intersect covering ROAs with origin_asn
+                    rpki.get_covering_roas(prefix)?
+                        .into_iter()
+                        .filter(|r| r.origin_asn == asn)
+                        .map(|r| RpkiRoaEntryResponse {
+                            prefix: r.prefix,
+                            max_length: r.max_length,
+                            origin_asn: r.origin_asn,
+                            ta: r.ta,
+                        })
+                        .collect()
+                } else {
+                    rpki.get_roas_by_asn(asn)?
+                        .into_iter()
+                        .map(|r| RpkiRoaEntryResponse {
+                            prefix: r.prefix,
+                            max_length: r.max_length,
+                            origin_asn: r.origin_asn,
+                            ta: r.ta,
+                        })
+                        .collect()
+                }
             } else if let Some(_prefix) = prefix {
                 // For prefix filtering, use the lens which handles this
                 let mut lens = RpkiLens::new(&db);

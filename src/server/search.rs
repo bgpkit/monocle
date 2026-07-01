@@ -107,8 +107,11 @@ impl TryFrom<SearchStreamFilters> for SearchFilters {
             peer_ip: f
                 .peer_ip
                 .into_iter()
-                .filter_map(|s| s.parse().ok())
-                .collect(),
+                .map(|s| {
+                    s.parse()
+                        .map_err(|e| anyhow::anyhow!("invalid peer_ip '{}': {}", s, e))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?,
             peer_asn: f.peer_asn,
             communities: f.communities,
             elem_type: match f.elem_type.as_deref() {

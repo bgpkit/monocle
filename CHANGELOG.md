@@ -120,6 +120,10 @@ All notable changes to this project will be documented in this file.
 * Auth middleware now accepts case-insensitive `Bearer` scheme tokens per RFC 7235.
 * `POST /api/v1/database/refresh` with `source=pfx2as` now returns HTTP 501
   instead of 200, so automation can detect the operation is not implemented.
+* SSE search now returns 400 on invalid `peer_ip` values instead of silently
+  dropping them.
+* `GET /api/v1/rpki/roa/lookup` now applies AND semantics when both `prefix`
+  and `asn` are provided (filters covering ROAs by origin ASN).
 
 ## v1.3.0 - 2026-05-27
 
