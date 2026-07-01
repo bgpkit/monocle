@@ -262,8 +262,9 @@ impl<'a> Pfx2asRepository<'a> {
 
     /// Store Pfx2as records
     ///
-    /// This method clears and reinserts all data within a single transaction,
-    /// ensuring the data remains accessible by APIs during the refresh.
+    /// All operations (drop indexes, clear, insert, recreate indexes) happen
+    /// inside a single transaction so that either the entire refresh succeeds
+    /// atomically, or the database rolls back to its previous indexed state.
     ///
     /// Performance: indexes are dropped before the bulk insert and rebuilt
     /// afterward in a single pass, which is significantly faster than updating
@@ -272,64 +273,68 @@ impl<'a> Pfx2asRepository<'a> {
         // Ensure schema exists
         self.initialize_schema()?;
 
+        // Everything below is in one transaction so failures roll back to the
+        // previous state (with original indexes intact).
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| anyhow!("Failed to begin transaction: {}", e))?;
+
         // Drop indexes before bulk insert — rebuilding them once at the end is
         // much faster than maintaining them per-row.
         for idx in &Self::INDEX_NAMES {
-            self.conn
-                .execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+            tx.execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
                 .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
         }
 
-        // Begin transaction - all changes are atomic, data remains accessible until commit
-        self.conn.execute("BEGIN IMMEDIATE TRANSACTION", [])?;
-
-        // Clear existing data within the transaction
-        self.conn
-            .execute("DELETE FROM pfx2as", [])
+        // Clear existing data
+        tx.execute("DELETE FROM pfx2as", [])
             .map_err(|e| anyhow!("Failed to clear pfx2as table: {}", e))?;
-        self.conn
-            .execute("DELETE FROM pfx2as_meta", [])
+        tx.execute("DELETE FROM pfx2as_meta", [])
             .map_err(|e| anyhow!("Failed to clear pfx2as_meta table: {}", e))?;
 
         // Insert records (plain INSERT — table was just cleared, no PK conflicts)
-        let mut stmt = self.conn.prepare(
-            "INSERT INTO pfx2as (prefix_start, prefix_end, prefix_length, origin_asn, prefix_str, validation)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        )?;
-
         let mut inserted = 0usize;
         let mut unique_prefixes = HashSet::new();
 
-        for record in records {
-            if let Ok((start, end, prefix_len)) = parse_prefix_to_range(&record.prefix) {
-                stmt.execute(params![
-                    start.as_slice(),
-                    end.as_slice(),
-                    prefix_len,
-                    record.origin_asn,
-                    record.prefix,
-                    record.validation,
-                ])?;
-                unique_prefixes.insert(record.prefix.clone());
-                inserted += 1;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO pfx2as (prefix_start, prefix_end, prefix_length, origin_asn, prefix_str, validation)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+
+            for record in records {
+                if let Ok((start, end, prefix_len)) = parse_prefix_to_range(&record.prefix) {
+                    stmt.execute(params![
+                        start.as_slice(),
+                        end.as_slice(),
+                        prefix_len,
+                        record.origin_asn,
+                        record.prefix,
+                        record.validation,
+                    ])?;
+                    unique_prefixes.insert(record.prefix.clone());
+                    inserted += 1;
+                }
             }
         }
 
         // Update metadata
         let now = Utc::now().timestamp();
-        self.conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO pfx2as_meta (id, updated_at, source, prefix_count, record_count) VALUES (1, ?1, ?2, ?3, ?4)",
             params![now, source, unique_prefixes.len(), inserted],
         )?;
 
-        self.conn.execute("COMMIT", [])?;
-
-        // Recreate indexes in one efficient pass after all data is inserted
+        // Recreate indexes in one efficient pass — still inside the transaction
+        // so the refresh is atomic (data + indexes appear together at commit).
         for sql in Pfx2asSchemaDefinitions::PFX2AS_INDEXES {
-            self.conn
-                .execute(sql, [])
+            tx.execute(sql, [])
                 .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
         }
+
+        tx.commit()
+            .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
 
         info!(
             "Stored {} Pfx2as records ({} unique prefixes) in database",

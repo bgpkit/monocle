@@ -513,10 +513,8 @@ impl<'a> As2relRepository<'a> {
     ///
     /// Uses optimized batch insert with:
     /// - Indexes dropped before insert and rebuilt after (faster than per-row maintenance)
-    /// - Single transaction for all inserts
+    /// - Single transaction wrapping clear + drop + insert + reindex for atomicity
     pub fn load_from_path(&self, path: &str) -> Result<usize> {
-        self.clear()?;
-
         info!("Loading AS2Rel data from {}...", path);
 
         // Load entries from the JSON file
@@ -531,19 +529,24 @@ impl<'a> As2relRepository<'a> {
         // Find max peers count for normalization
         let max_peers = entries.iter().map(|e| e.peers_count).max().unwrap_or(0);
 
-        // Drop indexes before bulk insert — rebuilding once at the end is faster
-        // than maintaining the B-tree on every row.
-        for idx in &Self::INDEX_NAMES {
-            self.conn
-                .execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
-                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
-        }
-
-        // Use a transaction for all inserts
+        // Everything below is in one transaction so failures roll back to the
+        // previous state (with original indexes intact).
         let tx = self
             .conn
             .unchecked_transaction()
             .map_err(|e| anyhow!("Failed to begin transaction: {}", e))?;
+
+        // Clear existing data
+        tx.execute("DELETE FROM as2rel", [])
+            .map_err(|e| anyhow!("Failed to clear as2rel: {}", e))?;
+        tx.execute("DELETE FROM as2rel_meta", [])
+            .map_err(|e| anyhow!("Failed to clear as2rel_meta: {}", e))?;
+
+        // Drop indexes before bulk insert — rebuilding once at the end is faster
+        for idx in &Self::INDEX_NAMES {
+            tx.execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
+        }
 
         let entry_count = entries.len();
 
@@ -577,15 +580,14 @@ impl<'a> As2relRepository<'a> {
             )?;
         }
 
-        tx.commit()
-            .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
-
-        // Recreate indexes in one efficient pass after all data is inserted
+        // Recreate indexes — still inside the transaction so the refresh is atomic
         for sql in Self::INDEX_SQL {
-            self.conn
-                .execute(sql, [])
+            tx.execute(sql, [])
                 .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
         }
+
+        tx.commit()
+            .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
 
         info!("AS2Rel data loading finished: {} entries", entry_count);
 
@@ -1078,36 +1080,38 @@ mod tests {
 
     #[test]
     fn test_store_rebuilds_indexes_correctly() {
-        // Verify that after load_from_path, the 2 as2rel indexes exist.
+        // Verify that after load_from_path, the 2 as2rel indexes exist and
+        // queries work correctly. Uses a real JSON fixture file.
         let db = setup_test_db();
         let repo = As2relRepository::new(&db.conn);
 
-        // Insert test data directly to have something in the table
-        db.conn
-            .execute(
-                "INSERT INTO as2rel (asn1, asn2, paths_count, peers_count, rel) VALUES (65000, 65001, 100, 10, 0)",
-                [],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                "INSERT INTO as2rel_meta (id, file_url, last_updated, max_peers_count) VALUES (1, 'test', 1, 100)",
-                [],
-            )
-            .unwrap();
+        // Write a small JSON fixture that matches the As2relEntry format
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("as2rel.json");
+        let entries = vec![
+            As2relEntry {
+                asn1: 65000,
+                asn2: 65001,
+                paths_count: 100,
+                peers_count: 10,
+                rel: 0,
+            },
+            As2relEntry {
+                asn1: 65000,
+                asn2: 65002,
+                paths_count: 200,
+                peers_count: 20,
+                rel: 1,
+            },
+        ];
+        let json = serde_json::to_string(&entries).unwrap();
+        std::fs::write(&path, json).unwrap();
 
-        // Manually drop indexes to simulate the state before rebuild
-        db.conn
-            .execute_batch(
-                "DROP INDEX IF EXISTS idx_as2rel_asn1; DROP INDEX IF EXISTS idx_as2rel_asn2;",
-            )
-            .unwrap();
+        // Call the real load_from_path — exercises clear + drop + insert + reindex
+        let count = repo.load_from_path(path.to_str().unwrap()).unwrap();
+        assert_eq!(count, 2);
 
-        // Recreate them (simulating what load_from_path does at the end)
-        for sql in As2relRepository::INDEX_SQL {
-            db.conn.execute(sql, []).unwrap();
-        }
-
+        // Verify both indexes exist after load
         let index_count: i64 = db
             .conn
             .query_row(
@@ -1116,10 +1120,13 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(index_count, 2, "expected 2 as2rel indexes after rebuild");
+        assert_eq!(
+            index_count, 2,
+            "expected 2 as2rel indexes after load_from_path"
+        );
 
-        // Queries should work
+        // Queries should work via the rebuilt indexes
         let results = repo.search_asn(65000).unwrap();
-        assert_eq!(results.len(), 1);
+        assert_eq!(results.len(), 2);
     }
 }

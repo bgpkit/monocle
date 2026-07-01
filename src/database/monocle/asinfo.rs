@@ -294,28 +294,40 @@ impl<'a> AsinfoRepository<'a> {
     /// Indexes are dropped before the bulk insert and rebuilt afterward,
     /// which is faster than maintaining them per-row. Since the tables are
     /// cleared before insert, plain INSERT is used (no OR REPLACE needed).
+    /// All operations (clear, drop indexes, insert, recreate indexes) are
+    /// wrapped in a single transaction so the refresh is atomic.
     pub fn store_from_jsonl(
         &self,
         records: &[JsonlRecord],
         source_url: &str,
     ) -> Result<AsinfoStoreCounts> {
-        // Clear existing data first
-        self.clear()?;
-
         let mut counts = AsinfoStoreCounts::default();
 
-        // Drop indexes before bulk insert — rebuilding once at the end is faster
-        for idx in &Self::INDEX_NAMES {
-            self.conn
-                .execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
-                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
-        }
-
-        // Use a transaction for all inserts
+        // Everything below is in one transaction so failures roll back to the
+        // previous state (with original indexes intact).
         let tx = self
             .conn
             .unchecked_transaction()
             .map_err(|e| anyhow!("Failed to begin transaction: {}", e))?;
+
+        // Clear existing data
+        for table in [
+            "asinfo_core",
+            "asinfo_as2org",
+            "asinfo_peeringdb",
+            "asinfo_hegemony",
+            "asinfo_population",
+            "asinfo_meta",
+        ] {
+            tx.execute_batch(&format!("DELETE FROM {}", table))
+                .map_err(|e| anyhow!("Failed to clear {}: {}", table, e))?;
+        }
+
+        // Drop indexes before bulk insert — rebuilding once at the end is faster
+        for idx in &Self::INDEX_NAMES {
+            tx.execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
+        }
 
         {
             // Prepare statements (plain INSERT — tables were just cleared)
@@ -395,15 +407,14 @@ impl<'a> AsinfoRepository<'a> {
             )?;
         }
 
-        tx.commit()
-            .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
-
-        // Recreate indexes in one efficient pass after all data is inserted
+        // Recreate indexes — still inside the transaction so the refresh is atomic
         for sql in AsinfoSchemaDefinitions::ASINFO_INDEXES {
-            self.conn
-                .execute(sql, [])
+            tx.execute(sql, [])
                 .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
         }
+
+        tx.commit()
+            .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
 
         info!(
             "ASInfo data loaded: {} core, {} as2org, {} peeringdb, {} hegemony, {} population",

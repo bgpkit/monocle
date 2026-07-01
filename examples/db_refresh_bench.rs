@@ -240,12 +240,10 @@ fn bench_as2rel(real: Option<&str>) -> anyhow::Result<()> {
 
         let n = entries.len();
 
-        // Store-only timing using the internal store path. We reuse
-        // load_from_path on a re-serialized temp file to exercise the exact
-        // production code (clear + PRAGMA toggle + insert + restore), then
-        // also do a store-only measurement via a second in-memory db.
-        // Simpler: measure load_from_path on the real file (parse+store
-        // combined) and subtract the parse_ms we already measured.
+        // Store-only timing: load_from_path exercises the real production code
+        // (clear + drop indexes + insert + recreate indexes, all in one
+        // transaction). We measure parse+store combined and subtract the
+        // parse_ms we already measured to isolate store time.
         let db2 = MonocleDatabase::open_in_memory()?;
         let t0 = Instant::now();
         let loaded = db2.as2rel().load_from_path(path)?;
@@ -493,31 +491,28 @@ fn bench_queries(pfx2as_file: Option<&str>) -> anyhow::Result<()> {
         })
         .collect();
 
-    // --- Scenario A: all 5 indexes (current optimized store) ---
+    // --- Scenario A: 5 indexes (legacy set, created manually for comparison) ---
+    // The production code now uses 3 indexes by default. We manually create
+    // the two removed indexes to measure the legacy query performance.
     let db_a = MonocleDatabase::open_in_memory()?;
     db_a.pfx2as().initialize_schema()?;
     db_a.pfx2as().store(&records, path)?;
+    // Add back the two legacy indexes for comparison
+    db_a.connection().execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_str ON pfx2as(prefix_str);
+             CREATE INDEX IF NOT EXISTS idx_pfx2as_validation ON pfx2as(validation);",
+    )?;
 
-    // --- Scenario B: only 3 indexes (drop validation + prefix_str) ---
+    // --- Scenario B: 3 indexes (current production default) ---
     let db_b = MonocleDatabase::open_in_memory()?;
     db_b.pfx2as().initialize_schema()?;
-    // Drop the two low-value indexes
-    db_b.connection().execute_batch(
-        "DROP INDEX IF EXISTS idx_pfx2as_validation;
-         DROP INDEX IF EXISTS idx_pfx2as_prefix_str;",
-    )?;
-    // Re-store with the reduced index set (store will drop/recreate all
-    // indexes, so we need to manually re-store and then drop the two again)
     db_b.pfx2as().store(&records, path)?;
-    db_b.connection().execute_batch(
-        "DROP INDEX IF EXISTS idx_pfx2as_validation;
-         DROP INDEX IF EXISTS idx_pfx2as_prefix_str;",
-    )?;
 
     println!("{:<32} {:>12} {:>12}", "query", "5_idx_ms", "3_idx_ms");
     println!("{}", "-".repeat(58));
 
-    // Query 1: lookup_exact (uses prefix_str index in scenario A, full scan in B)
+    // Query 1: lookup_exact — now uses BLOB range index in both scenarios.
+    // In scenario A the legacy prefix_str text index also exists but is not used.
     let test_prefix = "1.1.1.0/24";
     let t = Instant::now();
     let r_a = db_a.pfx2as().lookup_exact(test_prefix)?;
@@ -531,12 +526,13 @@ fn bench_queries(pfx2as_file: Option<&str>) -> anyhow::Result<()> {
         "lookup_exact(\"1.1.1.0/24\")", ms_a, ms_b
     );
 
-    // Query 1b: lookup_exact rewritten to use BLOB range index (no prefix_str needed)
+    // Query 1b: manual SQL equivalent of lookup_exact (BLOB range match).
+    // This confirms the rewritten lookup_exact uses the same access path.
     let (bs, be, bl) = parse_prefix_to_range("1.1.1.0/24")?;
     let t = Instant::now();
     let r_blob: Vec<u32> = {
         let mut stmt = db_b.connection().prepare(
-            "SELECT DISTINCT origin_asn FROM pfx2as WHERE prefix_start = ?1 AND prefix_end = ?2 AND prefix_length = ?3"
+            "SELECT DISTINCT origin_asn FROM pfx2as WHERE prefix_start = ?1 AND prefix_end = ?2 AND prefix_length = ?3",
         )?;
         let rows = stmt.query_map(rusqlite::params![bs.as_slice(), be.as_slice(), bl], |r| {
             r.get(0)
@@ -547,7 +543,7 @@ fn bench_queries(pfx2as_file: Option<&str>) -> anyhow::Result<()> {
     assert_eq!(r_blob, r_b);
     println!(
         "{:<32} {:>12} {:>12}",
-        "  → rewritten with BLOB index", 0, ms_blob
+        "  → manual SQL (BLOB range)", 0, ms_blob
     );
 
     // Query 2: lookup_longest (uses prefix_range BLOB index — kept in both)
@@ -602,21 +598,27 @@ fn bench_queries(pfx2as_file: Option<&str>) -> anyhow::Result<()> {
     let ms_b = ms(t.elapsed());
     println!("{:<32} {:>12} {:>12}", "record_count()", ms_a, ms_b);
 
-    // --- Store time comparison with 3 vs 5 indexes ---
+    // --- Store time comparison: 3 indexes (current) vs 5 indexes (legacy) ---
     println!();
-    println!("--- Store time: 5 indexes vs 3 indexes ---");
+    println!("--- Store time: 3 indexes (current) vs 5 indexes (legacy) ---");
+
+    // 3-index store (current production code)
     let db_c = MonocleDatabase::open_in_memory()?;
     db_c.pfx2as().initialize_schema()?;
     let t = Instant::now();
     db_c.pfx2as().store(&records, path)?;
-    let ms_5 = ms(t.elapsed());
+    let ms_3 = ms(t.elapsed());
 
-    // For 3-index store, we need to modify the store to skip 2 indexes.
-    // Since we can't easily do that without code changes, we measure
-    // insert-only + rebuild 3 indexes manually.
+    // 5-index store: manually add the two legacy indexes, then do a
+    // full drop-insert-rebuild cycle with all 5 to measure rebuild cost.
     let db_d = MonocleDatabase::open_in_memory()?;
     db_d.pfx2as().initialize_schema()?;
-    // Drop all indexes first
+    db_d.pfx2as().store(&records, path)?;
+    db_d.connection().execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_str ON pfx2as(prefix_str);
+             CREATE INDEX IF NOT EXISTS idx_pfx2as_validation ON pfx2as(validation);",
+    )?;
+    // Now drop all 5 indexes and re-insert + rebuild 5
     for idx in [
         "idx_pfx2as_prefix_range",
         "idx_pfx2as_origin_asn",
@@ -651,30 +653,27 @@ fn bench_queries(pfx2as_file: Option<&str>) -> anyhow::Result<()> {
     db_d.connection().execute_batch("COMMIT")?;
     let insert_ms = ms(t.elapsed());
 
-    // Rebuild only 3 indexes (skip validation + prefix_str)
+    // Rebuild all 5 indexes (including the 2 legacy ones)
     let t = Instant::now();
     for sql in [
         "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_range ON pfx2as(prefix_start, prefix_end)",
         "CREATE INDEX IF NOT EXISTS idx_pfx2as_origin_asn ON pfx2as(origin_asn)",
         "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_length ON pfx2as(prefix_length)",
+        "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_str ON pfx2as(prefix_str)",
+        "CREATE INDEX IF NOT EXISTS idx_pfx2as_validation ON pfx2as(validation)",
     ] {
         db_d.connection().execute_batch(sql)?;
     }
-    let reindex_3_ms = ms(t.elapsed());
-    let ms_3 = insert_ms + reindex_3_ms;
+    let reindex_5_ms = ms(t.elapsed());
+    let ms_5 = insert_ms + reindex_5_ms;
 
+    println!("  3 indexes (current): {} ms", ms_3);
     println!(
-        "  5 indexes: {} ms (insert={} + reindex={})",
-        ms_5,
-        insert_ms,
-        ms_5.saturating_sub(insert_ms)
+        "  5 indexes (legacy):  {} ms (insert={} + reindex={})",
+        ms_5, insert_ms, reindex_5_ms
     );
     println!(
-        "  3 indexes: {} ms (insert={} + reindex={})",
-        ms_3, insert_ms, reindex_3_ms
-    );
-    println!(
-        "  savings:   {} ms ({:.0}%)",
+        "  savings:             {} ms ({:.0}%)",
         ms_5.saturating_sub(ms_3),
         (ms_5.saturating_sub(ms_3)) as f64 / ms_5 as f64 * 100.0
     );
@@ -682,7 +681,6 @@ fn bench_queries(pfx2as_file: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
 // PRAGMA toggle overhead + connection state analysis
 // ---------------------------------------------------------------------------
 
