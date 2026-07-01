@@ -395,7 +395,7 @@ impl<'a> AsinfoRepository<'a> {
             // Store metadata
             let now = chrono::Utc::now().timestamp();
             tx.execute(
-                "INSERT OR REPLACE INTO asinfo_meta (id, source_url, last_updated, core_count, as2org_count, peeringdb_count, hegemony_count, population_count) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO asinfo_meta (id, source_url, last_updated, core_count, as2org_count, peeringdb_count, hegemony_count, population_count) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     source_url,
                     now,

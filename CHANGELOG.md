@@ -26,6 +26,8 @@ All notable changes to this project will be documented in this file.
 * Made refresh index rebuilds atomic by wrapping index drops, table clears,
   inserts, and index recreation in one transaction; indexes are dropped before
   clearing tables to avoid unnecessary per-row index maintenance during refresh.
+* Ensured upgraded `pfx2as` databases drop removed legacy indexes during refresh
+  and kept the benchmark example buildable with `--no-default-features --features lib`.
 
 ### New Features
 

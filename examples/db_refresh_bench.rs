@@ -51,7 +51,8 @@ const RPKI_ASPA_ROWS: usize = 20_000;
 const PFX2AS_ROWS: usize = 1_600_000;
 
 fn main() -> anyhow::Result<()> {
-    // Suppress tracing so benchmark output is clean.
+    // Suppress tracing so benchmark output is clean when the CLI feature is enabled.
+    #[cfg(feature = "cli")]
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::ERROR)
         .try_init();

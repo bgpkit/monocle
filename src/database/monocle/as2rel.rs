@@ -575,7 +575,7 @@ impl<'a> As2relRepository<'a> {
                 .unwrap_or(0);
 
             tx.execute(
-                "INSERT OR REPLACE INTO as2rel_meta (id, file_url, last_updated, max_peers_count)
+                "INSERT INTO as2rel_meta (id, file_url, last_updated, max_peers_count)
                  VALUES (1, ?1, ?2, ?3)",
                 rusqlite::params![path, now, max_peers],
             )?;

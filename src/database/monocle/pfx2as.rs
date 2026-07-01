@@ -118,11 +118,17 @@ pub struct Pfx2asRepository<'a> {
 }
 
 impl<'a> Pfx2asRepository<'a> {
-    /// Index names managed by this repository (for drop-and-rebuild during bulk insert)
-    const INDEX_NAMES: [&'static str; 3] = [
+    /// Index names dropped before bulk refresh.
+    ///
+    /// Includes legacy indexes removed from `PFX2AS_INDEXES` so upgraded
+    /// databases shed them during the next refresh instead of continuing to
+    /// maintain unused indexes during DELETE/INSERT.
+    const INDEX_NAMES: [&'static str; 5] = [
         "idx_pfx2as_prefix_range",
         "idx_pfx2as_origin_asn",
         "idx_pfx2as_prefix_length",
+        "idx_pfx2as_prefix_str",
+        "idx_pfx2as_validation",
     ];
 
     /// Create a new Pfx2as repository
@@ -322,7 +328,7 @@ impl<'a> Pfx2asRepository<'a> {
         // Update metadata
         let now = Utc::now().timestamp();
         tx.execute(
-            "INSERT OR REPLACE INTO pfx2as_meta (id, updated_at, source, prefix_count, record_count) VALUES (1, ?1, ?2, ?3, ?4)",
+            "INSERT INTO pfx2as_meta (id, updated_at, source, prefix_count, record_count) VALUES (1, ?1, ?2, ?3, ?4)",
             params![now, source, unique_prefixes.len(), inserted],
         )?;
 
@@ -1275,6 +1281,14 @@ mod tests {
         // use them efficiently. This guards the drop-and-rebuild optimization.
         let conn = create_test_db();
         let repo = Pfx2asRepository::new(&conn);
+        repo.initialize_schema().unwrap();
+
+        // Simulate an upgraded database that still has indexes removed by this PR.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_pfx2as_prefix_str ON pfx2as(prefix_str);
+             CREATE INDEX IF NOT EXISTS idx_pfx2as_validation ON pfx2as(validation);",
+        )
+        .unwrap();
 
         repo.store(
             &[Pfx2asDbRecord {

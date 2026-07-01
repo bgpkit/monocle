@@ -418,7 +418,7 @@ impl<'a> RpkiRepository<'a> {
         // Update metadata
         let now = Utc::now().timestamp();
         tx.execute(
-            "INSERT OR REPLACE INTO rpki_meta (id, updated_at, roa_count, aspa_count, roa_source, aspa_source) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO rpki_meta (id, updated_at, roa_count, aspa_count, roa_source, aspa_source) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
             params![now, roa_inserted, aspas.len(), roa_source, aspa_source],
         )?;
 
