@@ -21,6 +21,12 @@ All notable changes to this project will be documented in this file.
 * Added `db_refresh_bench` example for measuring refresh performance
   with real or synthetic data.
 
+### Code Improvements
+
+* Made refresh index rebuilds atomic by wrapping index drops, table clears,
+  inserts, and index recreation in one transaction; indexes are dropped before
+  clearing tables to avoid unnecessary per-row index maintenance during refresh.
+
 ### New Features
 
 * Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to `monocle parse`

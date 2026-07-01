@@ -536,17 +536,18 @@ impl<'a> As2relRepository<'a> {
             .unchecked_transaction()
             .map_err(|e| anyhow!("Failed to begin transaction: {}", e))?;
 
-        // Clear existing data
-        tx.execute("DELETE FROM as2rel", [])
-            .map_err(|e| anyhow!("Failed to clear as2rel: {}", e))?;
-        tx.execute("DELETE FROM as2rel_meta", [])
-            .map_err(|e| anyhow!("Failed to clear as2rel_meta: {}", e))?;
-
-        // Drop indexes before bulk insert — rebuilding once at the end is faster
+        // Drop indexes before clear + bulk insert — rebuilding once at the end is faster
+        // and avoids maintaining secondary indexes during DELETE.
         for idx in &Self::INDEX_NAMES {
             tx.execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
                 .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
         }
+
+        // Clear existing data after dropping indexes to avoid per-row index maintenance.
+        tx.execute("DELETE FROM as2rel", [])
+            .map_err(|e| anyhow!("Failed to clear as2rel: {}", e))?;
+        tx.execute("DELETE FROM as2rel_meta", [])
+            .map_err(|e| anyhow!("Failed to clear as2rel_meta: {}", e))?;
 
         let entry_count = entries.len();
 

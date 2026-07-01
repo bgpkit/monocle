@@ -310,7 +310,14 @@ impl<'a> AsinfoRepository<'a> {
             .unchecked_transaction()
             .map_err(|e| anyhow!("Failed to begin transaction: {}", e))?;
 
-        // Clear existing data
+        // Drop indexes before clear + bulk insert — rebuilding once at the end is faster
+        // and avoids maintaining secondary indexes during DELETE.
+        for idx in &Self::INDEX_NAMES {
+            tx.execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
+        }
+
+        // Clear existing data after dropping indexes to avoid per-row index maintenance.
         for table in [
             "asinfo_core",
             "asinfo_as2org",
@@ -321,12 +328,6 @@ impl<'a> AsinfoRepository<'a> {
         ] {
             tx.execute_batch(&format!("DELETE FROM {}", table))
                 .map_err(|e| anyhow!("Failed to clear {}: {}", table, e))?;
-        }
-
-        // Drop indexes before bulk insert — rebuilding once at the end is faster
-        for idx in &Self::INDEX_NAMES {
-            tx.execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
-                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
         }
 
         {
