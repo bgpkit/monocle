@@ -8,7 +8,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::database::MonocleDatabase;
-use crate::lens::as2rel::{As2relLens, As2relSearchArgs, As2relSearchResult, As2relSortOrder};
+use crate::lens::as2rel::{As2relLens, As2relSearchArgs, As2relSearchResult};
 use crate::server::http::{ApiError, ApiErrorCode, ApiErrorResponse};
 use crate::server::ServerState;
 
@@ -74,8 +74,7 @@ pub async fn as2rel_search(
                 anyhow::bail!("NOT_INITIALIZED:AS2REL");
             }
 
-            let mut results = lens.search(&args)?;
-            lens.sort_results(&mut results, &As2relSortOrder::default());
+            let results = lens.search(&args)?;
             Ok(results)
         })
         .await

@@ -73,6 +73,14 @@ pub async fn database_refresh(
         }
     }
 
+    // pfx2as refresh is not yet implemented via the HTTP API
+    if source == "pfx2as" {
+        return Ok(Json(DatabaseRefreshResponse {
+            source: "pfx2as".to_string(),
+            message: "pfx2as refresh via API is not yet implemented; use CLI 'monocle config update --pfx2as'".to_string(),
+        }));
+    }
+
     let data_dir = state.config.data_dir.clone();
     let source_clone = source.clone();
 
@@ -88,11 +96,6 @@ pub async fn database_refresh(
                 "as2rel" => {
                     let count = db.refresh_as2rel()?;
                     format!("Refreshed AS2REL: {} entries", count)
-                }
-                "pfx2as" => {
-                    anyhow::bail!(
-                        "pfx2as refresh via API is not yet implemented; use CLI 'monocle config update --pfx2as'"
-                    );
                 }
                 "asinfo" => {
                     let counts = db.refresh_asinfo()?;

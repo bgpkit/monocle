@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::info;
 
+use crate::database::core::SchemaDefinitions;
+
 /// Default URL for AS2Rel data
 pub const BGPKIT_AS2REL_URL: &str = "https://data.bgpkit.com/as2rel/as2rel-latest.json.bz2";
 
@@ -99,6 +101,9 @@ pub struct ConnectivityEntry {
 }
 
 impl<'a> As2relRepository<'a> {
+    /// Index names managed by this repository (for drop-and-rebuild during bulk insert)
+    const INDEX_NAMES: [&'static str; 2] = ["idx_as2rel_asn1", "idx_as2rel_asn2"];
+
     /// Create a new AS2Rel repository
     pub fn new(conn: &'a Connection) -> Self {
         Self { conn }
@@ -503,12 +508,9 @@ impl<'a> As2relRepository<'a> {
     /// Load AS2Rel data from a custom path (file or URL)
     ///
     /// Uses optimized batch insert with:
-    /// - Disabled synchronous writes for performance
-    /// - Memory-based journal mode
-    /// - Single transaction for all inserts
+    /// - Indexes dropped before insert and rebuilt after (faster than per-row maintenance)
+    /// - Single transaction wrapping clear + drop + insert + reindex for atomicity
     pub fn load_from_path(&self, path: &str) -> Result<usize> {
-        self.clear()?;
-
         info!("Loading AS2Rel data from {}...", path);
 
         // Load entries from the JSON file
@@ -523,28 +525,32 @@ impl<'a> As2relRepository<'a> {
         // Find max peers count for normalization
         let max_peers = entries.iter().map(|e| e.peers_count).max().unwrap_or(0);
 
-        // Optimize for batch insert performance
-        self.conn
-            .execute("PRAGMA synchronous = OFF", [])
-            .map_err(|e| anyhow!("Failed to set synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = MEMORY", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to set journal mode: {}", e))?;
-        self.conn
-            .execute("PRAGMA cache_size = -64000", [])
-            .map_err(|e| anyhow!("Failed to set cache size: {}", e))?; // 64MB cache
-
-        // Use a transaction for all inserts
+        // Everything below is in one transaction so failures roll back to the
+        // previous state (with original indexes intact).
         let tx = self
             .conn
             .unchecked_transaction()
             .map_err(|e| anyhow!("Failed to begin transaction: {}", e))?;
 
+        // Drop indexes before clear + bulk insert — rebuilding once at the end is faster
+        // and avoids maintaining secondary indexes during DELETE.
+        for idx in &Self::INDEX_NAMES {
+            tx.execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
+        }
+
+        // Clear existing data after dropping indexes to avoid per-row index maintenance.
+        tx.execute("DELETE FROM as2rel", [])
+            .map_err(|e| anyhow!("Failed to clear as2rel: {}", e))?;
+        tx.execute("DELETE FROM as2rel_meta", [])
+            .map_err(|e| anyhow!("Failed to clear as2rel_meta: {}", e))?;
+
         let entry_count = entries.len();
 
         {
+            // Plain INSERT — table was just cleared, no PK conflicts
             let mut stmt = tx.prepare(
-                "INSERT OR REPLACE INTO as2rel (asn1, asn2, paths_count, peers_count, rel)
+                "INSERT INTO as2rel (asn1, asn2, paths_count, peers_count, rel)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
 
@@ -565,22 +571,20 @@ impl<'a> As2relRepository<'a> {
                 .unwrap_or(0);
 
             tx.execute(
-                "INSERT OR REPLACE INTO as2rel_meta (id, file_url, last_updated, max_peers_count)
+                "INSERT INTO as2rel_meta (id, file_url, last_updated, max_peers_count)
                  VALUES (1, ?1, ?2, ?3)",
                 rusqlite::params![path, now, max_peers],
             )?;
         }
 
+        // Recreate indexes — still inside the transaction so the refresh is atomic
+        for sql in SchemaDefinitions::AS2REL_INDEXES {
+            tx.execute(sql, [])
+                .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
+        }
+
         tx.commit()
             .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
-
-        // Restore default settings for safety
-        self.conn
-            .execute("PRAGMA synchronous = FULL", [])
-            .map_err(|e| anyhow!("Failed to restore synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to restore journal mode: {}", e))?;
 
         info!("AS2Rel data loading finished: {} entries", entry_count);
 
@@ -1069,5 +1073,57 @@ mod tests {
 
         // Old data should need refresh
         assert!(repo.needs_refresh(std::time::Duration::from_secs(7 * 24 * 60 * 60)));
+    }
+
+    #[test]
+    fn test_store_rebuilds_indexes_correctly() {
+        // Verify that after load_from_path, the 2 as2rel indexes exist and
+        // queries work correctly. Uses a real JSON fixture file.
+        let db = setup_test_db();
+        let repo = As2relRepository::new(&db.conn);
+
+        // Write a small JSON fixture that matches the As2relEntry format
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("as2rel.json");
+        let entries = vec![
+            As2relEntry {
+                asn1: 65000,
+                asn2: 65001,
+                paths_count: 100,
+                peers_count: 10,
+                rel: 0,
+            },
+            As2relEntry {
+                asn1: 65000,
+                asn2: 65002,
+                paths_count: 200,
+                peers_count: 20,
+                rel: 1,
+            },
+        ];
+        let json = serde_json::to_string(&entries).unwrap();
+        std::fs::write(&path, json).unwrap();
+
+        // Call the real load_from_path — exercises clear + drop + insert + reindex
+        let count = repo.load_from_path(path.to_str().unwrap()).unwrap();
+        assert_eq!(count, 2);
+
+        // Verify both indexes exist after load
+        let index_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_as2rel_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            index_count, 2,
+            "expected 2 as2rel indexes after load_from_path"
+        );
+
+        // Queries should work via the rebuilt indexes
+        let results = repo.search_asn(65000).unwrap();
+        assert_eq!(results.len(), 2);
     }
 }

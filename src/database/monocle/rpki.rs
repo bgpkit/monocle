@@ -173,6 +173,14 @@ pub struct RpkiRepository<'a> {
 }
 
 impl<'a> RpkiRepository<'a> {
+    /// Index names managed by this repository (for drop-and-rebuild during bulk insert)
+    const INDEX_NAMES: [&'static str; 4] = [
+        "idx_rpki_roa_prefix_range",
+        "idx_rpki_roa_origin_asn",
+        "idx_rpki_aspa_customer",
+        "idx_rpki_aspa_provider",
+    ];
+
     /// Create a new RPKI repository
     pub fn new(conn: &'a Connection) -> Self {
         Self { conn }
@@ -330,9 +338,8 @@ impl<'a> RpkiRepository<'a> {
     /// Store ROAs and ASPAs in the database
     ///
     /// Uses optimized batch insert with:
-    /// - Disabled synchronous writes for performance
-    /// - Memory-based journal mode
-    /// - Single transaction for all inserts
+    /// - Indexes dropped before insert and rebuilt after (faster than per-row maintenance)
+    /// - Single transaction wrapping drop + clear + insert + reindex for atomicity
     ///
     /// # Arguments
     /// * `roas` - ROA records to store
@@ -349,74 +356,80 @@ impl<'a> RpkiRepository<'a> {
         // Ensure schema exists
         self.initialize_schema()?;
 
-        // Clear existing data
-        self.clear()?;
+        // Everything below is in one transaction so failures roll back to the
+        // previous state (with original indexes intact).
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| anyhow!("Failed to begin transaction: {}", e))?;
 
-        // Optimize for batch insert performance
-        self.conn
-            .execute("PRAGMA synchronous = OFF", [])
-            .map_err(|e| anyhow!("Failed to set synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = MEMORY", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to set journal mode: {}", e))?;
-        self.conn
-            .execute("PRAGMA cache_size = -64000", [])
-            .map_err(|e| anyhow!("Failed to set cache size: {}", e))?; // 64MB cache
-
-        // Begin transaction for batch insert
-        self.conn.execute("BEGIN TRANSACTION", [])?;
-
-        // Insert ROAs in batches
-        let mut roa_stmt = self.conn.prepare(
-            "INSERT INTO rpki_roa (prefix_start, prefix_end, prefix_length, max_length, origin_asn, ta, prefix_str)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        )?;
-
-        let mut roa_inserted = 0usize;
-        for roa in roas {
-            if let Ok((start, end, prefix_len)) = parse_prefix_to_range(&roa.prefix) {
-                roa_stmt.execute(params![
-                    start.as_slice(),
-                    end.as_slice(),
-                    prefix_len,
-                    roa.max_length,
-                    roa.origin_asn,
-                    roa.ta,
-                    roa.prefix,
-                ])?;
-                roa_inserted += 1;
-            }
+        // Drop indexes before clear + bulk insert — rebuilding once at the end is faster
+        // and avoids maintaining secondary indexes during DELETE.
+        for idx in &Self::INDEX_NAMES {
+            tx.execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
         }
 
-        // Insert ASPAs (one row per customer-provider pair)
-        let mut aspa_stmt = self
-            .conn
-            .prepare("INSERT INTO rpki_aspa (customer_asn, provider_asn) VALUES (?1, ?2)")?;
+        // Clear existing data after dropping indexes to avoid per-row index maintenance.
+        tx.execute("DELETE FROM rpki_roa", [])
+            .map_err(|e| anyhow!("Failed to clear rpki_roa: {}", e))?;
+        tx.execute("DELETE FROM rpki_aspa", [])
+            .map_err(|e| anyhow!("Failed to clear rpki_aspa: {}", e))?;
+        tx.execute("DELETE FROM rpki_meta", [])
+            .map_err(|e| anyhow!("Failed to clear rpki_meta: {}", e))?;
 
+        // Insert ROAs and ASPAs (plain INSERT — tables were just cleared)
+        let mut roa_inserted = 0usize;
         let mut aspa_pairs_inserted = 0usize;
-        for aspa in aspas {
-            for provider in &aspa.provider_asns {
-                aspa_stmt.execute(params![aspa.customer_asn, provider])?;
-                aspa_pairs_inserted += 1;
+
+        {
+            let mut roa_stmt = tx.prepare(
+                "INSERT INTO rpki_roa (prefix_start, prefix_end, prefix_length, max_length, origin_asn, ta, prefix_str)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+
+            for roa in roas {
+                if let Ok((start, end, prefix_len)) = parse_prefix_to_range(&roa.prefix) {
+                    roa_stmt.execute(params![
+                        start.as_slice(),
+                        end.as_slice(),
+                        prefix_len,
+                        roa.max_length,
+                        roa.origin_asn,
+                        roa.ta,
+                        roa.prefix,
+                    ])?;
+                    roa_inserted += 1;
+                }
+            }
+
+            // Insert ASPAs (one row per customer-provider pair)
+            let mut aspa_stmt =
+                tx.prepare("INSERT INTO rpki_aspa (customer_asn, provider_asn) VALUES (?1, ?2)")?;
+
+            for aspa in aspas {
+                for provider in &aspa.provider_asns {
+                    aspa_stmt.execute(params![aspa.customer_asn, provider])?;
+                    aspa_pairs_inserted += 1;
+                }
             }
         }
 
         // Update metadata
         let now = Utc::now().timestamp();
-        self.conn.execute(
-            "INSERT OR REPLACE INTO rpki_meta (id, updated_at, roa_count, aspa_count, roa_source, aspa_source) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+        tx.execute(
+            "INSERT INTO rpki_meta (id, updated_at, roa_count, aspa_count, roa_source, aspa_source) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
             params![now, roa_inserted, aspas.len(), roa_source, aspa_source],
         )?;
 
-        self.conn.execute("COMMIT", [])?;
+        // Recreate indexes — still inside the transaction so the refresh is atomic
+        for sql in RpkiSchemaDefinitions::RPKI_INDEXES {
+            tx.execute(sql, [])
+                .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
+        }
 
-        // Restore default settings for safety
-        self.conn
-            .execute("PRAGMA synchronous = FULL", [])
-            .map_err(|e| anyhow!("Failed to restore synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to restore journal mode: {}", e))?;
+        tx.commit()
+            .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
 
         info!(
             "Stored {} ROAs and {} ASPA customer-provider pairs ({} customers) in RPKI database",
@@ -1323,5 +1336,63 @@ mod tests {
         // Not found
         let result = repo.validate_detailed("2.0.0.0/24", 13335).unwrap();
         assert_eq!(result.state, "not-found");
+    }
+
+    #[test]
+    fn test_store_rebuilds_indexes_correctly() {
+        // Verify that after store(), all 4 RPKI indexes exist and queries work.
+        // This guards the drop-and-rebuild optimization.
+        let conn = create_test_db();
+        let repo = RpkiRepository::new(&conn);
+
+        let roas = vec![RpkiRoaRecord {
+            prefix: "1.0.0.0/24".to_string(),
+            max_length: 24,
+            origin_asn: 13335,
+            ta: "apnic".to_string(),
+        }];
+
+        repo.store(&roas, &[], "Cloudflare", "Cloudflare").unwrap();
+
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_rpki_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 4, "expected 4 RPKI indexes after store");
+
+        // Query should work correctly via the rebuilt indexes
+        let roas = repo.get_roas_by_asn(13335).unwrap();
+        assert_eq!(roas.len(), 1);
+    }
+
+    #[test]
+    fn test_store_idempotent_index_rebuild() {
+        let conn = create_test_db();
+        let repo = RpkiRepository::new(&conn);
+
+        let roas = vec![RpkiRoaRecord {
+            prefix: "1.0.0.0/24".to_string(),
+            max_length: 24,
+            origin_asn: 13335,
+            ta: "apnic".to_string(),
+        }];
+
+        repo.store(&roas, &[], "src1", "src1").unwrap();
+        repo.store(&roas, &[], "src2", "src2").unwrap();
+
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_rpki_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            index_count, 4,
+            "indexes should not duplicate after re-store"
+        );
     }
 }

@@ -2,7 +2,6 @@
 //! - `GET  /api/v1/rpki/roa/lookup` — list ROAs from local cache
 //! - `GET  /api/v1/rpki/aspa/lookup` — list ASPAs from local cache
 //! - `POST /api/v1/rpki/roa/validate` — validate prefix+ASN against ROAs
-//! - `POST /api/v1/rpki/aspa/validate` — check if provider is authorized by customer
 
 use axum::extract::{Query, State};
 use axum::Json;

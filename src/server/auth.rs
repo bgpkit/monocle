@@ -21,6 +21,14 @@ pub struct AuthState {
     pub expected_token: Arc<String>,
 }
 
+/// Constant-time comparison of two byte slices to reduce timing side-channels.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 /// Middleware function: reject requests without a valid Bearer token.
 pub async fn require_token(
     State(auth): State<AuthState>,
@@ -32,10 +40,12 @@ pub async fn require_token(
         .get(AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|t| t.trim().to_string());
+        .map(|t| t.trim());
 
     match token {
-        Some(t) if t == *auth.expected_token => Ok(next.run(req).await),
+        Some(t) if constant_time_eq(t.as_bytes(), auth.expected_token.as_bytes()) => {
+            Ok(next.run(req).await)
+        }
         _ => Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             ApiErrorResponse::new(
@@ -56,5 +66,25 @@ mod tests {
             expected_token: Arc::new("secret".to_string()),
         };
         let _cloned = state.clone();
+    }
+
+    #[test]
+    fn test_constant_time_eq_same() {
+        assert!(constant_time_eq(b"hello", b"hello"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_diff_len() {
+        assert!(!constant_time_eq(b"hello", b"hello!"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_diff_content() {
+        assert!(!constant_time_eq(b"hello", b"world"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_empty() {
+        assert!(constant_time_eq(b"", b""));
     }
 }

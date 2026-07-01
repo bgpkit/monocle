@@ -271,6 +271,15 @@ impl AsinfoSchemaDefinitions {
 // =============================================================================
 
 impl<'a> AsinfoRepository<'a> {
+    /// Index names managed by this repository (for drop-and-rebuild during bulk insert)
+    const INDEX_NAMES: [&'static str; 5] = [
+        "idx_asinfo_core_name",
+        "idx_asinfo_core_country",
+        "idx_asinfo_as2org_org_id",
+        "idx_asinfo_as2org_org_name",
+        "idx_asinfo_peeringdb_name",
+    ];
+
     /// Create a new ASInfo repository
     pub fn new(conn: &'a Connection) -> Self {
         Self { conn }
@@ -281,49 +290,60 @@ impl<'a> AsinfoRepository<'a> {
     // =========================================================================
 
     /// Store records from parsed JSONL, returns counts per table
+    ///
+    /// Indexes are dropped before the bulk insert and rebuilt afterward,
+    /// which is faster than maintaining them per-row. Since the tables are
+    /// cleared before insert, plain INSERT is used (no OR REPLACE needed).
+    /// All operations (clear, drop indexes, insert, recreate indexes) are
+    /// wrapped in a single transaction so the refresh is atomic.
     pub fn store_from_jsonl(
         &self,
         records: &[JsonlRecord],
         source_url: &str,
     ) -> Result<AsinfoStoreCounts> {
-        // Clear existing data first
-        self.clear()?;
-
         let mut counts = AsinfoStoreCounts::default();
 
-        // Optimize for batch insert performance
-        self.conn
-            .execute("PRAGMA synchronous = OFF", [])
-            .map_err(|e| anyhow!("Failed to set synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = MEMORY", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to set journal mode: {}", e))?;
-        self.conn
-            .execute("PRAGMA cache_size = -64000", [])
-            .map_err(|e| anyhow!("Failed to set cache size: {}", e))?;
-
-        // Use a transaction for all inserts
+        // Everything below is in one transaction so failures roll back to the
+        // previous state (with original indexes intact).
         let tx = self
             .conn
             .unchecked_transaction()
             .map_err(|e| anyhow!("Failed to begin transaction: {}", e))?;
 
+        // Drop indexes before clear + bulk insert — rebuilding once at the end is faster
+        // and avoids maintaining secondary indexes during DELETE.
+        for idx in &Self::INDEX_NAMES {
+            tx.execute_batch(&format!("DROP INDEX IF EXISTS {}", idx))
+                .map_err(|e| anyhow!("Failed to drop index {}: {}", idx, e))?;
+        }
+
+        // Clear existing data after dropping indexes to avoid per-row index maintenance.
+        for table in [
+            "asinfo_core",
+            "asinfo_as2org",
+            "asinfo_peeringdb",
+            "asinfo_hegemony",
+            "asinfo_population",
+            "asinfo_meta",
+        ] {
+            tx.execute_batch(&format!("DELETE FROM {}", table))
+                .map_err(|e| anyhow!("Failed to clear {}: {}", table, e))?;
+        }
+
         {
-            // Prepare statements
-            let mut stmt_core = tx.prepare(
-                "INSERT OR REPLACE INTO asinfo_core (asn, name, country) VALUES (?1, ?2, ?3)",
-            )?;
+            // Prepare statements (plain INSERT — tables were just cleared)
+            let mut stmt_core =
+                tx.prepare("INSERT INTO asinfo_core (asn, name, country) VALUES (?1, ?2, ?3)")?;
             let mut stmt_as2org = tx.prepare(
-                "INSERT OR REPLACE INTO asinfo_as2org (asn, name, org_id, org_name, country) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO asinfo_as2org (asn, name, org_id, org_name, country) VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
             let mut stmt_peeringdb = tx.prepare(
-                "INSERT OR REPLACE INTO asinfo_peeringdb (asn, name, name_long, aka, website, irr_as_set) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO asinfo_peeringdb (asn, name, name_long, aka, website, irr_as_set) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )?;
-            let mut stmt_hegemony = tx.prepare(
-                "INSERT OR REPLACE INTO asinfo_hegemony (asn, ipv4, ipv6) VALUES (?1, ?2, ?3)",
-            )?;
+            let mut stmt_hegemony =
+                tx.prepare("INSERT INTO asinfo_hegemony (asn, ipv4, ipv6) VALUES (?1, ?2, ?3)")?;
             let mut stmt_population = tx.prepare(
-                "INSERT OR REPLACE INTO asinfo_population (asn, percent_country, percent_global, sample_count, user_count) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO asinfo_population (asn, percent_country, percent_global, sample_count, user_count) VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
 
             for record in records {
@@ -375,7 +395,7 @@ impl<'a> AsinfoRepository<'a> {
             // Store metadata
             let now = chrono::Utc::now().timestamp();
             tx.execute(
-                "INSERT OR REPLACE INTO asinfo_meta (id, source_url, last_updated, core_count, as2org_count, peeringdb_count, hegemony_count, population_count) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO asinfo_meta (id, source_url, last_updated, core_count, as2org_count, peeringdb_count, hegemony_count, population_count) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     source_url,
                     now,
@@ -388,16 +408,14 @@ impl<'a> AsinfoRepository<'a> {
             )?;
         }
 
+        // Recreate indexes — still inside the transaction so the refresh is atomic
+        for sql in AsinfoSchemaDefinitions::ASINFO_INDEXES {
+            tx.execute(sql, [])
+                .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
+        }
+
         tx.commit()
             .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
-
-        // Restore default settings
-        self.conn
-            .execute("PRAGMA synchronous = FULL", [])
-            .map_err(|e| anyhow!("Failed to restore synchronous mode: {}", e))?;
-        self.conn
-            .query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
-            .map_err(|e| anyhow!("Failed to restore journal mode: {}", e))?;
 
         info!(
             "ASInfo data loaded: {} core, {} as2org, {} peeringdb, {} hegemony, {} population",
@@ -1225,5 +1243,70 @@ mod tests {
 
         repo.clear().unwrap();
         assert!(repo.is_empty());
+    }
+
+    #[test]
+    fn test_store_rebuilds_indexes_correctly() {
+        // Verify that after store_from_jsonl, the 5 asinfo indexes exist.
+        let db = setup_test_db();
+        let repo = AsinfoRepository::new(&db.conn);
+
+        let records = vec![JsonlRecord {
+            asn: 13335,
+            name: "CLOUDFLARENET".to_string(),
+            country: "US".to_string(),
+            as2org: None,
+            peeringdb: None,
+            hegemony: None,
+            population: None,
+        }];
+
+        repo.store_from_jsonl(&records, "test://source").unwrap();
+
+        let index_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_asinfo_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 5, "expected 5 asinfo indexes after store");
+
+        // Query should work
+        let result = repo.get_core(13335).unwrap();
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_store_idempotent_index_rebuild() {
+        let db = setup_test_db();
+        let repo = AsinfoRepository::new(&db.conn);
+
+        let records = vec![JsonlRecord {
+            asn: 13335,
+            name: "CLOUDFLARENET".to_string(),
+            country: "US".to_string(),
+            as2org: None,
+            peeringdb: None,
+            hegemony: None,
+            population: None,
+        }];
+
+        repo.store_from_jsonl(&records, "src1").unwrap();
+        repo.store_from_jsonl(&records, "src2").unwrap();
+
+        let index_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_asinfo_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            index_count, 5,
+            "indexes should not duplicate after re-store"
+        );
     }
 }

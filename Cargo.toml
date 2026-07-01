@@ -71,6 +71,10 @@ name = "database"
 path = "examples/database.rs"
 required-features = ["lib"]
 
+[[example]]
+name = "db_refresh_bench"
+path = "examples/db_refresh_bench.rs"
+required-features = ["lib"]
 [features]
 default = ["cli"]
 
