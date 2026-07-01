@@ -64,20 +64,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # Sync README.md to the Docker Hub repository overview page.
-      # NOTE: This uses the Docker Hub API, which requires the account
-      # password (not a Personal Access Token). PATs return 403 Forbidden
-      # on the Hub API. If DOCKERHUB_TOKEN is a PAT, this step will fail
-      # silently (continue-on-error). To enable, set DOCKERHUB_PASSWORD
-      # secret and use it here instead of DOCKERHUB_TOKEN.
-      - name: Update Docker Hub repo description
-        if: startsWith(github.ref, 'refs/tags/v')
-        continue-on-error: true
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-          repository: bgpkit/monocle
-          short-description: "Monocle — a commandline application to search, parse, and process BGP information in public sources."
-          readme-filepath: ./README.md
