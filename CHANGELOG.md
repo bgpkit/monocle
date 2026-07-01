@@ -28,6 +28,8 @@ All notable changes to this project will be documented in this file.
   clearing tables to avoid unnecessary per-row index maintenance during refresh.
 * Ensured upgraded `pfx2as` databases drop removed legacy indexes during refresh
   and kept the benchmark example buildable with `--no-default-features --features lib`.
+* Preserved immediate transaction semantics for `pfx2as` refreshes and reused
+  shared AS2Rel schema constants when rebuilding indexes.
 
 ### New Features
 

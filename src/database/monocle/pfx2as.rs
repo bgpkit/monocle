@@ -18,7 +18,7 @@
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -281,9 +281,7 @@ impl<'a> Pfx2asRepository<'a> {
 
         // Everything below is in one transaction so failures roll back to the
         // previous state (with original indexes intact).
-        let tx = self
-            .conn
-            .unchecked_transaction()
+        let tx = Transaction::new_unchecked(self.conn, TransactionBehavior::Immediate)
             .map_err(|e| anyhow!("Failed to begin transaction: {}", e))?;
 
         // Drop indexes before bulk insert — rebuilding them once at the end is

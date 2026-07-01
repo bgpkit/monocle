@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::info;
 
+use crate::database::core::SchemaDefinitions;
+
 /// Default URL for AS2Rel data
 pub const BGPKIT_AS2REL_URL: &str = "https://data.bgpkit.com/as2rel/as2rel-latest.json.bz2";
 
@@ -101,12 +103,6 @@ pub struct ConnectivityEntry {
 impl<'a> As2relRepository<'a> {
     /// Index names managed by this repository (for drop-and-rebuild during bulk insert)
     const INDEX_NAMES: [&'static str; 2] = ["idx_as2rel_asn1", "idx_as2rel_asn2"];
-
-    /// Index creation SQL (rebuilt after bulk insert)
-    const INDEX_SQL: [&'static str; 2] = [
-        "CREATE INDEX IF NOT EXISTS idx_as2rel_asn1 ON as2rel(asn1)",
-        "CREATE INDEX IF NOT EXISTS idx_as2rel_asn2 ON as2rel(asn2)",
-    ];
 
     /// Create a new AS2Rel repository
     pub fn new(conn: &'a Connection) -> Self {
@@ -582,7 +578,7 @@ impl<'a> As2relRepository<'a> {
         }
 
         // Recreate indexes — still inside the transaction so the refresh is atomic
-        for sql in Self::INDEX_SQL {
+        for sql in SchemaDefinitions::AS2REL_INDEXES {
             tx.execute(sql, [])
                 .map_err(|e| anyhow!("Failed to recreate index: {}", e))?;
         }
