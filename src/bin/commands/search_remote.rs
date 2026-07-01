@@ -92,9 +92,7 @@ pub async fn run_remote_search(
     fields: &[&str],
     time_format: TimestampFormat,
 ) -> anyhow::Result<()> {
-    let mut client_builder = reqwest::Client::builder();
-    let _ = &mut client_builder; // suppress unused mut warning
-    let client = client_builder.build()?;
+    let client = reqwest::Client::builder().build()?;
 
     let mut req = client
         .post(url)

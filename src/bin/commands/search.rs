@@ -573,19 +573,6 @@ pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat
         remote_token,
     } = args;
 
-    // If remote-url is set, dispatch to the remote search client and return.
-    if let Some(url) = remote_url {
-        run_remote_search_wrapper(
-            &url,
-            remote_token.as_deref(),
-            &filters,
-            fields_arg.as_deref(),
-            output_format,
-            time_format,
-        );
-        return;
-    }
-
     // Load and merge file-based filters into CLI filters
     if let Some(ref pf) = filter_file {
         if let Err(e) =
@@ -610,6 +597,26 @@ pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat
     if let Err(e) = filters.parse_filters.validate() {
         eprintln!("ERROR: {}", e);
         std::process::exit(1);
+    }
+
+    // If remote-url is set, dispatch to the remote search client and return.
+    // This happens after filter-file/prefix-file merging and parse-filter
+    // validation so remote search behaves the same as local search for
+    // file-based filters and invalid input.
+    if let Some(url) = remote_url {
+        if let Err(e) = filters.validate() {
+            eprintln!("ERROR: {e}");
+            return;
+        }
+        run_remote_search_wrapper(
+            &url,
+            remote_token.as_deref(),
+            &filters,
+            fields_arg.as_deref(),
+            output_format,
+            time_format,
+        );
+        return;
     }
 
     let cache_dir = match cache_dir {

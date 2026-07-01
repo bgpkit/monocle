@@ -11,7 +11,7 @@ use crate::config::{get_data_source_info, get_sqlite_info, DataSourceInfo, Sqlit
 use crate::database::MonocleDatabase;
 use crate::lens::inspect::InspectLens;
 use crate::lens::rpki::RpkiLens;
-use crate::server::http::ApiError;
+use crate::server::http::{ApiError, ApiErrorCode, ApiErrorResponse};
 use crate::server::ServerState;
 
 // =============================================================================
@@ -73,12 +73,16 @@ pub async fn database_refresh(
         }
     }
 
-    // pfx2as refresh is not yet implemented via the HTTP API
+    // pfx2as refresh is not yet implemented via the HTTP API — return 501 so
+    // automation can detect that the operation did not run.
     if source == "pfx2as" {
-        return Ok(Json(DatabaseRefreshResponse {
-            source: "pfx2as".to_string(),
-            message: "pfx2as refresh via API is not yet implemented; use CLI 'monocle config update --pfx2as'".to_string(),
-        }));
+        return Err(ApiError::new(
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            ApiErrorResponse::new(
+                ApiErrorCode::InvalidRequest,
+                "pfx2as refresh via API is not yet implemented; use CLI 'monocle config update --pfx2as'",
+            ),
+        ));
     }
 
     let data_dir = state.config.data_dir.clone();

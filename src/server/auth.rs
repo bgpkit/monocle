@@ -35,12 +35,20 @@ pub async fn require_token(
     req: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
+    // The HTTP auth scheme token ("Bearer") is case-insensitive per RFC 7235.
+    // Split on the first space and compare the scheme case-insensitively.
     let token = req
         .headers()
         .get(AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|t| t.trim());
+        .and_then(|v| {
+            let (scheme, rest) = v.split_once(' ')?;
+            if scheme.eq_ignore_ascii_case("Bearer") {
+                Some(rest.trim())
+            } else {
+                None
+            }
+        });
 
     match token {
         Some(t) if constant_time_eq(t.as_bytes(), auth.expected_token.as_bytes()) => {

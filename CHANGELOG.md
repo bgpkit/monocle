@@ -115,6 +115,11 @@ All notable changes to this project will be documented in this file.
   with an `error` or `cancelled` event, or when the connection drops without a
   `completed` event.
 * Docker runtime image now runs as a dedicated non-root `monocle` user.
+* Remote search now applies `--filter-file` / `--prefix-file` merging and filter
+  validation before dispatching, matching local search behavior.
+* Auth middleware now accepts case-insensitive `Bearer` scheme tokens per RFC 7235.
+* `POST /api/v1/database/refresh` with `source=pfx2as` now returns HTTP 501
+  instead of 200, so automation can detect the operation is not implemented.
 
 ## v1.3.0 - 2026-05-27
 
