@@ -699,14 +699,29 @@ fn process_search_item(
         file_messages += accepted;
     }
 
-    state.successful_files.fetch_add(1, Ordering::Relaxed);
+    let stopped_reason = current_exit_reason(&state);
+    let stopped_before_success = matches!(
+        stopped_reason,
+        Some(SearchExitReason::Cancelled | SearchExitReason::Timeout)
+    );
+
+    if stopped_before_success {
+        state.failed_files.fetch_add(1, Ordering::Relaxed);
+    } else {
+        state.successful_files.fetch_add(1, Ordering::Relaxed);
+    }
+
     let completed = state.files_completed.fetch_add(1, Ordering::Relaxed) + 1;
     state.sink.on_progress(SearchProgress::FileCompleted {
         file_index: index,
         total_files: state.total_files,
         messages_found: file_messages,
-        success: true,
-        error: None,
+        success: !stopped_before_success,
+        error: stopped_reason.and_then(|reason| match reason {
+            SearchExitReason::Cancelled => Some("search cancelled".to_string()),
+            SearchExitReason::Timeout => Some("search timed out".to_string()),
+            _ => None,
+        }),
     });
     send_progress_update(&state, completed);
 }
@@ -759,7 +774,8 @@ fn emit_search_batch(
         batch.truncate(accepted as usize);
     }
 
-    let elements = std::mem::take(batch);
+    let mut elements = Vec::with_capacity(state.batch_size);
+    std::mem::swap(&mut elements, batch);
     let control = state.sink.on_elements(SearchElementBatch {
         file_index,
         file_url: file_url.to_string(),
@@ -776,6 +792,15 @@ fn emit_search_batch(
     }
 
     accepted
+}
+
+fn current_exit_reason(state: &SearchWorkerState<'_>) -> Option<SearchExitReason> {
+    match state.exit_reason.load(Ordering::Relaxed) {
+        1 => Some(SearchExitReason::Cancelled),
+        2 => Some(SearchExitReason::Timeout),
+        3 => Some(SearchExitReason::MaxResultsReached),
+        _ => None,
+    }
 }
 
 fn reserve_result_slots(state: &SearchWorkerState<'_>, wanted: u64) -> u64 {
@@ -1006,6 +1031,121 @@ mod tests {
         };
         let json = serde_json::to_string(&progress).expect("Failed to serialize");
         assert!(json.contains("percent_complete"));
+    }
+
+    struct CountingSink {
+        batches: AtomicU64,
+        elements: AtomicU64,
+    }
+
+    impl CountingSink {
+        fn new() -> Self {
+            Self {
+                batches: AtomicU64::new(0),
+                elements: AtomicU64::new(0),
+            }
+        }
+    }
+
+    impl SearchSink for CountingSink {
+        fn on_elements(&self, batch: SearchElementBatch) -> SearchControl {
+            self.batches.fetch_add(1, Ordering::Relaxed);
+            self.elements
+                .fetch_add(batch.elements.len() as u64, Ordering::Relaxed);
+            SearchControl::Continue
+        }
+    }
+
+    fn with_worker_state<F>(
+        max_results: Option<u64>,
+        cancel_flag: Option<&AtomicBool>,
+        deadline: Option<Instant>,
+        sink: &dyn SearchSink,
+        f: F,
+    ) where
+        F: FnOnce(SearchWorkerState<'_>),
+    {
+        let stop_flag = AtomicBool::new(false);
+        let exit_reason = AtomicU64::new(0);
+        let files_completed = AtomicU64::new(0);
+        let successful_files = AtomicU64::new(0);
+        let failed_files = AtomicU64::new(0);
+        let total_messages = AtomicU64::new(0);
+
+        f(SearchWorkerState {
+            total_files: 1,
+            start_time: Instant::now(),
+            deadline,
+            batch_size: 4,
+            max_results,
+            external_cancel: cancel_flag,
+            stop_flag: &stop_flag,
+            exit_reason: &exit_reason,
+            files_completed: &files_completed,
+            successful_files: &successful_files,
+            failed_files: &failed_files,
+            total_messages: &total_messages,
+            sink,
+        });
+    }
+
+    #[test]
+    fn test_reserve_result_slots_truncates_at_max_results() {
+        let sink = CountingSink::new();
+        with_worker_state(Some(3), None, None, &sink, |state| {
+            assert_eq!(reserve_result_slots(&state, 2), 2);
+            assert_eq!(state.total_messages.load(Ordering::Relaxed), 2);
+            assert_eq!(reserve_result_slots(&state, 2), 1);
+            assert_eq!(state.total_messages.load(Ordering::Relaxed), 3);
+            assert_eq!(
+                current_exit_reason(&state),
+                Some(SearchExitReason::MaxResultsReached)
+            );
+            assert!(state.stop_flag.load(Ordering::Relaxed));
+        });
+    }
+
+    #[test]
+    fn test_emit_search_batch_reuses_batch_capacity() {
+        let sink = CountingSink::new();
+        with_worker_state(Some(3), None, None, &sink, |state| {
+            let mut batch = vec![
+                BgpElem::default(),
+                BgpElem::default(),
+                BgpElem::default(),
+                BgpElem::default(),
+            ];
+            let accepted = emit_search_batch(&state, 0, "file", "collector", &mut batch);
+            assert_eq!(accepted, 3);
+            assert_eq!(sink.batches.load(Ordering::Relaxed), 1);
+            assert_eq!(sink.elements.load(Ordering::Relaxed), 3);
+            assert!(batch.is_empty());
+            assert!(batch.capacity() >= state.batch_size);
+        });
+    }
+
+    #[test]
+    fn test_search_should_stop_cancel_and_timeout() {
+        let sink = CountingSink::new();
+        let cancel = AtomicBool::new(true);
+        with_worker_state(None, Some(&cancel), None, &sink, |state| {
+            assert!(search_should_stop(&state));
+            assert_eq!(
+                current_exit_reason(&state),
+                Some(SearchExitReason::Cancelled)
+            );
+        });
+
+        with_worker_state(
+            None,
+            None,
+            Some(Instant::now() - Duration::from_secs(1)),
+            &sink,
+            |state| {
+                assert!(search_should_stop(&state));
+                assert_eq!(current_exit_reason(&state), Some(SearchExitReason::Timeout));
+            },
+        );
     }
 
     #[test]
