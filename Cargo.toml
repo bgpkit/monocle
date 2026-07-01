@@ -76,6 +76,11 @@ name = "ws_client_all"
 path = "examples/ws_client_all.rs"
 required-features = ["server"]
 
+[[example]]
+name = "db_refresh_bench"
+path = "examples/db_refresh_bench.rs"
+required-features = ["lib"]
+
 [features]
 default = ["cli"]
 
