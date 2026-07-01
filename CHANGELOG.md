@@ -54,14 +54,20 @@ All notable changes to this project will be documented in this file.
     element batches, cancellation on disconnect, and max-results limit
 * Added server configuration fields to `MonocleConfig`: `server_address`,
   `server_port`, `server_max_search_batch_size`, `server_max_search_results`,
-  `server_search_timeout_secs`. All configurable via `monocle.toml` and
-  `MONOCLE_*` environment variables.
-* SSE search streaming uses sequential file processing with `Arc<AtomicBool>`
-  cancellation — no new lens method needed. The server calls existing
-  `SearchFilters` utility methods (`to_broker_items`, `to_parser`) directly.
+  `server_search_timeout_secs`, `server_max_concurrent_searches`, and shared
+  `search_concurrency`. All configurable via `monocle.toml` and `MONOCLE_*`
+  environment variables.
+* Parallelized SSE search streaming through the shared search executor while
+  preserving cancellation, bounded-channel backpressure, max-results handling,
+  timeout handling, and the single-terminal-event invariant.
 * Bounded mpsc channel (capacity 32) with backpressure: element batches are
   never dropped; progress events may be coalesced under backpressure.
 * Terminal event invariant: exactly one of `completed`, `cancelled`, or `error`.
+* Added `--concurrency` to local search and server commands. Explicit values use
+  local rayon thread pools; unset/0 keeps rayon defaults including
+  `RAYON_NUM_THREADS`.
+* Added server admission control for SSE search requests via
+  `server_max_concurrent_searches` (default 3); excess requests return HTTP 429.
 * Added Phase 2 REST API endpoints:
   - Tier 1 (stateless): `POST /time/parse`, `POST /country/lookup`,
     `POST /ip/lookup`, `GET /ip/public`

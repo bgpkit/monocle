@@ -71,6 +71,8 @@ pub enum ApiErrorCode {
     Cancelled,
     /// Search failed during execution
     SearchFailed,
+    /// Too many concurrent requests
+    TooManyRequests,
     /// Required local data not initialized
     NotInitialized,
     /// Unexpected server error
@@ -105,6 +107,13 @@ impl ApiError {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             ApiErrorResponse::internal(message),
+        )
+    }
+
+    pub fn too_many_requests(message: impl Into<String>) -> Self {
+        Self::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            ApiErrorResponse::new(ApiErrorCode::TooManyRequests, message),
         )
     }
 }

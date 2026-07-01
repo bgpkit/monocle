@@ -29,6 +29,7 @@ use axum::middleware::from_fn_with_state;
 use axum::routing::get;
 use axum::Router as AxumRouter;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::config::MonocleConfig;
@@ -41,6 +42,7 @@ use crate::config::MonocleConfig;
 #[derive(Clone)]
 pub struct ServerState {
     pub config: Arc<MonocleConfig>,
+    pub search_permits: Arc<Semaphore>,
 }
 
 // =============================================================================
@@ -54,8 +56,10 @@ pub async fn start_server(config: MonocleConfig) -> anyhow::Result<()> {
     let auth_enabled = config.server_auth_enabled;
     let auth_token = config.server_auth_token.trim().to_string();
 
+    let max_concurrent_searches = config.server_max_concurrent_searches;
     let state = ServerState {
         config: Arc::new(config),
+        search_permits: Arc::new(Semaphore::new(max_concurrent_searches)),
     };
 
     let cors = CorsLayer::new()
@@ -113,6 +117,7 @@ mod tests {
         let config = MonocleConfig::default();
         let state = ServerState {
             config: Arc::new(config),
+            search_permits: Arc::new(Semaphore::new(3)),
         };
         let _cloned = state.clone();
     }

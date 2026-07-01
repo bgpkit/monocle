@@ -2,16 +2,16 @@
 //!
 //! `POST /api/v1/search/stream` accepts a JSON request body and returns a
 //! `text/event-stream` response. The server runs a sequential, cancellable
-//! search loop in a blocking task, streaming progress and element batch
-//! events to the client. Cancellation is triggered by closing the HTTP
+//! parallel search executor in a blocking task, streaming progress and element
+//! batch events to the client. Cancellation is triggered by closing the HTTP
 //! connection — when the SSE response is dropped, the cancellation flag is
 //! set and the worker stops.
 //!
 //! See `SSE_SERVICE_OVERHAUL_DESIGN.md` Section 6 for the algorithm.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::extract::State;
 use axum::response::sse::{Event as SseEvent, Sse};
@@ -23,7 +23,10 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::lens::parse::ParseElemType;
-use crate::lens::search::{SearchFilters, SearchProgress, SearchSummary};
+use crate::lens::search::{
+    SearchControl, SearchElementBatch, SearchExecutionOptions, SearchExitReason, SearchFilters,
+    SearchLens, SearchProgress, SearchSink, SearchSummary,
+};
 use crate::server::http::{ApiError, ApiErrorCode, ApiErrorResponse};
 use crate::server::ServerState;
 
@@ -161,6 +164,7 @@ pub struct SearchStarted {
 pub struct ElementsBatch {
     pub total_so_far: u64,
     pub collector: Option<String>,
+    pub file_url: String,
     pub elements: Vec<BgpElem>,
 }
 
@@ -227,7 +231,8 @@ pub async fn stream_search(
         .min(config.server_max_search_batch_size)
         .max(1);
 
-    let max_results = match (request.max_results, config.server_max_search_results) {
+    let requested_max_results = request.max_results.filter(|max| *max > 0);
+    let max_results = match (requested_max_results, config.server_max_search_results) {
         (Some(r), 0) => Some(r),                // server unlimited
         (Some(r), limit) => Some(r.min(limit)), // clamp to server limit
         (None, 0) => None,                      // both unlimited
@@ -240,20 +245,42 @@ pub async fn stream_search(
         None
     };
 
-    // 4. Create bounded channel and cancellation flag
+    // 4. Enforce server-side concurrent search limit. Requests are rejected
+    // immediately instead of queued so clients get deterministic feedback.
+    let search_permit = if config.server_max_concurrent_searches == 0 {
+        None
+    } else {
+        Some(
+            state
+                .search_permits
+                .clone()
+                .try_acquire_owned()
+                .map_err(|_| ApiError::too_many_requests("too many concurrent search requests"))?,
+        )
+    };
+
+    let concurrency = if config.search_concurrency > 0 {
+        Some(config.search_concurrency)
+    } else {
+        None
+    };
+
+    // 5. Create bounded channel and cancellation flag
     let (tx, rx) = mpsc::channel::<SearchStreamEvent>(32);
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
-    // 5. Spawn the search worker in a blocking task
+    // 6. Spawn the search worker in a blocking task
     let worker_cancel_flag = cancel_flag.clone();
     let worker_tx = tx.clone();
 
     tokio::task::spawn_blocking(move || {
+        let _search_permit = search_permit;
         run_search_worker(
             filters,
             batch_size,
             max_results,
             timeout_secs,
+            concurrency,
             worker_cancel_flag,
             worker_tx,
         );
@@ -293,10 +320,10 @@ fn run_search_worker(
     batch_size: usize,
     max_results: Option<u64>,
     timeout_secs: Option<u64>,
+    concurrency: Option<usize>,
     cancel_flag: Arc<AtomicBool>,
     event_tx: mpsc::Sender<SearchStreamEvent>,
 ) {
-    // Send Started event
     let _ = send_event(
         &event_tx,
         SearchStreamEvent::Started(SearchStarted {
@@ -306,19 +333,18 @@ fn run_search_worker(
         }),
     );
 
-    let start_time = Instant::now();
-    let deadline = timeout_secs.map(|s| start_time + Duration::from_secs(s));
+    let sink = Arc::new(SseSearchSink::new(event_tx.clone(), cancel_flag.clone()));
+    let options = SearchExecutionOptions {
+        concurrency,
+        max_results,
+        timeout: timeout_secs.map(Duration::from_secs),
+        cancel_flag: Some(cancel_flag),
+        batch_size,
+    };
 
-    let is_cancelled = || cancel_flag.load(Ordering::Relaxed);
-
-    // 1. Query broker for files
-    let _ = send_event(
-        &event_tx,
-        SearchStreamEvent::Progress(SearchProgress::QueryingBroker),
-    );
-
-    let items = match filters.to_broker_items() {
-        Ok(items) => items,
+    let lens = SearchLens::new();
+    let outcome = match lens.search_with_options(&filters, options, sink) {
+        Ok(outcome) => outcome,
         Err(e) => {
             let _ = send_event(
                 &event_tx,
@@ -331,204 +357,78 @@ fn run_search_worker(
         }
     };
 
-    let total_files = items.len();
-    let _ = send_event(
-        &event_tx,
-        SearchStreamEvent::Progress(SearchProgress::FilesFound { count: total_files }),
-    );
+    match outcome.exit_reason {
+        SearchExitReason::Cancelled => {
+            let _ = send_event(&event_tx, SearchStreamEvent::Cancelled);
+        }
+        SearchExitReason::Timeout => {
+            let _ = send_event(
+                &event_tx,
+                SearchStreamEvent::Error(ApiErrorResponse::new(
+                    ApiErrorCode::SearchFailed,
+                    format!(
+                        "Search timed out after {} seconds",
+                        timeout_secs.unwrap_or(0)
+                    ),
+                )),
+            );
+        }
+        SearchExitReason::Completed | SearchExitReason::MaxResultsReached => {
+            let _ = send_event(&event_tx, SearchStreamEvent::Completed(outcome.summary));
+        }
+    }
+}
 
-    if total_files == 0 {
-        let _ = send_event(
-            &event_tx,
-            SearchStreamEvent::Completed(SearchSummary {
-                total_files: 0,
-                successful_files: 0,
-                failed_files: 0,
-                total_messages: 0,
-                duration_secs: start_time.elapsed().as_secs_f64(),
-            }),
-        );
-        return;
+struct SseSearchState {
+    total_so_far: u64,
+}
+
+struct SseSearchSink {
+    state: Mutex<SseSearchState>,
+    event_tx: mpsc::Sender<SearchStreamEvent>,
+    cancel_flag: Arc<AtomicBool>,
+}
+
+impl SseSearchSink {
+    fn new(event_tx: mpsc::Sender<SearchStreamEvent>, cancel_flag: Arc<AtomicBool>) -> Self {
+        Self {
+            state: Mutex::new(SseSearchState { total_so_far: 0 }),
+            event_tx,
+            cancel_flag,
+        }
+    }
+}
+
+impl SearchSink for SseSearchSink {
+    fn on_progress(&self, progress: SearchProgress) {
+        if send_event(&self.event_tx, SearchStreamEvent::Progress(progress)).is_err() {
+            self.cancel_flag.store(true, Ordering::Relaxed);
+        }
     }
 
-    let mut successful_files: usize = 0;
-    let mut failed_files: usize = 0;
-    let mut total_messages: u64 = 0;
-    let mut total_elements_sent: u64 = 0;
-
-    // Process files sequentially
-    for (index, item) in items.into_iter().enumerate() {
-        if is_cancelled() {
-            break;
-        }
-
-        // Check timeout
-        if let Some(dl) = deadline {
-            if Instant::now() >= dl {
-                let _ = send_event(
-                    &event_tx,
-                    SearchStreamEvent::Error(ApiErrorResponse::new(
-                        ApiErrorCode::SearchFailed,
-                        format!(
-                            "Search timed out after {} seconds",
-                            timeout_secs.unwrap_or(0)
-                        ),
-                    )),
-                );
-                return;
-            }
-        }
-
-        let url = &item.url;
-        let collector = item.collector_id.clone();
-
-        let _ = send_event(
-            &event_tx,
-            SearchStreamEvent::Progress(SearchProgress::FileStarted {
-                file_index: index,
-                total_files,
-                file_url: url.clone(),
-                collector: collector.clone(),
-            }),
-        );
-
-        let parser = match filters.to_parser(url) {
-            Ok(p) => p,
-            Err(e) => {
-                failed_files += 1;
-                let _ = send_event(
-                    &event_tx,
-                    SearchStreamEvent::Progress(SearchProgress::FileCompleted {
-                        file_index: index,
-                        total_files,
-                        messages_found: 0,
-                        success: false,
-                        error: Some(e.to_string()),
-                    }),
-                );
-                continue;
+    fn on_elements(&self, batch: SearchElementBatch) -> SearchControl {
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                self.cancel_flag.store(true, Ordering::Relaxed);
+                return SearchControl::Stop;
             }
         };
 
-        let mut file_messages: u64 = 0;
-        let mut batch: Vec<BgpElem> = Vec::with_capacity(batch_size);
-        let mut max_reached = false;
+        state.total_so_far += batch.elements.len() as u64;
+        let event = SearchStreamEvent::Elements(ElementsBatch {
+            total_so_far: state.total_so_far,
+            collector: Some(batch.collector),
+            file_url: batch.file_url,
+            elements: batch.elements,
+        });
 
-        for elem in parser {
-            if is_cancelled() {
-                break;
-            }
-
-            file_messages += 1;
-            total_elements_sent += 1;
-            batch.push(elem);
-
-            if batch.len() >= batch_size {
-                let batch_event = SearchStreamEvent::Elements(ElementsBatch {
-                    total_so_far: total_elements_sent,
-                    collector: Some(collector.clone()),
-                    elements: std::mem::take(&mut batch),
-                });
-
-                if send_event(&event_tx, batch_event).is_err() {
-                    // Channel closed (client gone) — cancel
-                    cancel_flag.store(true, Ordering::Relaxed);
-                    break;
-                }
-            }
-
-            // Check max_results
-            if let Some(max) = max_results {
-                if total_elements_sent >= max {
-                    max_reached = true;
-                    break;
-                }
-            }
-        }
-
-        // Flush remaining partial batch for this file
-        if !batch.is_empty() {
-            let _ = send_event(
-                &event_tx,
-                SearchStreamEvent::Elements(ElementsBatch {
-                    total_so_far: total_elements_sent,
-                    collector: Some(collector.clone()),
-                    elements: std::mem::take(&mut batch),
-                }),
-            );
-        }
-
-        if max_reached {
-            successful_files += 1;
-            total_messages += file_messages;
-            let _ = send_event(
-                &event_tx,
-                SearchStreamEvent::Completed(SearchSummary {
-                    total_files,
-                    successful_files,
-                    failed_files,
-                    total_messages,
-                    duration_secs: start_time.elapsed().as_secs_f64(),
-                }),
-            );
-            return;
-        }
-
-        if is_cancelled() {
-            break;
-        }
-
-        successful_files += 1;
-        total_messages += file_messages;
-
-        let _ = send_event(
-            &event_tx,
-            SearchStreamEvent::Progress(SearchProgress::FileCompleted {
-                file_index: index,
-                total_files,
-                messages_found: file_messages,
-                success: true,
-                error: None,
-            }),
-        );
-
-        let completed = index + 1;
-        let elapsed = start_time.elapsed().as_secs_f64();
-        let percent = completed as f64 / total_files as f64 * 100.0;
-        let eta = if completed < total_files && percent < 100.0 {
-            let rate = elapsed / completed as f64;
-            Some(rate * (total_files - completed) as f64)
+        if send_event(&self.event_tx, event).is_err() {
+            self.cancel_flag.store(true, Ordering::Relaxed);
+            SearchControl::Stop
         } else {
-            None
-        };
-
-        let _ = send_event(
-            &event_tx,
-            SearchStreamEvent::Progress(SearchProgress::ProgressUpdate {
-                files_completed: completed,
-                total_files,
-                total_messages,
-                percent_complete: percent,
-                elapsed_secs: elapsed,
-                eta_secs: eta,
-            }),
-        );
-    }
-
-    // Send terminal event
-    if is_cancelled() {
-        let _ = send_event(&event_tx, SearchStreamEvent::Cancelled);
-    } else {
-        let _ = send_event(
-            &event_tx,
-            SearchStreamEvent::Completed(SearchSummary {
-                total_files,
-                successful_files,
-                failed_files,
-                total_messages,
-                duration_secs: start_time.elapsed().as_secs_f64(),
-            }),
-        );
+            SearchControl::Continue
+        }
     }
 }
 

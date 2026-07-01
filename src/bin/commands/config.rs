@@ -104,7 +104,9 @@ struct ServerDefaults {
     port: u16,
     max_search_batch_size: usize,
     max_search_results: u64,
+    search_concurrency: usize,
     search_timeout_secs: u64,
+    max_concurrent_searches: usize,
     auth_enabled: bool,
 }
 
@@ -115,7 +117,9 @@ impl From<&MonocleConfig> for ServerDefaults {
             port: config.server_port,
             max_search_batch_size: config.server_max_search_batch_size,
             max_search_results: config.server_max_search_results,
+            search_concurrency: config.search_concurrency,
             search_timeout_secs: config.server_search_timeout_secs,
+            max_concurrent_searches: config.server_max_concurrent_searches,
             auth_enabled: config.server_auth_enabled,
         }
     }
@@ -372,8 +376,24 @@ fn print_config_table(info: &ConfigInfo, verbose: bool) {
         info.server_defaults.max_search_results
     );
     println!(
+        "  Search concurrency: {}",
+        if info.server_defaults.search_concurrency == 0 {
+            "auto".to_string()
+        } else {
+            info.server_defaults.search_concurrency.to_string()
+        }
+    );
+    println!(
         "  Search timeout:    {} seconds (0 = no timeout)",
         info.server_defaults.search_timeout_secs
+    );
+    println!(
+        "  Max SSE searches:  {}",
+        if info.server_defaults.max_concurrent_searches == 0 {
+            "unlimited".to_string()
+        } else {
+            info.server_defaults.max_concurrent_searches.to_string()
+        }
     );
     println!("  Auth enabled:      {}", info.server_defaults.auth_enabled);
 

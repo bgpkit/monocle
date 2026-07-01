@@ -46,9 +46,9 @@ use bgpkit_parser::BgpkitParser;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "cli")]
 use clap::{Args, ValueEnum};
@@ -144,6 +144,59 @@ pub type SearchProgressCallback = Arc<dyn Fn(SearchProgress) + Send + Sync>;
 ///
 /// Called for each BGP element found during search, along with the collector ID.
 pub type ElementHandler = Arc<dyn Fn(BgpElem, String) + Send + Sync>;
+
+/// Runtime options for executing a search.
+#[derive(Clone, Default)]
+pub struct SearchExecutionOptions {
+    /// Number of rayon worker threads for this search. `None` or `Some(0)` uses rayon's default.
+    pub concurrency: Option<usize>,
+    /// Maximum number of elements to emit. `None` means unlimited.
+    pub max_results: Option<u64>,
+    /// Maximum wall-clock runtime after broker query starts. `None` means no timeout.
+    pub timeout: Option<Duration>,
+    /// Optional external cancellation flag.
+    pub cancel_flag: Option<Arc<AtomicBool>>,
+    /// Number of elements per batch passed to [`SearchSink::on_elements`].
+    pub batch_size: usize,
+}
+
+/// Reason a search execution stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SearchExitReason {
+    Completed,
+    Cancelled,
+    Timeout,
+    MaxResultsReached,
+}
+
+/// Search execution result including both summary and stop reason.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchOutcome {
+    pub summary: SearchSummary,
+    pub exit_reason: SearchExitReason,
+}
+
+/// A batch of matched elements from a single MRT file.
+pub struct SearchElementBatch {
+    pub file_index: usize,
+    pub file_url: String,
+    pub collector: String,
+    pub elements: Vec<BgpElem>,
+}
+
+/// Control returned by a search sink after receiving elements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchControl {
+    Continue,
+    Stop,
+}
+
+/// Sink used by the shared search executor.
+pub trait SearchSink: Send + Sync {
+    fn on_progress(&self, _progress: SearchProgress) {}
+
+    fn on_elements(&self, batch: SearchElementBatch) -> SearchControl;
+}
 
 // =============================================================================
 // Types
@@ -383,142 +436,109 @@ impl SearchLens {
         progress_callback: Option<SearchProgressCallback>,
         element_handler: ElementHandler,
     ) -> Result<SearchSummary> {
-        // Notify broker query starting
-        if let Some(ref cb) = progress_callback {
-            cb(SearchProgress::QueryingBroker);
+        struct CallbackSink {
+            progress_callback: Option<SearchProgressCallback>,
+            element_handler: ElementHandler,
         }
 
-        // Query broker
-        let items = self.query_broker(filters)?;
-        let total_files = items.len();
-
-        // Notify files found
-        if let Some(ref cb) = progress_callback {
-            cb(SearchProgress::FilesFound { count: total_files });
-        }
-
-        if total_files == 0 {
-            if let Some(ref cb) = progress_callback {
-                cb(SearchProgress::Completed {
-                    total_files: 0,
-                    successful_files: 0,
-                    failed_files: 0,
-                    total_messages: 0,
-                    duration_secs: 0.0,
-                    files_per_sec: None,
-                });
+        impl SearchSink for CallbackSink {
+            fn on_progress(&self, progress: SearchProgress) {
+                if let Some(ref cb) = self.progress_callback {
+                    cb(progress);
+                }
             }
 
-            return Ok(SearchSummary {
+            fn on_elements(&self, batch: SearchElementBatch) -> SearchControl {
+                for elem in batch.elements {
+                    (self.element_handler)(elem, batch.collector.clone());
+                }
+                SearchControl::Continue
+            }
+        }
+
+        let sink = Arc::new(CallbackSink {
+            progress_callback,
+            element_handler,
+        });
+        let outcome = self.search_with_options(filters, SearchExecutionOptions::default(), sink)?;
+        Ok(outcome.summary)
+    }
+
+    /// Search BGP messages using the shared executor.
+    pub fn search_with_options(
+        &self,
+        filters: &SearchFilters,
+        options: SearchExecutionOptions,
+        sink: Arc<dyn SearchSink>,
+    ) -> Result<SearchOutcome> {
+        sink.on_progress(SearchProgress::QueryingBroker);
+
+        let items = self.query_broker(filters)?;
+        let total_files = items.len();
+        sink.on_progress(SearchProgress::FilesFound { count: total_files });
+
+        if total_files == 0 {
+            let summary = SearchSummary {
                 total_files: 0,
                 successful_files: 0,
                 failed_files: 0,
                 total_messages: 0,
                 duration_secs: 0.0,
+            };
+            sink.on_progress(SearchProgress::Completed {
+                total_files: 0,
+                successful_files: 0,
+                failed_files: 0,
+                total_messages: 0,
+                duration_secs: 0.0,
+                files_per_sec: None,
+            });
+            return Ok(SearchOutcome {
+                summary,
+                exit_reason: SearchExitReason::Completed,
             });
         }
 
         let start_time = Instant::now();
+        let batch_size = options.batch_size.max(1);
+        let max_results = options.max_results.filter(|max| *max > 0);
+        let deadline = options.timeout.map(|timeout| start_time + timeout);
+        let external_cancel = options.cancel_flag.clone();
+        let stop_flag = AtomicBool::new(false);
+        let exit_reason = AtomicU64::new(0);
         let files_completed = AtomicU64::new(0);
         let successful_files = AtomicU64::new(0);
         let failed_files = AtomicU64::new(0);
         let total_messages = AtomicU64::new(0);
 
-        // Process files in parallel
-        items.into_par_iter().enumerate().for_each(|(index, item)| {
-            let url = item.url.clone();
-            let collector = item.collector_id.clone();
-
-            // Notify file started
-            if let Some(ref cb) = progress_callback {
-                cb(SearchProgress::FileStarted {
-                    file_index: index,
+        let run = || {
+            items.into_par_iter().enumerate().for_each(|(index, item)| {
+                let state = SearchWorkerState {
                     total_files,
-                    file_url: url.clone(),
-                    collector: collector.clone(),
-                });
+                    start_time,
+                    deadline,
+                    batch_size,
+                    max_results,
+                    external_cancel: external_cancel.as_deref(),
+                    stop_flag: &stop_flag,
+                    exit_reason: &exit_reason,
+                    files_completed: &files_completed,
+                    successful_files: &successful_files,
+                    failed_files: &failed_files,
+                    total_messages: &total_messages,
+                    sink: sink.as_ref(),
+                };
+                process_search_item(filters, index, item, state);
+            });
+        };
+
+        match options.concurrency {
+            Some(n) if n > 0 => {
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(n).build()?;
+                pool.install(run);
             }
-
-            // Try to parse the file
-            match filters.to_parser(url.as_str()) {
-                Ok(parser) => {
-                    let mut file_messages: u64 = 0;
-
-                    for elem in parser {
-                        element_handler(elem, collector.clone());
-                        file_messages += 1;
-                    }
-
-                    total_messages.fetch_add(file_messages, Ordering::Relaxed);
-                    successful_files.fetch_add(1, Ordering::Relaxed);
-                    let completed = files_completed.fetch_add(1, Ordering::Relaxed) + 1;
-
-                    // Notify file completed
-                    if let Some(ref cb) = progress_callback {
-                        cb(SearchProgress::FileCompleted {
-                            file_index: index,
-                            total_files,
-                            messages_found: file_messages,
-                            success: true,
-                            error: None,
-                        });
-
-                        // Send progress update
-                        let elapsed = start_time.elapsed().as_secs_f64();
-                        let percent = completed as f64 / total_files as f64 * 100.0;
-                        let eta = if completed > 0 && percent < 100.0 {
-                            let rate = elapsed / completed as f64;
-                            Some(rate * (total_files as u64 - completed) as f64)
-                        } else {
-                            None
-                        };
-
-                        cb(SearchProgress::ProgressUpdate {
-                            files_completed: completed as usize,
-                            total_files,
-                            total_messages: total_messages.load(Ordering::Relaxed),
-                            percent_complete: percent,
-                            elapsed_secs: elapsed,
-                            eta_secs: eta,
-                        });
-                    }
-                }
-                Err(e) => {
-                    failed_files.fetch_add(1, Ordering::Relaxed);
-                    let completed = files_completed.fetch_add(1, Ordering::Relaxed) + 1;
-
-                    // Notify file failed
-                    if let Some(ref cb) = progress_callback {
-                        cb(SearchProgress::FileCompleted {
-                            file_index: index,
-                            total_files,
-                            messages_found: 0,
-                            success: false,
-                            error: Some(e.to_string()),
-                        });
-
-                        // Send progress update
-                        let elapsed = start_time.elapsed().as_secs_f64();
-                        let percent = completed as f64 / total_files as f64 * 100.0;
-                        let eta = if completed > 0 && percent < 100.0 {
-                            let rate = elapsed / completed as f64;
-                            Some(rate * (total_files as u64 - completed) as f64)
-                        } else {
-                            None
-                        };
-
-                        cb(SearchProgress::ProgressUpdate {
-                            files_completed: completed as usize,
-                            total_files,
-                            total_messages: total_messages.load(Ordering::Relaxed),
-                            percent_complete: percent,
-                            elapsed_secs: elapsed,
-                            eta_secs: eta,
-                        });
-                    }
-                }
-            }
-        });
+            _ => run(),
+        }
 
         let duration_secs = start_time.elapsed().as_secs_f64();
         let final_successful = successful_files.load(Ordering::Relaxed) as usize;
@@ -530,9 +550,18 @@ impl SearchLens {
             None
         };
 
-        // Notify completion
-        if let Some(ref cb) = progress_callback {
-            cb(SearchProgress::Completed {
+        let exit_reason = match exit_reason.load(Ordering::Relaxed) {
+            1 => SearchExitReason::Cancelled,
+            2 => SearchExitReason::Timeout,
+            3 => SearchExitReason::MaxResultsReached,
+            _ => SearchExitReason::Completed,
+        };
+
+        if matches!(
+            exit_reason,
+            SearchExitReason::Completed | SearchExitReason::MaxResultsReached
+        ) {
+            sink.on_progress(SearchProgress::Completed {
                 total_files,
                 successful_files: final_successful,
                 failed_files: final_failed,
@@ -542,12 +571,17 @@ impl SearchLens {
             });
         }
 
-        Ok(SearchSummary {
+        let summary = SearchSummary {
             total_files,
             successful_files: final_successful,
             failed_files: final_failed,
             total_messages: final_messages,
             duration_secs,
+        };
+
+        Ok(SearchOutcome {
+            summary,
+            exit_reason,
         })
     }
 
@@ -590,6 +624,219 @@ impl SearchLens {
 
         Ok((result, summary))
     }
+}
+
+struct SearchWorkerState<'a> {
+    total_files: usize,
+    start_time: Instant,
+    deadline: Option<Instant>,
+    batch_size: usize,
+    max_results: Option<u64>,
+    external_cancel: Option<&'a AtomicBool>,
+    stop_flag: &'a AtomicBool,
+    exit_reason: &'a AtomicU64,
+    files_completed: &'a AtomicU64,
+    successful_files: &'a AtomicU64,
+    failed_files: &'a AtomicU64,
+    total_messages: &'a AtomicU64,
+    sink: &'a dyn SearchSink,
+}
+
+fn process_search_item(
+    filters: &SearchFilters,
+    index: usize,
+    item: BrokerItem,
+    state: SearchWorkerState<'_>,
+) {
+    if search_should_stop(&state) {
+        return;
+    }
+
+    let url = item.url.clone();
+    let collector = item.collector_id.clone();
+
+    state.sink.on_progress(SearchProgress::FileStarted {
+        file_index: index,
+        total_files: state.total_files,
+        file_url: url.clone(),
+        collector: collector.clone(),
+    });
+
+    let parser = match filters.to_parser(url.as_str()) {
+        Ok(parser) => parser,
+        Err(e) => {
+            state.failed_files.fetch_add(1, Ordering::Relaxed);
+            let completed = state.files_completed.fetch_add(1, Ordering::Relaxed) + 1;
+            state.sink.on_progress(SearchProgress::FileCompleted {
+                file_index: index,
+                total_files: state.total_files,
+                messages_found: 0,
+                success: false,
+                error: Some(e.to_string()),
+            });
+            send_progress_update(&state, completed);
+            return;
+        }
+    };
+
+    let mut file_messages = 0_u64;
+    let mut batch = Vec::with_capacity(state.batch_size);
+
+    for elem in parser {
+        if search_should_stop(&state) {
+            break;
+        }
+
+        batch.push(elem);
+        if batch.len() >= state.batch_size {
+            let accepted = emit_search_batch(&state, index, &url, &collector, &mut batch);
+            file_messages += accepted;
+        }
+    }
+
+    if !batch.is_empty() && !search_should_stop(&state) {
+        let accepted = emit_search_batch(&state, index, &url, &collector, &mut batch);
+        file_messages += accepted;
+    }
+
+    state.successful_files.fetch_add(1, Ordering::Relaxed);
+    let completed = state.files_completed.fetch_add(1, Ordering::Relaxed) + 1;
+    state.sink.on_progress(SearchProgress::FileCompleted {
+        file_index: index,
+        total_files: state.total_files,
+        messages_found: file_messages,
+        success: true,
+        error: None,
+    });
+    send_progress_update(&state, completed);
+}
+
+fn search_should_stop(state: &SearchWorkerState<'_>) -> bool {
+    if state.stop_flag.load(Ordering::Relaxed) {
+        return true;
+    }
+
+    if let Some(cancel) = state.external_cancel {
+        if cancel.load(Ordering::Relaxed) {
+            state
+                .exit_reason
+                .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+                .ok();
+            state.stop_flag.store(true, Ordering::Relaxed);
+            return true;
+        }
+    }
+
+    if let Some(deadline) = state.deadline {
+        if Instant::now() >= deadline {
+            state
+                .exit_reason
+                .compare_exchange(0, 2, Ordering::Relaxed, Ordering::Relaxed)
+                .ok();
+            state.stop_flag.store(true, Ordering::Relaxed);
+            return true;
+        }
+    }
+
+    false
+}
+
+fn emit_search_batch(
+    state: &SearchWorkerState<'_>,
+    file_index: usize,
+    file_url: &str,
+    collector: &str,
+    batch: &mut Vec<BgpElem>,
+) -> u64 {
+    let original_len = batch.len();
+    let accepted = reserve_result_slots(state, original_len as u64);
+    if accepted == 0 {
+        batch.clear();
+        return 0;
+    }
+
+    if accepted < original_len as u64 {
+        batch.truncate(accepted as usize);
+    }
+
+    let elements = std::mem::take(batch);
+    let control = state.sink.on_elements(SearchElementBatch {
+        file_index,
+        file_url: file_url.to_string(),
+        collector: collector.to_string(),
+        elements,
+    });
+
+    if control == SearchControl::Stop {
+        state
+            .exit_reason
+            .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+            .ok();
+        state.stop_flag.store(true, Ordering::Relaxed);
+    }
+
+    accepted
+}
+
+fn reserve_result_slots(state: &SearchWorkerState<'_>, wanted: u64) -> u64 {
+    match state.max_results {
+        None => {
+            state.total_messages.fetch_add(wanted, Ordering::Relaxed);
+            wanted
+        }
+        Some(max) => loop {
+            let current = state.total_messages.load(Ordering::Relaxed);
+            if current >= max {
+                state
+                    .exit_reason
+                    .compare_exchange(0, 3, Ordering::Relaxed, Ordering::Relaxed)
+                    .ok();
+                state.stop_flag.store(true, Ordering::Relaxed);
+                return 0;
+            }
+
+            let allowed = wanted.min(max - current);
+            if state
+                .total_messages
+                .compare_exchange(
+                    current,
+                    current + allowed,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
+                if allowed < wanted || current + allowed >= max {
+                    state
+                        .exit_reason
+                        .compare_exchange(0, 3, Ordering::Relaxed, Ordering::Relaxed)
+                        .ok();
+                    state.stop_flag.store(true, Ordering::Relaxed);
+                }
+                return allowed;
+            }
+        },
+    }
+}
+
+fn send_progress_update(state: &SearchWorkerState<'_>, completed: u64) {
+    let elapsed = state.start_time.elapsed().as_secs_f64();
+    let percent = completed as f64 / state.total_files as f64 * 100.0;
+    let eta = if completed > 0 && percent < 100.0 {
+        let rate = elapsed / completed as f64;
+        Some(rate * (state.total_files as u64 - completed) as f64)
+    } else {
+        None
+    };
+
+    state.sink.on_progress(SearchProgress::ProgressUpdate {
+        files_completed: completed as usize,
+        total_files: state.total_files,
+        total_messages: state.total_messages.load(Ordering::Relaxed),
+        percent_complete: percent,
+        elapsed_secs: elapsed,
+        eta_secs: eta,
+    });
 }
 
 impl Default for SearchLens {
