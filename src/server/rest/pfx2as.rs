@@ -28,6 +28,21 @@ pub async fn pfx2as_lookup(
     let prefix = query.prefix.clone();
     let mode_str = query.mode.clone().unwrap_or_else(|| "longest".to_string());
 
+    // Validate mode before spawning the blocking task so invalid input
+    // returns 400 (client error) rather than 500 (server error).
+    let mode = match mode_str.as_str() {
+        "exact" => Pfx2asLookupMode::Exact,
+        "longest" => Pfx2asLookupMode::Longest,
+        "covering" => Pfx2asLookupMode::Covering,
+        "covered" => Pfx2asLookupMode::Covered,
+        other => {
+            return Err(ApiError::invalid_params(format!(
+                "Invalid mode '{}': expected exact, longest, covering, or covered",
+                other
+            )));
+        }
+    };
+
     let results =
         tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Pfx2asDetailedResult>> {
             let db = MonocleDatabase::open_in_dir(&data_dir)?;
@@ -38,16 +53,6 @@ pub async fn pfx2as_lookup(
                 anyhow::bail!("NOT_INITIALIZED:PFX2AS");
             }
 
-            let mode = match mode_str.as_str() {
-                "exact" => Pfx2asLookupMode::Exact,
-                "longest" => Pfx2asLookupMode::Longest,
-                "covering" => Pfx2asLookupMode::Covering,
-                "covered" => Pfx2asLookupMode::Covered,
-                other => anyhow::bail!(
-                    "Invalid mode '{}': expected exact, longest, covering, or covered",
-                    other
-                ),
-            };
             let args = Pfx2asLookupArgs {
                 prefix: prefix.clone(),
                 mode,
@@ -73,7 +78,8 @@ pub async fn pfx2as_lookup(
                     ),
                 ))
             } else {
-                Err(ApiError::invalid_params(msg))
+                // Internal errors (DB failures, query issues) are 500
+                Err(ApiError::internal(msg))
             }
         }
     }

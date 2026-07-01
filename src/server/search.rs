@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::lens::parse::ParseElemType;
 use crate::lens::search::{SearchFilters, SearchProgress, SearchSummary};
 use crate::server::http::{ApiError, ApiErrorCode, ApiErrorResponse};
 use crate::server::ServerState;
@@ -110,7 +111,15 @@ impl TryFrom<SearchStreamFilters> for SearchFilters {
                 .collect(),
             peer_asn: f.peer_asn,
             communities: f.communities,
-            elem_type: None, // TODO: parse elem_type string → ParseElemType
+            elem_type: match f.elem_type.as_deref() {
+                None => None,
+                Some("A") | Some("a") => Some(ParseElemType::A),
+                Some("W") | Some("w") => Some(ParseElemType::W),
+                Some(other) => anyhow::bail!(
+                    "invalid elem_type '{}': expected 'A' (announce) or 'W' (withdrawal)",
+                    other
+                ),
+            },
             start_ts: Some(f.start_ts),
             end_ts: Some(f.end_ts),
             duration: None,
@@ -466,9 +475,7 @@ fn run_search_worker(
             break;
         }
 
-        if file_messages > 0 {
-            successful_files += 1;
-        }
+        successful_files += 1;
         total_messages += file_messages;
 
         let _ = send_event(

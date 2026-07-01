@@ -1474,7 +1474,10 @@ fn run_remote_search_wrapper(
             .map(|ip| ip.to_string())
             .collect(),
         communities: filters.parse_filters.communities.clone(),
-        elem_type: None,
+        elem_type: filters.parse_filters.elem_type.as_ref().map(|et| match et {
+            monocle::lens::parse::ParseElemType::A => "A".to_string(),
+            monocle::lens::parse::ParseElemType::W => "W".to_string(),
+        }),
         as_path: filters.parse_filters.as_path.clone(),
         start_ts: filters.parse_filters.start_ts.clone().unwrap_or_default(),
         end_ts: filters.parse_filters.end_ts.clone().unwrap_or_default(),

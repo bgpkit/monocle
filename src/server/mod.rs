@@ -52,7 +52,7 @@ pub async fn start_server(config: MonocleConfig) -> anyhow::Result<()> {
     let bind_address = format!("{}:{}", config.server_address, config.server_port);
 
     let auth_enabled = config.server_auth_enabled;
-    let auth_token = config.server_auth_token.clone();
+    let auth_token = config.server_auth_token.trim().to_string();
 
     let state = ServerState {
         config: Arc::new(config),
