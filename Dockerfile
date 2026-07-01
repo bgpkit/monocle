@@ -10,7 +10,8 @@ COPY --from=builder /app/target/release/monocle /usr/local/bin/monocle
 
 # Run as a non-root user for security
 RUN groupadd --system monocle && useradd --system --gid monocle --no-create-home --shell /usr/sbin/nologin monocle
-RUN mkdir -p /data/monocle /cache/monocle && chown -R monocle:monocle /data/monocle /cache/monocle
+RUN mkdir -p /data/monocle /cache/monocle /home/monocle/.config/monocle \
+    && chown -R monocle:monocle /data/monocle /cache/monocle /home/monocle
 USER monocle
 
 # Default config: bind to all interfaces, port 8080
@@ -20,7 +21,8 @@ ENV MONOCLE_SERVER_ADDRESS=0.0.0.0 \
 # Data and cache directories (mount as volumes for persistence)
 VOLUME ["/data/monocle", "/cache/monocle"]
 
-ENV MONOCLE_DATA_DIR=/data/monocle
+ENV MONOCLE_DATA_DIR=/data/monocle \
+    HOME=/home/monocle
 
 EXPOSE 8080
 ENTRYPOINT ["monocle", "server"]

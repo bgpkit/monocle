@@ -114,7 +114,9 @@ All notable changes to this project will be documented in this file.
 * Remote search client now exits with a non-zero status when the SSE stream ends
   with an `error` or `cancelled` event, or when the connection drops without a
   `completed` event.
-* Docker runtime image now runs as a dedicated non-root `monocle` user.
+* Docker runtime image now runs as a dedicated non-root `monocle` user. The
+  config directory (`/home/monocle/.config/monocle`) is pre-created and `HOME`
+  is set so the server can initialize its config on startup.
 * Remote search now applies `--filter-file` / `--prefix-file` merging and filter
   validation before dispatching, matching local search behavior.
 * Auth middleware now accepts case-insensitive `Bearer` scheme tokens per RFC 7235.
