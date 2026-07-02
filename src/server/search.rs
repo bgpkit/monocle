@@ -247,16 +247,14 @@ pub async fn stream_search(
 
     // 4. Enforce server-side concurrent search limit. Requests are rejected
     // immediately instead of queued so clients get deterministic feedback.
-    let search_permit = if config.server_max_concurrent_searches == 0 {
-        None
-    } else {
-        Some(
-            state
-                .search_permits
+    let search_permit = match state.search_permits.as_ref() {
+        Some(search_permits) => Some(
+            search_permits
                 .clone()
                 .try_acquire_owned()
                 .map_err(|_| ApiError::too_many_requests("too many concurrent search requests"))?,
-        )
+        ),
+        None => None,
     };
 
     let concurrency = if config.search_concurrency > 0 {
@@ -264,6 +262,7 @@ pub async fn stream_search(
     } else {
         None
     };
+    let search_pool = state.search_pool.clone();
 
     // 5. Create bounded channel and cancellation flag
     let (tx, rx) = mpsc::channel::<SearchStreamEvent>(32);
@@ -275,15 +274,16 @@ pub async fn stream_search(
 
     tokio::task::spawn_blocking(move || {
         let _search_permit = search_permit;
-        run_search_worker(
+        run_search_worker(SearchWorkerConfig {
             filters,
             batch_size,
             max_results,
             timeout_secs,
             concurrency,
-            worker_cancel_flag,
-            worker_tx,
-        );
+            search_pool,
+            cancel_flag: worker_cancel_flag,
+            event_tx: worker_tx,
+        });
     });
 
     // 6. Build SSE stream from the channel receiver.
@@ -315,15 +315,29 @@ pub async fn stream_search(
 // Search Worker (runs in spawn_blocking)
 // =============================================================================
 
-fn run_search_worker(
+struct SearchWorkerConfig {
     filters: SearchFilters,
     batch_size: usize,
     max_results: Option<u64>,
     timeout_secs: Option<u64>,
     concurrency: Option<usize>,
+    search_pool: Option<Arc<rayon::ThreadPool>>,
     cancel_flag: Arc<AtomicBool>,
     event_tx: mpsc::Sender<SearchStreamEvent>,
-) {
+}
+
+fn run_search_worker(config: SearchWorkerConfig) {
+    let SearchWorkerConfig {
+        filters,
+        batch_size,
+        max_results,
+        timeout_secs,
+        concurrency,
+        search_pool,
+        cancel_flag,
+        event_tx,
+    } = config;
+
     let _ = send_event(
         &event_tx,
         SearchStreamEvent::Started(SearchStarted {
@@ -336,6 +350,7 @@ fn run_search_worker(
     let sink = Arc::new(SseSearchSink::new(event_tx.clone(), cancel_flag.clone()));
     let options = SearchExecutionOptions {
         concurrency,
+        thread_pool: search_pool,
         max_results,
         timeout: timeout_secs.map(Duration::from_secs),
         cancel_flag: Some(cancel_flag),

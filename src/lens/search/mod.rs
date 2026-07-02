@@ -150,6 +150,8 @@ pub type ElementHandler = Arc<dyn Fn(BgpElem, String) + Send + Sync>;
 pub struct SearchExecutionOptions {
     /// Number of rayon worker threads for this search. `None` or `Some(0)` uses rayon's default.
     pub concurrency: Option<usize>,
+    /// Reusable rayon thread pool supplied by the caller. Takes precedence over `concurrency`.
+    pub thread_pool: Option<Arc<rayon::ThreadPool>>,
     /// Maximum number of elements to emit. `None` means unlimited.
     pub max_results: Option<u64>,
     /// Maximum wall-clock runtime after broker query starts. `None` means no timeout.
@@ -188,6 +190,9 @@ pub struct SearchElementBatch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchControl {
     Continue,
+    /// Stop the search early. The shared executor reports this as
+    /// [`SearchExitReason::Cancelled`] because the sink is the active consumer
+    /// of search results and no longer wants more data.
     Stop,
 }
 
@@ -547,12 +552,16 @@ impl SearchLens {
             });
         };
 
-        match options.concurrency {
-            Some(n) if n > 0 => {
-                let pool = rayon::ThreadPoolBuilder::new().num_threads(n).build()?;
-                pool.install(run);
+        if let Some(pool) = options.thread_pool.as_ref() {
+            pool.install(run);
+        } else {
+            match options.concurrency {
+                Some(n) if n > 0 => {
+                    let pool = rayon::ThreadPoolBuilder::new().num_threads(n).build()?;
+                    pool.install(run);
+                }
+                _ => run(),
             }
-            _ => run(),
         }
 
         let duration_secs = start_time.elapsed().as_secs_f64();
@@ -703,7 +712,7 @@ fn process_search_item(
         }
 
         batch.push(elem);
-        if batch.len() >= state.batch_size {
+        if should_emit_batch(&state, batch.len()) {
             let accepted = emit_search_batch(&state, index, &url, &collector, &mut batch);
             file_messages += accepted;
         }
@@ -766,6 +775,20 @@ fn search_should_stop(state: &SearchWorkerState<'_>) -> bool {
             state.stop_flag.store(true, Ordering::Relaxed);
             return true;
         }
+    }
+
+    false
+}
+
+fn should_emit_batch(state: &SearchWorkerState<'_>, batch_len: usize) -> bool {
+    if batch_len >= state.batch_size {
+        return true;
+    }
+
+    if let Some(max) = state.max_results {
+        let emitted = state.total_messages.load(Ordering::Relaxed);
+        let remaining = max.saturating_sub(emitted);
+        return remaining == 0 || batch_len as u64 >= remaining;
     }
 
     false
@@ -1110,6 +1133,7 @@ mod tests {
         with_worker_state(Some(3), None, None, &sink, |state| {
             assert_eq!(reserve_result_slots(&state, 2), 2);
             assert_eq!(state.total_messages.load(Ordering::Relaxed), 2);
+            assert!(should_emit_batch(&state, 1));
             assert_eq!(reserve_result_slots(&state, 2), 1);
             assert_eq!(state.total_messages.load(Ordering::Relaxed), 3);
             assert_eq!(
