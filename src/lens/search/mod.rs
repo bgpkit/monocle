@@ -145,8 +145,11 @@ pub type SearchProgressCallback = Arc<dyn Fn(SearchProgress) + Send + Sync>;
 /// Called for each BGP element found during search, along with the collector ID.
 pub type ElementHandler = Arc<dyn Fn(BgpElem, String) + Send + Sync>;
 
+/// Default number of elements per batch when no explicit `batch_size` is set.
+const DEFAULT_SEARCH_BATCH_SIZE: usize = 64;
+
 /// Runtime options for executing a search.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SearchExecutionOptions {
     /// Number of rayon worker threads for this search. `None` or `Some(0)` uses rayon's default.
     pub concurrency: Option<usize>,
@@ -160,6 +163,19 @@ pub struct SearchExecutionOptions {
     pub cancel_flag: Option<Arc<AtomicBool>>,
     /// Number of elements per batch passed to [`SearchSink::on_elements`].
     pub batch_size: usize,
+}
+
+impl Default for SearchExecutionOptions {
+    fn default() -> Self {
+        Self {
+            concurrency: None,
+            thread_pool: None,
+            max_results: None,
+            timeout: None,
+            cancel_flag: None,
+            batch_size: DEFAULT_SEARCH_BATCH_SIZE,
+        }
+    }
 }
 
 /// Reason a search execution stopped.

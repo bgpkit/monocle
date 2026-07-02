@@ -416,6 +416,13 @@ impl SseSearchSink {
 
 impl SearchSink for SseSearchSink {
     fn on_progress(&self, progress: SearchProgress) {
+        // The executor emits SearchProgress::Completed as a progress event,
+        // but run_search_worker sends the terminal SearchStreamEvent::Completed
+        // (or Cancelled/Error) itself. Suppress the redundant progress-level
+        // Completed to avoid sending two completion events to the client.
+        if matches!(progress, SearchProgress::Completed { .. }) {
+            return;
+        }
         if send_event(&self.event_tx, SearchStreamEvent::Progress(progress)).is_err() {
             self.cancel_flag.store(true, Ordering::Relaxed);
         }

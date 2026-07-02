@@ -21,8 +21,14 @@ server_max_search_batch_size = 100
 # Maximum search results per request (0 = unlimited)
 server_max_search_results = 10000
 
+# Search concurrency; 0 = auto/rayon default (default: 0)
+search_concurrency = 0
+
 # Search timeout in seconds (0 = no timeout)
 server_search_timeout_secs = 300
+
+# Maximum concurrent SSE search requests (0 = unlimited, default: 3)
+server_max_concurrent_searches = 3
 
 # =============================================================================
 # Auth (token-based, disabled by default)
