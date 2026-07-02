@@ -16,6 +16,7 @@ use bgpkit_parser::BgpElem;
 use chrono::{DateTime, Duration};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::config::MonocleConfig;
 use crate::database::{
@@ -215,11 +216,18 @@ impl<'a> RibLens<'a> {
 
         for group in &groups {
             let mut state_store = RibStateStore::new_temp()?;
-            let safe_base_filters = self.safe_parse_filters(
-                args,
-                group.rib_item.ts_start.and_utc().timestamp(),
-                group.rib_item.ts_end.and_utc().timestamp(),
+            // Base RIB files contain the full routing table snapshot at dump time.
+            // Individual entry timestamps reflect when each route was learned, which
+            // can be much earlier than the dump time.  We must NOT apply a start_ts
+            // filter here — doing so would silently drop valid entries whose learned-
+            // time predates the RIB dump timestamp (the common case for stable routes).
+            let safe_base_filters = self.safe_rib_filters(args);
+
+            info!(
+                "Loading base RIB for {}: {}",
+                group.collector, group.rib_item.url
             );
+            let load_start = std::time::Instant::now();
 
             self.load_base_rib(
                 &mut state_store,
@@ -231,6 +239,12 @@ impl<'a> RibLens<'a> {
                 as_path_regex.as_ref(),
                 allowlists.get(group.collector.as_str()),
             )?;
+
+            info!(
+                "Base RIB loaded: {} entries in {:.1}s",
+                state_store.count()?,
+                load_start.elapsed().as_secs_f64()
+            );
 
             // If the first target timestamp equals the RIB time, emit it immediately
             // with empty updates (it's the base RIB, not built from updates)
@@ -456,13 +470,17 @@ impl<'a> RibLens<'a> {
             .last()
             .ok_or_else(|| anyhow!("Missing latest rib_ts after validation"))?;
 
+        // Use last_ts + 1 as ts_end because the broker's ts_end filter is exclusive.
+        // Without this, a RIB dump that starts exactly at the target timestamp would
+        // be excluded, forcing the code to use an earlier RIB and replay unnecessary
+        // update files.
         let ribs = self
             .base_broker(args)
             .data_type("rib")
             .ts_start(Self::timestamp_to_broker_string(
                 first_ts - Duration::hours(RIB_LOOKBACK_HOURS).num_seconds(),
             )?)
-            .ts_end(Self::timestamp_to_broker_string(last_ts)?)
+            .ts_end(Self::timestamp_to_broker_string(last_ts + 1)?)
             .query()
             .map_err(|e| anyhow!("Failed to query broker for candidate RIB files: {}", e))?;
 
@@ -504,6 +522,11 @@ impl<'a> RibLens<'a> {
                 let group_max_ts = *group_ts
                     .last()
                     .ok_or_else(|| anyhow!("Replay group was created without any rib_ts"))?;
+                info!(
+                    "Resolving updates for {}: {}s of updates",
+                    collector,
+                    group_max_ts - rib_item.ts_start.and_utc().timestamp()
+                );
                 let updates =
                     self.resolve_group_updates(args, &collector, &rib_item, group_max_ts)?;
 
@@ -625,7 +648,10 @@ impl<'a> RibLens<'a> {
 
         let collector_arc = Arc::from(collector);
         let mut batch = Vec::new();
+        let mut total = 0u64;
         for elem in parser {
+            total += 1;
+            info!("  parsed {} messages", total);
             if elem.elem_type != ElemType::ANNOUNCE {
                 continue;
             }
@@ -668,7 +694,13 @@ impl<'a> RibLens<'a> {
         // These are updates that matched filters and affected the RIB state
         let mut filtered_updates: Vec<StoredRibUpdate> = Vec::new();
 
-        for update in &group.updates {
+        for (i, update) in group.updates.iter().enumerate() {
+            info!(
+                "  Replaying update file {}/{}: {}",
+                i + 1,
+                group.updates.len(),
+                update.url
+            );
             let safe_filters = self.safe_parse_filters(
                 args,
                 group.rib_item.ts_start.and_utc().timestamp(),
@@ -907,6 +939,10 @@ impl<'a> RibLens<'a> {
         true
     }
 
+    /// Build filters for replaying BGP update files between two timestamps.
+    ///
+    /// Both `start_ts` and `end_ts` are applied so the parser only yields updates
+    /// within the replay window.
     fn safe_parse_filters(&self, args: &RibArgs, start_ts: i64, end_ts: i64) -> ParseFilters {
         ParseFilters {
             prefix: args.filters.prefix.clone(),
@@ -915,6 +951,22 @@ impl<'a> RibLens<'a> {
             peer_asn: args.filters.peer_asn.clone(),
             start_ts: Some(start_ts.to_string()),
             end_ts: Some(end_ts.to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// Build filters for loading a base RIB snapshot.
+    ///
+    /// No time filters are applied because RIB entries carry per-route timestamps
+    /// (when the route was learned) that can be arbitrarily older than the RIB
+    /// dump time.  Applying a `start_ts` filter at the dump time would incorrectly
+    /// drop stable routes that were learned days or weeks earlier.
+    fn safe_rib_filters(&self, args: &RibArgs) -> ParseFilters {
+        ParseFilters {
+            prefix: args.filters.prefix.clone(),
+            include_super: args.filters.include_super,
+            include_sub: args.filters.include_sub,
+            peer_asn: args.filters.peer_asn.clone(),
             ..Default::default()
         }
     }
