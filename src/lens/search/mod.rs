@@ -471,26 +471,43 @@ impl SearchLens {
         options: SearchExecutionOptions,
         sink: Arc<dyn SearchSink>,
     ) -> Result<SearchOutcome> {
+        let start_time = Instant::now();
+        let deadline = options.timeout.map(|timeout| start_time + timeout);
+
         sink.on_progress(SearchProgress::QueryingBroker);
 
         let items = self.query_broker(filters)?;
         let total_files = items.len();
         sink.on_progress(SearchProgress::FilesFound { count: total_files });
 
+        if deadline.is_some_and(|dl| Instant::now() >= dl) {
+            return Ok(SearchOutcome {
+                summary: SearchSummary {
+                    total_files,
+                    successful_files: 0,
+                    failed_files: 0,
+                    total_messages: 0,
+                    duration_secs: start_time.elapsed().as_secs_f64(),
+                },
+                exit_reason: SearchExitReason::Timeout,
+            });
+        }
+
         if total_files == 0 {
+            let duration_secs = start_time.elapsed().as_secs_f64();
             let summary = SearchSummary {
                 total_files: 0,
                 successful_files: 0,
                 failed_files: 0,
                 total_messages: 0,
-                duration_secs: 0.0,
+                duration_secs,
             };
             sink.on_progress(SearchProgress::Completed {
                 total_files: 0,
                 successful_files: 0,
                 failed_files: 0,
                 total_messages: 0,
-                duration_secs: 0.0,
+                duration_secs,
                 files_per_sec: None,
             });
             return Ok(SearchOutcome {
@@ -499,10 +516,8 @@ impl SearchLens {
             });
         }
 
-        let start_time = Instant::now();
         let batch_size = options.batch_size.max(1);
         let max_results = options.max_results.filter(|max| *max > 0);
-        let deadline = options.timeout.map(|timeout| start_time + timeout);
         let external_cancel = options.cancel_flag.clone();
         let stop_flag = AtomicBool::new(false);
         let exit_reason = AtomicU64::new(0);
