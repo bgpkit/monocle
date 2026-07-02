@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### Bug Fixes
+
+* Fixed `rib` command dropping RIB entries whose per-route timestamp predates
+  the RIB dump time. The base RIB parser was incorrectly applying a `start_ts`
+  filter at the dump timestamp, silently excluding stable routes learned days
+  or weeks earlier (#124).
+* Fixed `rib` command using an earlier RIB than necessary when the target
+  timestamp coincides with a RIB dump time. The broker query's `ts_end` filter
+  is exclusive, so a RIB starting exactly at the target was excluded, forcing
+  the code to select the previous RIB and replay unnecessary update files.
+  This caused ~3× slowdown for common midnight RIB queries.
+
+### Performance Improvements
+
+* Added `tracing::info!` progress logging to the `rib` command (visible with
+  `--debug`): RIB download/parse reports message counts, and update replay
+  shows per-file progress.
+
 ### Breaking Changes
 
 * Replaced WebSocket server with HTTP/SSE service. The `server` subcommand now
