@@ -24,6 +24,12 @@ pub const DEFAULT_SERVER_MAX_SEARCH_RESULTS: u64 = 0;
 /// Default search timeout in seconds (0 = no timeout)
 pub const DEFAULT_SERVER_SEARCH_TIMEOUT_SECS: u64 = 0;
 
+/// Default search concurrency (0 = rayon default / CPU count)
+pub const DEFAULT_SEARCH_CONCURRENCY: usize = 0;
+
+/// Default maximum concurrent SSE search requests
+pub const DEFAULT_SERVER_MAX_CONCURRENT_SEARCHES: usize = 3;
+
 /// Default: auth disabled
 pub const DEFAULT_SERVER_AUTH_ENABLED: bool = false;
 
@@ -69,8 +75,14 @@ pub struct MonocleConfig {
     /// Maximum search results per request, 0 = unlimited (default: 0)
     pub server_max_search_results: u64,
 
+    /// Search concurrency, 0 = rayon default / CPU count (default: 0)
+    pub search_concurrency: usize,
+
     /// Search timeout in seconds, 0 = no timeout (default: 0)
     pub server_search_timeout_secs: u64,
+
+    /// Maximum concurrent SSE search requests, 0 = unlimited (default: 3)
+    pub server_max_concurrent_searches: usize,
 
     /// Enable token auth for /api/v1/* endpoints (default: false)
     pub server_auth_enabled: bool,
@@ -101,6 +113,10 @@ const EMPTY_CONFIG: &str = r#"### monocle configuration file
 ### If true, error out instead of falling back to Cloudflare when RTR fails
 # rpki_rtr_no_fallback = false
 
+### Search execution configuration
+### Search concurrency; 0 = auto/rayon default. Can also be set with MONOCLE_SEARCH_CONCURRENCY.
+# search_concurrency = 0
+
 ### HTTP service configuration
 ### These settings control the monocle HTTP/SSE server.
 # server_address = "127.0.0.1"
@@ -111,6 +127,8 @@ const EMPTY_CONFIG: &str = r#"### monocle configuration file
 # server_max_search_results = 0
 ### Search timeout in seconds (0 = no timeout)
 # server_search_timeout_secs = 0
+### Maximum concurrent SSE search requests (0 = unlimited)
+# server_max_concurrent_searches = 3
 
 ### Auth (token-based, disabled by default)
 ### When enabled, requests to /api/v1/* require Authorization: Bearer <token>
@@ -228,7 +246,9 @@ impl Default for MonocleConfig {
             server_port: DEFAULT_SERVER_PORT,
             server_max_search_batch_size: DEFAULT_SERVER_MAX_SEARCH_BATCH_SIZE,
             server_max_search_results: DEFAULT_SERVER_MAX_SEARCH_RESULTS,
+            search_concurrency: DEFAULT_SEARCH_CONCURRENCY,
             server_search_timeout_secs: DEFAULT_SERVER_SEARCH_TIMEOUT_SECS,
+            server_max_concurrent_searches: DEFAULT_SERVER_MAX_CONCURRENT_SEARCHES,
             server_auth_enabled: DEFAULT_SERVER_AUTH_ENABLED,
             server_auth_token: String::new(),
         }
@@ -359,10 +379,18 @@ impl MonocleConfig {
             .get("server_max_search_results")
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_SERVER_MAX_SEARCH_RESULTS);
+        let search_concurrency = config
+            .get("search_concurrency")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_SEARCH_CONCURRENCY);
         let server_search_timeout_secs = config
             .get("server_search_timeout_secs")
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_SERVER_SEARCH_TIMEOUT_SECS);
+        let server_max_concurrent_searches = config
+            .get("server_max_concurrent_searches")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_SERVER_MAX_CONCURRENT_SEARCHES);
 
         // Parse auth configuration
         let server_auth_enabled = config
@@ -385,7 +413,9 @@ impl MonocleConfig {
             server_port,
             server_max_search_batch_size,
             server_max_search_results,
+            search_concurrency,
             server_search_timeout_secs,
+            server_max_concurrent_searches,
             server_auth_enabled,
             server_auth_token,
         })
@@ -462,8 +492,24 @@ impl MonocleConfig {
             self.server_max_search_results
         ));
         lines.push(format!(
+            "Search Concurrency: {}",
+            if self.search_concurrency == 0 {
+                "auto".to_string()
+            } else {
+                self.search_concurrency.to_string()
+            }
+        ));
+        lines.push(format!(
             "Search Timeout:     {} seconds",
             self.server_search_timeout_secs
+        ));
+        lines.push(format!(
+            "Max SSE Searches:   {}",
+            if self.server_max_concurrent_searches == 0 {
+                "unlimited".to_string()
+            } else {
+                self.server_max_concurrent_searches.to_string()
+            }
         ));
         lines.push(format!("Auth Enabled:       {}", self.server_auth_enabled));
 
@@ -941,9 +987,14 @@ mod tests {
             config.server_max_search_results,
             DEFAULT_SERVER_MAX_SEARCH_RESULTS
         );
+        assert_eq!(config.search_concurrency, DEFAULT_SEARCH_CONCURRENCY);
         assert_eq!(
             config.server_search_timeout_secs,
             DEFAULT_SERVER_SEARCH_TIMEOUT_SECS
+        );
+        assert_eq!(
+            config.server_max_concurrent_searches,
+            DEFAULT_SERVER_MAX_CONCURRENT_SEARCHES
         );
         assert!(!config.server_auth_enabled);
         assert_eq!(config.server_auth_token, "");

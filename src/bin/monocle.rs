@@ -115,9 +115,17 @@ struct ServerArgs {
     #[clap(long)]
     max_search_results: Option<u64>,
 
+    /// Search concurrency (0 = auto/rayon default, overrides config)
+    #[clap(long)]
+    concurrency: Option<usize>,
+
     /// Search timeout in seconds (0 = no timeout, overrides config)
     #[clap(long)]
     search_timeout_secs: Option<u64>,
+
+    /// Maximum concurrent SSE search requests (0 = unlimited, overrides config)
+    #[clap(long)]
+    max_concurrent_searches: Option<usize>,
 
     /// Enable token auth for /api/v1/* endpoints (overrides config)
     #[clap(long)]
@@ -203,8 +211,14 @@ fn main() {
                 if let Some(v) = args.max_search_results {
                     server_config.server_max_search_results = v;
                 }
+                if let Some(v) = args.concurrency {
+                    server_config.search_concurrency = v;
+                }
                 if let Some(v) = args.search_timeout_secs {
                     server_config.server_search_timeout_secs = v;
+                }
+                if let Some(v) = args.max_concurrent_searches {
+                    server_config.server_max_concurrent_searches = v;
                 }
                 if let Some(v) = args.auth_enabled {
                     server_config.server_auth_enabled = v;

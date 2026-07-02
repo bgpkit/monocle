@@ -290,11 +290,13 @@ Server settings are part of `MonocleConfig` and configurable via `monocle.toml`
 or `MONOCLE_*` environment variables. See `monocle.toml.example` for all options.
 
 ```toml
+search_concurrency = 0               # 0 = auto/rayon default
 server_address = "127.0.0.1"
 server_port = 8080
 server_max_search_batch_size = 100
 server_max_search_results = 0        # 0 = unlimited
 server_search_timeout_secs = 0       # 0 = no timeout
+server_max_concurrent_searches = 3   # 0 = unlimited; excess requests get 429
 server_auth_enabled = false
 server_auth_token = ""
 ```
@@ -302,7 +304,7 @@ server_auth_token = ""
 CLI flags override config values:
 
 ```bash
-monocle server --address 0.0.0.0 --port 9000 --max-search-batch-size 50
+monocle server --address 0.0.0.0 --port 9000 --max-search-batch-size 50 --concurrency 4
 ```
 
 ## Docker Deployment

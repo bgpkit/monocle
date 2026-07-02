@@ -88,6 +88,10 @@ pub struct SearchArgs {
     #[clap(flatten)]
     pub filters: SearchFilters,
 
+    /// Search concurrency (0 = auto/rayon default; overrides config)
+    #[clap(long)]
+    pub concurrency: Option<usize>,
+
     /// Remote Monocle server URL (e.g., http://localhost:8080/api/v1/search/stream).
     /// When set, search runs against the remote server instead of locally.
     #[clap(long, value_name = "URL")]
@@ -554,6 +558,24 @@ fn fetch_broker_items_cached(
 }
 
 pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat) {
+    let concurrency = args.concurrency.unwrap_or(config.search_concurrency);
+    if concurrency > 0 {
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(concurrency)
+            .build()
+        {
+            Ok(pool) => pool.install(|| run_inner(config, args, output_format)),
+            Err(e) => {
+                eprintln!("Failed to create rayon thread pool: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        run_inner(config, args, output_format);
+    }
+}
+
+fn run_inner(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat) {
     let SearchArgs {
         dry_run,
         sqlite_path,
@@ -569,6 +591,7 @@ pub fn run(config: &MonocleConfig, args: SearchArgs, output_format: OutputFormat
         use_cache,
         cache_dir,
         mut filters,
+        concurrency: _,
         remote_url,
         remote_token,
     } = args;

@@ -29,6 +29,7 @@ use axum::middleware::from_fn_with_state;
 use axum::routing::get;
 use axum::Router as AxumRouter;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::config::MonocleConfig;
@@ -41,6 +42,8 @@ use crate::config::MonocleConfig;
 #[derive(Clone)]
 pub struct ServerState {
     pub config: Arc<MonocleConfig>,
+    pub search_permits: Option<Arc<Semaphore>>,
+    pub search_pool: Option<Arc<rayon::ThreadPool>>,
 }
 
 // =============================================================================
@@ -54,8 +57,22 @@ pub async fn start_server(config: MonocleConfig) -> anyhow::Result<()> {
     let auth_enabled = config.server_auth_enabled;
     let auth_token = config.server_auth_token.trim().to_string();
 
+    let max_concurrent_searches = config.server_max_concurrent_searches;
+    let search_concurrency = config.search_concurrency;
+    let search_pool = if search_concurrency > 0 {
+        Some(Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(search_concurrency)
+                .build()?,
+        ))
+    } else {
+        None
+    };
     let state = ServerState {
         config: Arc::new(config),
+        search_permits: (max_concurrent_searches > 0)
+            .then(|| Arc::new(Semaphore::new(max_concurrent_searches))),
+        search_pool,
     };
 
     let cors = CorsLayer::new()
@@ -113,6 +130,8 @@ mod tests {
         let config = MonocleConfig::default();
         let state = ServerState {
             config: Arc::new(config),
+            search_permits: Some(Arc::new(Semaphore::new(3))),
+            search_pool: None,
         };
         let _cloned = state.clone();
     }
