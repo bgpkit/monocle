@@ -22,6 +22,9 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+* Added final SSE search statistics: matched elements, source-file counts and
+  compressed-byte metadata, rate, and matching collectors/files. `completed`,
+  `cancelled`, and `error` now carry the same `SearchStreamResult` payload.
 * Added `--use-cache` / `--cache-dir` MRT-file caching and `--fields` output
   selection to the `rib` command (#137).
 

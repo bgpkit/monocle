@@ -83,12 +83,18 @@ Streams BGP search results as Server-Sent Events (`text/event-stream`).
 | `started` | `{batch_size, max_results?, timeout_secs?}` | Stream started |
 | `progress` | `SearchProgress` (varies) | Broker query, file start/complete, progress update |
 | `elements` | `{total_so_far, collector, elements[]}` | Batch of BGP elements |
-| `completed` | `SearchSummary` | Terminal: search completed successfully |
-| `cancelled` | (empty) | Terminal: client disconnected |
-| `error` | `ApiErrorResponse` | Terminal: search failed |
+| `completed` | `SearchStreamResult` | Final: search completed or reached `max_results` |
+| `cancelled` | `SearchStreamResult` | Final: client disconnected, with partial stats |
+| `error` | `SearchStreamResult` | Final: search failed or timed out, with partial stats |
 
-**Terminal event invariant:** A stream emits at most one terminal event
-(`completed`, `cancelled`, or `error`). No events follow a terminal event.
+**Final event invariant:** A stream emits at most one final event
+(`completed`, `cancelled`, or `error`). No events follow a final event.
+
+`SearchStreamResult.stats.matched_elements` counts filtered BGP elements emitted
+by the stream, not raw BGP messages. `source_bytes_compressed` is the
+broker-advertised compressed size of selected files; `source_bytes_exact` is
+false when any file required its rough-size fallback. `matching_collectors` and
+`matching_files` list only sources that emitted at least one matched element.
 
 **Cancellation:** Close the HTTP connection to cancel. The server detects the
 drop and stops the search worker via an `Arc<AtomicBool>` flag.

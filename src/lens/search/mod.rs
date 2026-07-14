@@ -185,6 +185,7 @@ pub enum SearchExitReason {
     Cancelled,
     Timeout,
     MaxResultsReached,
+    Failed,
 }
 
 /// Search execution result including both summary and stop reason.
@@ -192,6 +193,10 @@ pub enum SearchExitReason {
 pub struct SearchOutcome {
     pub summary: SearchSummary,
     pub exit_reason: SearchExitReason,
+    /// Broker-advertised compressed bytes for all selected source files.
+    pub source_bytes_compressed: u64,
+    /// True when every selected file supplied an exact byte size.
+    pub source_bytes_exact: bool,
 }
 
 /// A batch of matched elements from a single MRT file.
@@ -513,6 +518,18 @@ impl SearchLens {
 
         let items = self.query_broker(filters)?;
         let total_files = items.len();
+        let source_bytes_exact = items.iter().all(|item| item.exact_size > 0);
+        let source_bytes_compressed = items
+            .iter()
+            .map(|item| {
+                let size = if item.exact_size > 0 {
+                    item.exact_size
+                } else {
+                    item.rough_size
+                };
+                size.max(0) as u64
+            })
+            .sum();
         sink.on_progress(SearchProgress::FilesFound { count: total_files });
 
         if deadline.is_some_and(|dl| Instant::now() >= dl) {
@@ -525,6 +542,8 @@ impl SearchLens {
                     duration_secs: start_time.elapsed().as_secs_f64(),
                 },
                 exit_reason: SearchExitReason::Timeout,
+                source_bytes_compressed,
+                source_bytes_exact,
             });
         }
 
@@ -548,6 +567,8 @@ impl SearchLens {
             return Ok(SearchOutcome {
                 summary,
                 exit_reason: SearchExitReason::Completed,
+                source_bytes_compressed,
+                source_bytes_exact,
             });
         }
 
@@ -636,6 +657,8 @@ impl SearchLens {
         Ok(SearchOutcome {
             summary,
             exit_reason,
+            source_bytes_compressed,
+            source_bytes_exact,
         })
     }
 
