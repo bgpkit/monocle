@@ -307,9 +307,23 @@ impl SearchFilters {
         Ok(())
     }
 
-    /// Convert filters to a BgpkitParser for a given file
+    /// Convert filters to a BgpkitParser for a given file.
+    ///
+    /// RIB dumps are snapshots: their per-route timestamps describe when a route
+    /// was learned, not the timestamp of the dump. Applying a search time window
+    /// to those timestamps would drop stable routes from a matching RIB file.
     pub fn to_parser(&self, file_path: &str) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
-        self.parse_filters.to_parser(file_path)
+        self.parser_filters().to_parser(file_path)
+    }
+
+    fn parser_filters(&self) -> ParseFilters {
+        let mut parse_filters = self.parse_filters.clone();
+        if self.dump_type == SearchDumpType::Rib {
+            parse_filters.start_ts = None;
+            parse_filters.end_ts = None;
+            parse_filters.duration = None;
+        }
+        parse_filters
     }
 }
 
@@ -931,6 +945,23 @@ impl Default for SearchLens {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_rib_parser_filters_do_not_apply_snapshot_time_window() {
+        let filters = SearchFilters {
+            parse_filters: ParseFilters {
+                start_ts: Some("2026-06-01T00:00:00Z".to_string()),
+                end_ts: Some("2026-06-01T00:00:00Z".to_string()),
+                ..Default::default()
+            },
+            dump_type: SearchDumpType::Rib,
+            ..Default::default()
+        };
+
+        let parser_filters = filters.parser_filters();
+        assert_eq!(parser_filters.start_ts, None);
+        assert_eq!(parser_filters.end_ts, None);
+    }
 
     #[test]
     fn test_pagination_logic() {

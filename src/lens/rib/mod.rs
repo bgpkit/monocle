@@ -6,7 +6,7 @@
 //! 3. Materializing only the final route state for each requested `rib_ts`
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -100,6 +100,20 @@ pub struct RibArgs {
     /// SQLite output file path.
     #[cfg_attr(feature = "cli", clap(long))]
     pub sqlite_path: Option<PathBuf>,
+
+    /// Use the default XDG cache directory ($XDG_CACHE_HOME/monocle) for MRT files.
+    /// Overridden by --cache-dir if both are specified.
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub use_cache: bool,
+
+    /// Override cache directory for downloaded MRT files.
+    #[cfg_attr(feature = "cli", clap(long))]
+    pub cache_dir: Option<PathBuf>,
+
+    /// Comma-separated list of fields to output.
+    #[cfg_attr(feature = "cli", clap(long, short = 'f', value_name = "FIELDS"))]
+    pub fields: Option<String>,
 }
 
 impl RibArgs {
@@ -231,6 +245,7 @@ impl<'a> RibLens<'a> {
 
             self.load_base_rib(
                 &mut state_store,
+                args,
                 &group.collector,
                 &group.rib_item,
                 &safe_base_filters,
@@ -630,6 +645,7 @@ impl<'a> RibLens<'a> {
     fn load_base_rib(
         &self,
         state_store: &mut RibStateStore,
+        args: &RibArgs,
         collector: &str,
         rib_item: &BrokerItem,
         safe_filters: &ParseFilters,
@@ -638,7 +654,8 @@ impl<'a> RibLens<'a> {
         as_path_regex: Option<&Regex>,
         full_feed_allowlist: Option<&HashSet<(String, u32)>>,
     ) -> Result<()> {
-        let parser = safe_filters.to_parser(&rib_item.url).map_err(|e| {
+        let input_path = self.input_path(args, collector, &rib_item.url)?;
+        let parser = safe_filters.to_parser(&input_path).map_err(|e| {
             anyhow!(
                 "Failed to build parser for base RIB {}: {}",
                 rib_item.url,
@@ -709,7 +726,8 @@ impl<'a> RibLens<'a> {
                     .last()
                     .ok_or_else(|| anyhow!("Replay group missing max rib_ts"))?,
             );
-            let parser = safe_filters.to_parser(&update.url).map_err(|e| {
+            let input_path = self.input_path(args, &group.collector, &update.url)?;
+            let parser = safe_filters.to_parser(&input_path).map_err(|e| {
                 anyhow!(
                     "Failed to build parser for updates file {}: {}",
                     update.url,
@@ -971,6 +989,45 @@ impl<'a> RibLens<'a> {
         }
     }
 
+    fn input_path(&self, args: &RibArgs, collector: &str, url: &str) -> Result<String> {
+        let cache_dir = args.cache_dir.as_ref().cloned().or_else(|| {
+            args.use_cache
+                .then(|| PathBuf::from(self.config.cache_dir()))
+        });
+        let Some(cache_dir) = cache_dir else {
+            return Ok(url.to_string());
+        };
+
+        let cache_path = Self::cache_path(&cache_dir, collector, url)
+            .ok_or_else(|| anyhow!("Cannot construct cache path for {}", url))?;
+        if !cache_path.exists() {
+            if let Some(parent) = cache_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let partial_path = cache_path.with_file_name(format!(
+                "{}.partial",
+                cache_path.file_name().unwrap_or_default().to_string_lossy()
+            ));
+            oneio::download(url, partial_path.to_str().unwrap_or_default(), None)?;
+            std::fs::rename(partial_path, &cache_path)?;
+        }
+        Ok(cache_path.to_string_lossy().into_owned())
+    }
+
+    fn cache_path(cache_dir: &Path, collector: &str, url: &str) -> Option<PathBuf> {
+        let path = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .and_then(|rest| rest.find('/').map(|index| &rest[index..]))?
+            .trim_start_matches('/');
+        let relative_path = if path.starts_with(collector) {
+            path.to_string()
+        } else {
+            format!("{}/{}", collector, path)
+        };
+        Some(cache_dir.join(relative_path))
+    }
+
     fn base_broker(&self, args: &RibArgs) -> BgpkitBroker {
         let mut broker = BgpkitBroker::new().page_size(1000);
         if let Some(collector) = &args.filters.collector {
@@ -1101,6 +1158,9 @@ mod tests {
                 ..Default::default()
             },
             sqlite_path: None,
+            use_cache: false,
+            cache_dir: None,
+            fields: None,
         }
     }
 
@@ -1142,6 +1202,20 @@ mod tests {
             .starts_with("country-ir-origin-13335+15169-peer-2914-collector-route_views2+rrc00"));
         assert!(slug.contains("-h"));
         Ok(())
+    }
+
+    #[test]
+    fn test_cache_path_matches_search_cache_layout() {
+        assert_eq!(
+            RibLens::cache_path(
+                Path::new("/tmp/cache"),
+                "rrc00",
+                "https://data.ris.ripe.net/rrc00/2026.06/bview.20260601.0000.gz"
+            ),
+            Some(PathBuf::from(
+                "/tmp/cache/rrc00/2026.06/bview.20260601.0000.gz"
+            ))
+        );
     }
 
     #[test]
