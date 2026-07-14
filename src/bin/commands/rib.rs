@@ -56,6 +56,7 @@ fn run_stdout(
     output_format: OutputFormat,
     no_update: bool,
 ) -> Result<()> {
+    let fields = parse_fields(&args.fields)?;
     let stdout = std::io::stdout();
     let mut stdout = BufWriter::new(stdout.lock());
 
@@ -73,12 +74,8 @@ fn run_stdout(
         )?;
 
         if !entries.is_empty() {
-            writeln!(
-                stdout,
-                "{}",
-                format_entries_table(&entries, DEFAULT_FIELDS_RIB)
-            )
-            .map_err(|e| anyhow!("Failed to write table output: {}", e))?;
+            writeln!(stdout, "{}", format_entries_table(&entries, &fields))
+                .map_err(|e| anyhow!("Failed to write table output: {}", e))?;
         }
         return Ok(());
     }
@@ -89,7 +86,7 @@ fn run_stdout(
         no_update,
         |_rib_ts, state_store, _filtered_updates| {
             if !header_written {
-                if let Some(header) = get_header(output_format, DEFAULT_FIELDS_RIB) {
+                if let Some(header) = get_header(output_format, &fields) {
                     writeln!(stdout, "{}", header)
                         .map_err(|e| anyhow!("Failed to write output header: {}", e))?;
                 }
@@ -97,7 +94,7 @@ fn run_stdout(
             }
 
             state_store.visit_entries(|entry| {
-                if let Some(line) = format_entry(entry, output_format, DEFAULT_FIELDS_RIB) {
+                if let Some(line) = format_entry(entry, output_format, &fields) {
                     writeln!(stdout, "{}", line)
                         .map_err(|e| anyhow!("Failed to write reconstructed RIB row: {}", e))?;
                 }
@@ -131,6 +128,36 @@ fn run_sqlite_output(lens: &RibLens<'_>, args: &RibArgs, no_update: bool) -> Res
         output_path.display()
     );
     Ok(())
+}
+
+fn parse_fields(fields_arg: &Option<String>) -> Result<Vec<&'static str>> {
+    match fields_arg {
+        None => Ok(DEFAULT_FIELDS_RIB.to_vec()),
+        Some(fields_arg) => {
+            let fields = fields_arg
+                .split(',')
+                .map(str::trim)
+                .filter(|field| !field.is_empty())
+                .map(|field| {
+                    DEFAULT_FIELDS_RIB
+                        .iter()
+                        .copied()
+                        .find(|available| *available == field)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "Unknown RIB output field '{}'. Available fields: {}",
+                                field,
+                                DEFAULT_FIELDS_RIB.join(", ")
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if fields.is_empty() {
+                return Err(anyhow!("--fields must name at least one output field"));
+            }
+            Ok(fields)
+        }
+    }
 }
 
 fn format_entries_table(entries: &[StoredRibEntry], fields: &[&str]) -> String {

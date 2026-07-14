@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
+* Fixed `search --dump-type rib` applying the requested snapshot time window to
+  per-route timestamps inside matching RIB dumps. Stable routes learned before
+  the dump timestamp are now retained, restoring AS-path search results (#136,
+  #138).
 * Fixed `rib` command dropping RIB entries whose per-route timestamp predates
   the RIB dump time. The base RIB parser was incorrectly applying a `start_ts`
   filter at the dump timestamp, silently excluding stable routes learned days
@@ -15,6 +19,11 @@ All notable changes to this project will be documented in this file.
   is exclusive, so a RIB starting exactly at the target was excluded, forcing
   the code to select the previous RIB and replay unnecessary update files.
   This caused ~3× slowdown for common midnight RIB queries.
+
+### New Features
+
+* Added `--use-cache` / `--cache-dir` MRT-file caching and `--fields` output
+  selection to the `rib` command (#137).
 
 ### Performance Improvements
 
