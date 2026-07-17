@@ -22,6 +22,9 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+* Added RPKISPOOL as the default historical RPKI source with Sobornost as the
+  default mirror. The `rpki roas` and `rpki aspas` commands retain `ripe` and
+  `rpkiviews`; invalid source/collector combinations now return errors (#134).
 * Added `--use-cache` / `--cache-dir` MRT-file caching and `--fields` output
   selection to the `rib` command (#137).
 

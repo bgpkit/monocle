@@ -3,7 +3,7 @@
 //! This module provides RPKI-related functionality including:
 //! - ROA (Route Origin Authorization) lookup and validation
 //! - ASPA (Autonomous System Provider Authorization) data access
-//! - Historical RPKI data support via RIPE NCC and RPKIviews
+//! - Historical RPKI data support via RIPE NCC, RPKIviews, and RPKISPOOL
 //! - RTR (RPKI-to-Router) protocol support for fetching ROAs
 //!
 //! The lens uses `RpkiRepository` for cached/current data operations,
@@ -54,9 +54,11 @@ pub enum RpkiDataSource {
     Ripe,
     /// Historical data from RPKIviews
     RpkiViews,
+    /// Historical data from RPKISPOOL
+    RpkiSpools,
 }
 
-/// RPKIviews collector options
+/// Historical collector options
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum RpkiViewsCollectorOption {
@@ -334,7 +336,7 @@ impl RpkiValidateArgs {
 ///    first via `refresh()`.
 ///
 /// 2. **Historical data operations**: When a date is specified in lookup args,
-///    loads data directly from bgpkit-commons (RIPE NCC or RPKIviews).
+///    loads data directly from bgpkit-commons (RIPE NCC, RPKIviews, or RPKISPOOL).
 ///
 /// # Example
 ///
@@ -811,6 +813,7 @@ impl<'a> RpkiLens<'a> {
             RpkiDataSource::Cloudflare => None,
             RpkiDataSource::Ripe => Some("ripe"),
             RpkiDataSource::RpkiViews => Some("rpkiviews"),
+            RpkiDataSource::RpkiSpools => Some("rpkispools"),
         };
 
         let collector_str = collector.map(|c| match c {
