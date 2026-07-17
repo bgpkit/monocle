@@ -9,6 +9,7 @@
 //!
 //! See `SSE_SERVICE_OVERHAUL_DESIGN.md` Section 6 for the algorithm.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -25,7 +26,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::lens::parse::ParseElemType;
 use crate::lens::search::{
     SearchControl, SearchElementBatch, SearchExecutionOptions, SearchExitReason, SearchFilters,
-    SearchLens, SearchProgress, SearchSink, SearchSummary,
+    SearchLens, SearchOutcome, SearchProgress, SearchSink,
 };
 use crate::server::http::{ApiError, ApiErrorCode, ApiErrorResponse};
 use crate::server::ServerState;
@@ -168,15 +169,87 @@ pub struct ElementsBatch {
     pub elements: Vec<BgpElem>,
 }
 
+/// Final result for a completed, cancelled, timed-out, or failed SSE search.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchStreamResult {
+    pub exit_reason: SearchExitReason,
+    pub stats: SearchStreamStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ApiErrorResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchStreamStats {
+    /// Filtered BGP elements emitted by the stream, not raw BGP messages.
+    pub matched_elements: u64,
+    pub total_files: usize,
+    pub successful_files: usize,
+    pub failed_files: usize,
+    pub source_bytes_compressed: u64,
+    pub source_bytes_exact: bool,
+    pub duration_secs: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_elements_per_sec: Option<f64>,
+    pub matching_collectors: Vec<String>,
+    pub matching_files: Vec<MatchingFile>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MatchingFile {
+    pub collector: String,
+    pub file_url: String,
+}
+
+impl SearchStreamStats {
+    fn empty() -> Self {
+        Self {
+            matched_elements: 0,
+            total_files: 0,
+            successful_files: 0,
+            failed_files: 0,
+            source_bytes_compressed: 0,
+            source_bytes_exact: true,
+            duration_secs: 0.0,
+            matched_elements_per_sec: None,
+            matching_collectors: Vec::new(),
+            matching_files: Vec::new(),
+        }
+    }
+
+    fn from_outcome(outcome: &SearchOutcome, matching_files: Vec<MatchingFile>) -> Self {
+        let duration_secs = outcome.summary.duration_secs;
+        let matched_elements = outcome.summary.total_messages;
+        let matching_collectors = matching_files
+            .iter()
+            .map(|file| file.collector.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Self {
+            matched_elements,
+            total_files: outcome.summary.total_files,
+            successful_files: outcome.summary.successful_files,
+            failed_files: outcome.summary.failed_files,
+            source_bytes_compressed: outcome.source_bytes_compressed,
+            source_bytes_exact: outcome.source_bytes_exact,
+            duration_secs,
+            matched_elements_per_sec: (duration_secs > 0.0)
+                .then(|| matched_elements as f64 / duration_secs),
+            matching_collectors,
+            matching_files,
+        }
+    }
+}
+
 /// Internal enum representing SSE events. Each variant maps to an SSE `event:`
 /// name; the `data:` field is the variant's payload serialized as JSON.
 enum SearchStreamEvent {
     Started(SearchStarted),
     Progress(SearchProgress),
     Elements(ElementsBatch),
-    Completed(SearchSummary),
-    Cancelled,
-    Error(ApiErrorResponse),
+    Completed(SearchStreamResult),
+    Cancelled(SearchStreamResult),
+    Error(SearchStreamResult),
 }
 
 impl SearchStreamEvent {
@@ -187,7 +260,7 @@ impl SearchStreamEvent {
             SearchStreamEvent::Progress(data) => ("progress", serde_json::to_value(data).ok()?),
             SearchStreamEvent::Elements(data) => ("elements", serde_json::to_value(data).ok()?),
             SearchStreamEvent::Completed(data) => ("completed", serde_json::to_value(data).ok()?),
-            SearchStreamEvent::Cancelled => ("cancelled", serde_json::Value::Null),
+            SearchStreamEvent::Cancelled(data) => ("cancelled", serde_json::to_value(data).ok()?),
             SearchStreamEvent::Error(data) => ("error", serde_json::to_value(data).ok()?),
         };
 
@@ -348,6 +421,7 @@ fn run_search_worker(config: SearchWorkerConfig) {
     );
 
     let sink = Arc::new(SseSearchSink::new(event_tx.clone(), cancel_flag.clone()));
+    let stats_sink = Arc::clone(&sink);
     let options = SearchExecutionOptions {
         concurrency,
         thread_pool: search_pool,
@@ -363,39 +437,55 @@ fn run_search_worker(config: SearchWorkerConfig) {
         Err(e) => {
             let _ = send_event(
                 &event_tx,
-                SearchStreamEvent::Error(ApiErrorResponse::new(
-                    ApiErrorCode::SearchFailed,
-                    e.to_string(),
-                )),
+                SearchStreamEvent::Error(SearchStreamResult {
+                    exit_reason: SearchExitReason::Failed,
+                    stats: SearchStreamStats::empty(),
+                    error: Some(ApiErrorResponse::new(
+                        ApiErrorCode::SearchFailed,
+                        e.to_string(),
+                    )),
+                }),
             );
             return;
         }
     };
 
+    let result = SearchStreamResult {
+        exit_reason: outcome.exit_reason,
+        stats: SearchStreamStats::from_outcome(&outcome, stats_sink.matching_files()),
+        error: None,
+    };
     match outcome.exit_reason {
         SearchExitReason::Cancelled => {
-            let _ = send_event(&event_tx, SearchStreamEvent::Cancelled);
+            let _ = send_event(&event_tx, SearchStreamEvent::Cancelled(result));
         }
         SearchExitReason::Timeout => {
             let _ = send_event(
                 &event_tx,
-                SearchStreamEvent::Error(ApiErrorResponse::new(
-                    ApiErrorCode::SearchFailed,
-                    format!(
-                        "Search timed out after {} seconds",
-                        timeout_secs.unwrap_or(0)
-                    ),
-                )),
+                SearchStreamEvent::Error(SearchStreamResult {
+                    error: Some(ApiErrorResponse::new(
+                        ApiErrorCode::SearchFailed,
+                        format!(
+                            "Search timed out after {} seconds",
+                            timeout_secs.unwrap_or(0)
+                        ),
+                    )),
+                    ..result
+                }),
             );
         }
         SearchExitReason::Completed | SearchExitReason::MaxResultsReached => {
-            let _ = send_event(&event_tx, SearchStreamEvent::Completed(outcome.summary));
+            let _ = send_event(&event_tx, SearchStreamEvent::Completed(result));
+        }
+        SearchExitReason::Failed => {
+            let _ = send_event(&event_tx, SearchStreamEvent::Error(result));
         }
     }
 }
 
 struct SseSearchState {
     total_so_far: u64,
+    matching_files: BTreeSet<MatchingFile>,
 }
 
 struct SseSearchSink {
@@ -407,10 +497,20 @@ struct SseSearchSink {
 impl SseSearchSink {
     fn new(event_tx: mpsc::Sender<SearchStreamEvent>, cancel_flag: Arc<AtomicBool>) -> Self {
         Self {
-            state: Mutex::new(SseSearchState { total_so_far: 0 }),
+            state: Mutex::new(SseSearchState {
+                total_so_far: 0,
+                matching_files: BTreeSet::new(),
+            }),
             event_tx,
             cancel_flag,
         }
+    }
+
+    fn matching_files(&self) -> Vec<MatchingFile> {
+        self.state
+            .lock()
+            .map(|state| state.matching_files.iter().cloned().collect())
+            .unwrap_or_default()
     }
 }
 
@@ -438,6 +538,10 @@ impl SearchSink for SseSearchSink {
         };
 
         state.total_so_far += batch.elements.len() as u64;
+        state.matching_files.insert(MatchingFile {
+            collector: batch.collector.clone(),
+            file_url: batch.file_url.clone(),
+        });
         let event = SearchStreamEvent::Elements(ElementsBatch {
             total_so_far: state.total_so_far,
             collector: Some(batch.collector),
@@ -554,7 +658,49 @@ mod tests {
             max_results: Some(1000),
             timeout_secs: None,
         });
-        let sse = event.to_sse();
-        assert!(sse.is_some());
+        assert!(event.to_sse().is_some());
+    }
+
+    #[test]
+    fn test_terminal_stats_include_sorted_matching_sources() {
+        let outcome = SearchOutcome {
+            summary: crate::lens::search::SearchSummary {
+                total_files: 3,
+                successful_files: 3,
+                failed_files: 0,
+                total_messages: 150,
+                duration_secs: 2.0,
+            },
+            exit_reason: SearchExitReason::Completed,
+            source_bytes_compressed: 120,
+            source_bytes_exact: false,
+        };
+        let stats = SearchStreamStats::from_outcome(
+            &outcome,
+            vec![
+                MatchingFile {
+                    collector: "rrc01".to_string(),
+                    file_url: "b".to_string(),
+                },
+                MatchingFile {
+                    collector: "rrc00".to_string(),
+                    file_url: "a".to_string(),
+                },
+            ],
+        );
+        assert_eq!(stats.matched_elements, 150);
+        assert_eq!(stats.matched_elements_per_sec, Some(75.0));
+        assert_eq!(stats.matching_collectors, vec!["rrc00", "rrc01"]);
+        assert!(!stats.source_bytes_exact);
+    }
+
+    #[test]
+    fn test_cancelled_event_has_result_payload() {
+        let event = SearchStreamEvent::Cancelled(SearchStreamResult {
+            exit_reason: SearchExitReason::Cancelled,
+            stats: SearchStreamStats::empty(),
+            error: None,
+        });
+        assert!(event.to_sse().is_some());
     }
 }

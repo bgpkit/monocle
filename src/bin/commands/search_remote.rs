@@ -73,13 +73,19 @@ pub enum ProgressData {
     Fields(HashMap<String, serde_json::Value>),
 }
 
-/// Summary for `completed` events.
+/// Final SSE result emitted for completed, cancelled, and error events.
 #[derive(Debug, Clone, Deserialize)]
-pub struct SearchSummary {
+pub struct SearchStreamResult {
+    pub exit_reason: String,
+    pub stats: SearchStreamStats,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchStreamStats {
+    pub matched_elements: u64,
     pub total_files: usize,
     pub successful_files: usize,
     pub failed_files: usize,
-    pub total_messages: u64,
     pub duration_secs: f64,
 }
 
@@ -176,14 +182,16 @@ pub async fn run_remote_search(
                     }
                 }
                 "completed" => {
-                    if let Ok(summary) = serde_json::from_str::<SearchSummary>(&data_line) {
+                    if let Ok(result) = serde_json::from_str::<SearchStreamResult>(&data_line) {
+                        let stats = result.stats;
                         eprintln!(
-                            "[completed] {} files ({} ok, {} failed), {} messages in {:.2}s",
-                            summary.total_files,
-                            summary.successful_files,
-                            summary.failed_files,
-                            summary.total_messages,
-                            summary.duration_secs
+                            "[completed:{}] {} files ({} ok, {} failed), {} matched elements in {:.2}s",
+                            result.exit_reason,
+                            stats.total_files,
+                            stats.successful_files,
+                            stats.failed_files,
+                            stats.matched_elements,
+                            stats.duration_secs
                         );
                     }
                     // Flush table output before returning success
@@ -194,7 +202,14 @@ pub async fn run_remote_search(
                     return Ok(());
                 }
                 "cancelled" => {
-                    eprintln!("[cancelled]");
+                    if let Ok(result) = serde_json::from_str::<SearchStreamResult>(&data_line) {
+                        eprintln!(
+                            "[cancelled:{}] {} matched elements",
+                            result.exit_reason, result.stats.matched_elements
+                        );
+                    } else {
+                        eprintln!("[cancelled]");
+                    }
                     // Flush any partial results before returning error
                     if is_table && !buffered_elems.is_empty() {
                         let table = format_elems_table(&buffered_elems, fields, time_format);
@@ -203,7 +218,11 @@ pub async fn run_remote_search(
                     return Err(anyhow::anyhow!("remote search was cancelled"));
                 }
                 "error" => {
-                    eprintln!("[error] {}", data_line);
+                    if let Ok(result) = serde_json::from_str::<SearchStreamResult>(&data_line) {
+                        eprintln!("[error:{}] {}", result.exit_reason, data_line);
+                    } else {
+                        eprintln!("[error] {}", data_line);
+                    }
                     if is_table && !buffered_elems.is_empty() {
                         let table = format_elems_table(&buffered_elems, fields, time_format);
                         println!("{}", table);
