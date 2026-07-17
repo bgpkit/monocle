@@ -22,6 +22,9 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+* Added RPKISPOOL as the default historical RPKI source with Sobornost as the
+  default mirror. The `rpki roas` and `rpki aspas` commands retain `ripe` and
+  `rpkiviews`; invalid source/collector combinations now return errors (#134).
 * Added `--use-cache` / `--cache-dir` MRT-file caching and `--fields` output
   selection to the `rib` command (#137).
 
@@ -64,6 +67,11 @@ All notable changes to this project will be documented in this file.
 
 ### Code Improvements
 
+* Added `HistoricalRpkiCollectorOption` as the preferred general-purpose alias
+  while retaining `RpkiViewsCollectorOption` compatibility, and clarified
+  historical source/collector CLI errors.
+* Removed redundant formatting references in `parse` command output to satisfy
+  current Clippy checks.
 * Made refresh index rebuilds atomic by wrapping index drops, table clears,
   inserts, and index recreation in one transaction; indexes are dropped before
   clearing tables to avoid unnecessary per-row index maintenance during refresh.

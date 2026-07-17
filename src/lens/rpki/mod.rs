@@ -3,7 +3,7 @@
 //! This module provides RPKI-related functionality including:
 //! - ROA (Route Origin Authorization) lookup and validation
 //! - ASPA (Autonomous System Provider Authorization) data access
-//! - Historical RPKI data support via RIPE NCC and RPKIviews
+//! - Historical RPKI data support via RIPE NCC, RPKIviews, and RPKISPOOL
 //! - RTR (RPKI-to-Router) protocol support for fetching ROAs
 //!
 //! The lens uses `RpkiRepository` for cached/current data operations,
@@ -54,9 +54,15 @@ pub enum RpkiDataSource {
     Ripe,
     /// Historical data from RPKIviews
     RpkiViews,
+    /// Historical data from RPKISPOOL
+    RpkiSpools,
 }
 
-/// RPKIviews collector options
+/// RPKIViews collector options.
+///
+/// Kept as the compatibility name for the original public API. New APIs should
+/// use [`HistoricalRpkiCollectorOption`] because Sobornost, ATTN, and Kerfuffle
+/// are also available from RPKISPOOL.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum RpkiViewsCollectorOption {
@@ -70,6 +76,12 @@ pub enum RpkiViewsCollectorOption {
     /// KerfuffleNet collector
     Kerfuffle,
 }
+
+/// Collector options shared by historical RPKI data sources.
+///
+/// This is the preferred name for new code. [`RpkiViewsCollectorOption`] remains
+/// available for backwards compatibility.
+pub type HistoricalRpkiCollectorOption = RpkiViewsCollectorOption;
 
 /// Validation state for RPKI route origin validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,10 +182,10 @@ pub struct RpkiRoaLookupArgs {
     #[serde(default)]
     pub source: RpkiDataSource,
 
-    /// RPKIviews collector (only used with rpkiviews source)
+    /// Historical collector (RPKIViews or RPKISPOOL, depending on source)
     #[cfg_attr(feature = "cli", clap(long))]
     #[serde(default)]
-    pub collector: Option<RpkiViewsCollectorOption>,
+    pub collector: Option<HistoricalRpkiCollectorOption>,
 
     /// Output format
     #[cfg_attr(feature = "cli", clap(short, long, default_value = "table"))]
@@ -247,10 +259,10 @@ pub struct RpkiAspaLookupArgs {
     #[serde(default)]
     pub source: RpkiDataSource,
 
-    /// RPKIviews collector (only used with rpkiviews source)
+    /// Historical collector (RPKIViews or RPKISPOOL, depending on source)
     #[cfg_attr(feature = "cli", clap(long))]
     #[serde(default)]
-    pub collector: Option<RpkiViewsCollectorOption>,
+    pub collector: Option<HistoricalRpkiCollectorOption>,
 
     /// Output format
     #[cfg_attr(feature = "cli", clap(short, long, default_value = "table"))]
@@ -334,7 +346,7 @@ impl RpkiValidateArgs {
 ///    first via `refresh()`.
 ///
 /// 2. **Historical data operations**: When a date is specified in lookup args,
-///    loads data directly from bgpkit-commons (RIPE NCC or RPKIviews).
+///    loads data directly from bgpkit-commons (RIPE NCC, RPKIviews, or RPKISPOOL).
 ///
 /// # Example
 ///
@@ -811,6 +823,7 @@ impl<'a> RpkiLens<'a> {
             RpkiDataSource::Cloudflare => None,
             RpkiDataSource::Ripe => Some("ripe"),
             RpkiDataSource::RpkiViews => Some("rpkiviews"),
+            RpkiDataSource::RpkiSpools => Some("rpkispools"),
         };
 
         let collector_str = collector.map(|c| match c {

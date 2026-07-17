@@ -2,11 +2,13 @@
 //!
 //! This module provides functions to load and query RPKI data (ROAs and ASPAs)
 //! from bgpkit-commons, supporting both current (Cloudflare) and historical
-//! (RIPE NCC, RPKIviews) data sources.
+//! (RIPE NCC, RPKIviews, and RPKISPOOL) data sources.
 
 use crate::utils::truncate_name;
 use anyhow::{anyhow, Result};
-use bgpkit_commons::rpki::{HistoricalRpkiSource, RpkiTrie, RpkiViewsCollector};
+use bgpkit_commons::rpki::{
+    HistoricalRpkiSource, RpkiSpoolsCollector, RpkiTrie, RpkiViewsCollector,
+};
 use chrono::NaiveDate;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
@@ -91,20 +93,46 @@ pub fn parse_rpkiviews_collector(collector: &str) -> Result<RpkiViewsCollector> 
     }
 }
 
+/// Parse RPKISPOOL collector from string
+pub fn parse_rpkispools_collector(collector: &str) -> Result<RpkiSpoolsCollector> {
+    match collector.to_lowercase().as_str() {
+        "sobornost" | "sobornostnet" => Ok(RpkiSpoolsCollector::SobornostNet),
+        "attn" | "attnjp" => Ok(RpkiSpoolsCollector::AttnJp),
+        "kerfuffle" | "kerfufflenet" => Ok(RpkiSpoolsCollector::KerfuffleNet),
+        _ => Err(anyhow!(
+            "Unknown RPKISPOOL collector: {}. Valid options: sobornost, attn, kerfuffle",
+            collector
+        )),
+    }
+}
+
 /// Parse historical RPKI source from strings
 pub fn parse_historical_source(
     source: &str,
     collector: Option<&str>,
 ) -> Result<HistoricalRpkiSource> {
     match source.to_lowercase().as_str() {
-        "ripe" => Ok(HistoricalRpkiSource::Ripe),
+        "ripe" => {
+            if let Some(collector) = collector {
+                return Err(anyhow!(
+                    "Collector '{}' is not supported with the RIPE historical RPKI source",
+                    collector
+                ));
+            }
+            Ok(HistoricalRpkiSource::Ripe)
+        }
         "rpkiviews" => {
             let collector = collector.unwrap_or("sobornost");
             let rpkiviews_collector = parse_rpkiviews_collector(collector)?;
             Ok(HistoricalRpkiSource::RpkiViews(rpkiviews_collector))
         }
+        "rpkispools" => {
+            let collector = collector.unwrap_or("sobornost");
+            let rpkispools_collector = parse_rpkispools_collector(collector)?;
+            Ok(HistoricalRpkiSource::RpkiSpools(rpkispools_collector))
+        }
         _ => Err(anyhow!(
-            "Unknown RPKI source: {}. Valid options: ripe, rpkiviews",
+            "Unknown RPKI source: {}. Valid options: ripe, rpkiviews, rpkispools",
             source
         )),
     }
@@ -136,7 +164,7 @@ pub fn load_rpki_data(
     match date {
         None => load_current_rpki(),
         Some(d) => {
-            let source_str = source.unwrap_or("ripe");
+            let source_str = source.unwrap_or("rpkispools");
             let historical_source = parse_historical_source(source_str, collector)?;
             load_historical_rpki(d, historical_source)
         }
@@ -262,12 +290,12 @@ mod tests {
     #[test]
     fn test_parse_rpkiviews_collector() {
         assert!(matches!(
-            parse_rpkiviews_collector("sobornost").unwrap(),
-            RpkiViewsCollector::SobornostNet
+            parse_rpkiviews_collector("sobornost"),
+            Ok(RpkiViewsCollector::SobornostNet)
         ));
         assert!(matches!(
-            parse_rpkiviews_collector("kerfuffle").unwrap(),
-            RpkiViewsCollector::KerfuffleNet
+            parse_rpkiviews_collector("kerfuffle"),
+            Ok(RpkiViewsCollector::KerfuffleNet)
         ));
         assert!(parse_rpkiviews_collector("invalid").is_err());
     }
@@ -275,12 +303,29 @@ mod tests {
     #[test]
     fn test_parse_historical_source() {
         assert!(matches!(
-            parse_historical_source("ripe", None).unwrap(),
-            HistoricalRpkiSource::Ripe
+            parse_historical_source("ripe", None),
+            Ok(HistoricalRpkiSource::Ripe)
+        ));
+        assert!(parse_historical_source("ripe", Some("sobornost")).is_err());
+        assert!(matches!(
+            parse_historical_source("rpkiviews", Some("sobornost")),
+            Ok(HistoricalRpkiSource::RpkiViews(
+                RpkiViewsCollector::SobornostNet
+            ))
         ));
         assert!(matches!(
-            parse_historical_source("rpkiviews", Some("sobornost")).unwrap(),
-            HistoricalRpkiSource::RpkiViews(RpkiViewsCollector::SobornostNet)
+            parse_historical_source("rpkiviews", Some("massars")),
+            Ok(HistoricalRpkiSource::RpkiViews(
+                RpkiViewsCollector::MassarsNet
+            ))
         ));
+    }
+
+    #[test]
+    fn test_parse_rpkispools_historical_source() {
+        assert!(parse_historical_source("rpkispools", Some("sobornost")).is_ok());
+        assert!(parse_historical_source("rpkispools", Some("attn")).is_ok());
+        assert!(parse_historical_source("rpkispools", Some("kerfuffle")).is_ok());
+        assert!(parse_historical_source("rpkispools", Some("massars")).is_err());
     }
 }

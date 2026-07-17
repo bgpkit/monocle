@@ -155,7 +155,7 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
                 } else {
                     // Print header for markdown format
                     if let Some(header) = get_header(output_format, &fields) {
-                        if let Err(e) = writeln!(stdout, "{}", &header) {
+                        if let Err(e) = writeln!(stdout, "{}", header) {
                             if e.kind() != std::io::ErrorKind::BrokenPipe {
                                 eprintln!("ERROR: {e}");
                             }
@@ -172,7 +172,7 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
                             collector.as_deref(),
                             time_format,
                         ) {
-                            if let Err(e) = writeln!(stdout, "{}", &output_str) {
+                            if let Err(e) = writeln!(stdout, "{}", output_str) {
                                 if e.kind() != std::io::ErrorKind::BrokenPipe {
                                     eprintln!("ERROR: {e}");
                                 }
@@ -187,7 +187,7 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
             // Streaming output (no buffering needed)
             // Print header for markdown format before first element
             if let Some(header) = get_header(output_format, &fields) {
-                if let Err(e) = writeln!(stdout, "{}", &header) {
+                if let Err(e) = writeln!(stdout, "{}", header) {
                     if e.kind() != std::io::ErrorKind::BrokenPipe {
                         eprintln!("ERROR: {e}");
                     }
@@ -200,7 +200,7 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
                 if let Some(output_str) =
                     format_elem(&elem, output_format, &fields, None, time_format)
                 {
-                    if let Err(e) = writeln!(stdout, "{}", &output_str) {
+                    if let Err(e) = writeln!(stdout, "{}", output_str) {
                         if e.kind() != std::io::ErrorKind::BrokenPipe {
                             eprintln!("ERROR: {e}");
                         }
@@ -217,7 +217,7 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
                     std::process::exit(1);
                 }
             };
-            eprintln!("processing. filtered messages output to {}...", &path);
+            eprintln!("processing. filtered messages output to {}...", path);
             let mut encoder = MrtUpdatesEncoder::new();
             let mut writer = match oneio::get_writer(&path) {
                 Ok(w) => w,
