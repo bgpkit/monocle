@@ -67,6 +67,8 @@ All notable changes to this project will be documented in this file.
 
 ### Code Improvements
 
+* Removed redundant formatting references in `parse` command output to satisfy
+  current Clippy checks.
 * Made refresh index rebuilds atomic by wrapping index drops, table clears,
   inserts, and index recreation in one transaction; indexes are dropped before
   clearing tables to avoid unnecessary per-row index maintenance during refresh.

@@ -1,6 +1,7 @@
 use chrono::NaiveDate;
 use clap::Subcommand;
 use monocle::database::{MonocleDatabase, RpkiRoaRecord};
+use monocle::lens::rpki::commons::parse_historical_source;
 use monocle::lens::rpki::{
     RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource, RpkiLens, RpkiRoaEntry,
     RpkiRoaLookupArgs, RpkiViewsCollectorOption,
@@ -490,16 +491,21 @@ fn run_roas(
         Ok(data_source) => data_source,
         Err(error) => {
             eprintln!("ERROR: {}", error);
-            return;
+            std::process::exit(1);
         }
     };
     let collector_option = match collector.as_deref().map(parse_collector).transpose() {
         Ok(collector) => collector,
         Err(error) => {
             eprintln!("ERROR: {}", error);
-            return;
+            std::process::exit(1);
         }
     };
+
+    if let Err(error) = parse_historical_source(&source, collector.as_deref()) {
+        eprintln!("ERROR: {}", error);
+        std::process::exit(1);
+    }
 
     // For historical data, use the lens directly
     // Display data source
@@ -907,16 +913,21 @@ fn run_aspas(
         Ok(data_source) => data_source,
         Err(error) => {
             eprintln!("ERROR: {}", error);
-            return;
+            std::process::exit(1);
         }
     };
     let collector_option = match collector.as_deref().map(parse_collector).transpose() {
         Ok(collector) => collector,
         Err(error) => {
             eprintln!("ERROR: {}", error);
-            return;
+            std::process::exit(1);
         }
     };
+
+    if let Err(error) = parse_historical_source(&source, collector.as_deref()) {
+        eprintln!("ERROR: {}", error);
+        std::process::exit(1);
+    }
 
     // For historical data, use the lens directly
     // Display data source
