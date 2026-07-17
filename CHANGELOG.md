@@ -67,6 +67,9 @@ All notable changes to this project will be documented in this file.
 
 ### Code Improvements
 
+* Added `HistoricalRpkiCollectorOption` as the preferred general-purpose alias
+  while retaining `RpkiViewsCollectorOption` compatibility, and clarified
+  historical source/collector CLI errors.
 * Removed redundant formatting references in `parse` command output to satisfy
   current Clippy checks.
 * Made refresh index rebuilds atomic by wrapping index drops, table clears,

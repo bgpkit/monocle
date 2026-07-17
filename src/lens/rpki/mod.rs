@@ -58,7 +58,11 @@ pub enum RpkiDataSource {
     RpkiSpools,
 }
 
-/// Historical collector options
+/// RPKIViews collector options.
+///
+/// Kept as the compatibility name for the original public API. New APIs should
+/// use [`HistoricalRpkiCollectorOption`] because Sobornost, ATTN, and Kerfuffle
+/// are also available from RPKISPOOL.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum RpkiViewsCollectorOption {
@@ -72,6 +76,12 @@ pub enum RpkiViewsCollectorOption {
     /// KerfuffleNet collector
     Kerfuffle,
 }
+
+/// Collector options shared by historical RPKI data sources.
+///
+/// This is the preferred name for new code. [`RpkiViewsCollectorOption`] remains
+/// available for backwards compatibility.
+pub type HistoricalRpkiCollectorOption = RpkiViewsCollectorOption;
 
 /// Validation state for RPKI route origin validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,10 +182,10 @@ pub struct RpkiRoaLookupArgs {
     #[serde(default)]
     pub source: RpkiDataSource,
 
-    /// RPKIviews collector (only used with rpkiviews source)
+    /// Historical collector (RPKIViews or RPKISPOOL, depending on source)
     #[cfg_attr(feature = "cli", clap(long))]
     #[serde(default)]
-    pub collector: Option<RpkiViewsCollectorOption>,
+    pub collector: Option<HistoricalRpkiCollectorOption>,
 
     /// Output format
     #[cfg_attr(feature = "cli", clap(short, long, default_value = "table"))]
@@ -249,10 +259,10 @@ pub struct RpkiAspaLookupArgs {
     #[serde(default)]
     pub source: RpkiDataSource,
 
-    /// RPKIviews collector (only used with rpkiviews source)
+    /// Historical collector (RPKIViews or RPKISPOOL, depending on source)
     #[cfg_attr(feature = "cli", clap(long))]
     #[serde(default)]
-    pub collector: Option<RpkiViewsCollectorOption>,
+    pub collector: Option<HistoricalRpkiCollectorOption>,
 
     /// Output format
     #[cfg_attr(feature = "cli", clap(short, long, default_value = "table"))]

@@ -290,12 +290,12 @@ mod tests {
     #[test]
     fn test_parse_rpkiviews_collector() {
         assert!(matches!(
-            parse_rpkiviews_collector("sobornost").unwrap(),
-            RpkiViewsCollector::SobornostNet
+            parse_rpkiviews_collector("sobornost"),
+            Ok(RpkiViewsCollector::SobornostNet)
         ));
         assert!(matches!(
-            parse_rpkiviews_collector("kerfuffle").unwrap(),
-            RpkiViewsCollector::KerfuffleNet
+            parse_rpkiviews_collector("kerfuffle"),
+            Ok(RpkiViewsCollector::KerfuffleNet)
         ));
         assert!(parse_rpkiviews_collector("invalid").is_err());
     }
@@ -303,17 +303,21 @@ mod tests {
     #[test]
     fn test_parse_historical_source() {
         assert!(matches!(
-            parse_historical_source("ripe", None).unwrap(),
-            HistoricalRpkiSource::Ripe
+            parse_historical_source("ripe", None),
+            Ok(HistoricalRpkiSource::Ripe)
         ));
         assert!(parse_historical_source("ripe", Some("sobornost")).is_err());
         assert!(matches!(
-            parse_historical_source("rpkiviews", Some("sobornost")).unwrap(),
-            HistoricalRpkiSource::RpkiViews(RpkiViewsCollector::SobornostNet)
+            parse_historical_source("rpkiviews", Some("sobornost")),
+            Ok(HistoricalRpkiSource::RpkiViews(
+                RpkiViewsCollector::SobornostNet
+            ))
         ));
         assert!(matches!(
-            parse_historical_source("rpkiviews", Some("massars")).unwrap(),
-            HistoricalRpkiSource::RpkiViews(RpkiViewsCollector::MassarsNet)
+            parse_historical_source("rpkiviews", Some("massars")),
+            Ok(HistoricalRpkiSource::RpkiViews(
+                RpkiViewsCollector::MassarsNet
+            ))
         ));
     }
 

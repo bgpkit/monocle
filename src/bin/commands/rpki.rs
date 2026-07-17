@@ -3,8 +3,8 @@ use clap::Subcommand;
 use monocle::database::{MonocleDatabase, RpkiRoaRecord};
 use monocle::lens::rpki::commons::parse_historical_source;
 use monocle::lens::rpki::{
-    RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource, RpkiLens, RpkiRoaEntry,
-    RpkiRoaLookupArgs, RpkiViewsCollectorOption,
+    HistoricalRpkiCollectorOption, RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource,
+    RpkiLens, RpkiRoaEntry, RpkiRoaLookupArgs,
 };
 use monocle::utils::OutputFormat;
 use monocle::MonocleConfig;
@@ -421,6 +421,10 @@ fn parse_data_source(source: &str) -> Result<RpkiDataSource, String> {
         "ripe" => Ok(RpkiDataSource::Ripe),
         "rpkiviews" => Ok(RpkiDataSource::RpkiViews),
         "rpkispools" => Ok(RpkiDataSource::RpkiSpools),
+        "cloudflare" => Err(
+            "Cloudflare only supports current (undated) RPKI data; omit --date to use it"
+                .to_string(),
+        ),
         _ => Err(format!(
             "Unknown historical RPKI source '{}'. Valid options: rpkispools, ripe, rpkiviews",
             source
@@ -435,9 +439,27 @@ mod tests {
     #[test]
     fn test_parse_rpkispools_data_source() {
         assert!(matches!(
-            parse_data_source("rpkispools").unwrap(),
-            RpkiDataSource::RpkiSpools
+            parse_data_source("rpkispools"),
+            Ok(RpkiDataSource::RpkiSpools)
         ));
+    }
+
+    #[test]
+    fn test_parse_data_source_explains_cloudflare_is_current_only() {
+        let error = match parse_data_source("cloudflare") {
+            Err(error) => error,
+            Ok(_) => panic!("cloudflare is not historical"),
+        };
+        assert!(error.contains("current (undated) RPKI data"));
+    }
+
+    #[test]
+    fn test_parse_collector_lists_rpkiviews_only_massars() {
+        let error = match parse_collector("unknown") {
+            Err(error) => error,
+            Ok(_) => panic!("collector should be rejected"),
+        };
+        assert!(error.contains("massars"));
     }
 
     #[test]
@@ -447,14 +469,14 @@ mod tests {
     }
 }
 
-fn parse_collector(collector: &str) -> Result<RpkiViewsCollectorOption, String> {
+fn parse_collector(collector: &str) -> Result<HistoricalRpkiCollectorOption, String> {
     match collector.to_lowercase().as_str() {
-        "sobornost" => Ok(RpkiViewsCollectorOption::Sobornost),
-        "massars" => Ok(RpkiViewsCollectorOption::Massars),
-        "attn" => Ok(RpkiViewsCollectorOption::Attn),
-        "kerfuffle" => Ok(RpkiViewsCollectorOption::Kerfuffle),
+        "sobornost" => Ok(HistoricalRpkiCollectorOption::Sobornost),
+        "massars" => Ok(HistoricalRpkiCollectorOption::Massars),
+        "attn" => Ok(HistoricalRpkiCollectorOption::Attn),
+        "kerfuffle" => Ok(HistoricalRpkiCollectorOption::Kerfuffle),
         _ => Err(format!(
-            "Unknown historical RPKI collector '{}'. Valid options: sobornost, attn, kerfuffle; massars is only available with rpkiviews",
+            "Unknown historical RPKI collector '{}'. Valid options: sobornost, attn, kerfuffle, massars (massars is only available with rpkiviews)",
             collector
         )),
     }
