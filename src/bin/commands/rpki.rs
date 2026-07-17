@@ -1,9 +1,10 @@
 use chrono::NaiveDate;
 use clap::Subcommand;
 use monocle::database::{MonocleDatabase, RpkiRoaRecord};
+use monocle::lens::rpki::commons::parse_historical_source;
 use monocle::lens::rpki::{
-    RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource, RpkiLens, RpkiRoaEntry,
-    RpkiRoaLookupArgs, RpkiViewsCollectorOption,
+    HistoricalRpkiCollectorOption, RpkiAspaLookupArgs, RpkiAspaTableEntry, RpkiDataSource,
+    RpkiLens, RpkiRoaEntry, RpkiRoaLookupArgs,
 };
 use monocle::utils::OutputFormat;
 use monocle::MonocleConfig;
@@ -36,13 +37,13 @@ pub enum RpkiCommands {
         #[clap(long)]
         date: Option<String>,
 
-        /// Historical data source: ripe, rpkiviews (default: ripe)
-        #[clap(long, default_value = "ripe")]
+        /// Historical data source: rpkispools, ripe, rpkiviews (default: rpkispools)
+        #[clap(long, default_value = "rpkispools")]
         source: String,
 
-        /// RPKIviews collector: sobornost, massars, attn, kerfuffle (default: sobornost)
-        #[clap(long, default_value = "sobornost")]
-        collector: String,
+        /// Historical collector: sobornost, attn, kerfuffle (massars is only available with rpkiviews; default for mirrors: sobornost)
+        #[clap(long)]
+        collector: Option<String>,
 
         /// Force refresh the RPKI cache (only applies to current data)
         #[clap(long, short)]
@@ -63,13 +64,13 @@ pub enum RpkiCommands {
         #[clap(long)]
         date: Option<String>,
 
-        /// Historical data source: ripe, rpkiviews (default: ripe)
-        #[clap(long, default_value = "ripe")]
+        /// Historical data source: rpkispools, ripe, rpkiviews (default: rpkispools)
+        #[clap(long, default_value = "rpkispools")]
         source: String,
 
-        /// RPKIviews collector: sobornost, massars, attn, kerfuffle (default: sobornost)
-        #[clap(long, default_value = "sobornost")]
-        collector: String,
+        /// Historical collector: sobornost, attn, kerfuffle (massars is only available with rpkiviews; default for mirrors: sobornost)
+        #[clap(long)]
+        collector: Option<String>,
 
         /// Force refresh the RPKI cache (only applies to current data)
         #[clap(long, short)]
@@ -415,21 +416,69 @@ fn run_validate(
     }
 }
 
-fn parse_data_source(source: &str) -> RpkiDataSource {
+fn parse_data_source(source: &str) -> Result<RpkiDataSource, String> {
     match source.to_lowercase().as_str() {
-        "ripe" => RpkiDataSource::Ripe,
-        "rpkiviews" => RpkiDataSource::RpkiViews,
-        _ => RpkiDataSource::Cloudflare,
+        "ripe" => Ok(RpkiDataSource::Ripe),
+        "rpkiviews" => Ok(RpkiDataSource::RpkiViews),
+        "rpkispools" => Ok(RpkiDataSource::RpkiSpools),
+        "cloudflare" => Err(
+            "Cloudflare only supports current (undated) RPKI data; omit --date to use it"
+                .to_string(),
+        ),
+        _ => Err(format!(
+            "Unknown historical RPKI source '{}'. Valid options: rpkispools, ripe, rpkiviews",
+            source
+        )),
     }
 }
 
-fn parse_collector(collector: &str) -> Option<RpkiViewsCollectorOption> {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_rpkispools_data_source() {
+        assert!(matches!(
+            parse_data_source("rpkispools"),
+            Ok(RpkiDataSource::RpkiSpools)
+        ));
+    }
+
+    #[test]
+    fn test_parse_data_source_explains_cloudflare_is_current_only() {
+        let error = match parse_data_source("cloudflare") {
+            Err(error) => error,
+            Ok(_) => panic!("cloudflare is not historical"),
+        };
+        assert!(error.contains("current (undated) RPKI data"));
+    }
+
+    #[test]
+    fn test_parse_collector_lists_rpkiviews_only_massars() {
+        let error = match parse_collector("unknown") {
+            Err(error) => error,
+            Ok(_) => panic!("collector should be rejected"),
+        };
+        assert!(error.contains("massars"));
+    }
+
+    #[test]
+    fn test_reject_unknown_historical_source_and_collector() {
+        assert!(parse_data_source("unknown").is_err());
+        assert!(parse_collector("unknown").is_err());
+    }
+}
+
+fn parse_collector(collector: &str) -> Result<HistoricalRpkiCollectorOption, String> {
     match collector.to_lowercase().as_str() {
-        "sobornost" => Some(RpkiViewsCollectorOption::Sobornost),
-        "massars" => Some(RpkiViewsCollectorOption::Massars),
-        "attn" => Some(RpkiViewsCollectorOption::Attn),
-        "kerfuffle" => Some(RpkiViewsCollectorOption::Kerfuffle),
-        _ => None,
+        "sobornost" => Ok(HistoricalRpkiCollectorOption::Sobornost),
+        "massars" => Ok(HistoricalRpkiCollectorOption::Massars),
+        "attn" => Ok(HistoricalRpkiCollectorOption::Attn),
+        "kerfuffle" => Ok(HistoricalRpkiCollectorOption::Kerfuffle),
+        _ => Err(format!(
+            "Unknown historical RPKI collector '{}'. Valid options: sobornost, attn, kerfuffle, massars (massars is only available with rpkiviews)",
+            collector
+        )),
     }
 }
 
@@ -438,7 +487,7 @@ fn run_roas(
     resources: Vec<String>,
     date: Option<String>,
     source: String,
-    collector: String,
+    collector: Option<String>,
     refresh: bool,
     output_format: OutputFormat,
     config: &MonocleConfig,
@@ -459,6 +508,26 @@ fn run_roas(
             return;
         }
     };
+
+    let data_source = match parse_data_source(&source) {
+        Ok(data_source) => data_source,
+        Err(error) => {
+            eprintln!("ERROR: {}", error);
+            std::process::exit(1);
+        }
+    };
+    let collector_option = match collector.as_deref().map(parse_collector).transpose() {
+        Ok(collector) => collector,
+        Err(error) => {
+            eprintln!("ERROR: {}", error);
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(error) = parse_historical_source(&source, collector.as_deref()) {
+        eprintln!("ERROR: {}", error);
+        std::process::exit(1);
+    }
 
     // For historical data, use the lens directly
     // Display data source
@@ -499,15 +568,11 @@ fn run_roas(
     if asns.is_empty() && prefixes.is_empty() {
         let args = RpkiRoaLookupArgs::new()
             .with_date(parsed_date)
-            .with_source(parse_data_source(&source));
+            .with_source(data_source.clone());
 
-        let args = if let Some(c) = parse_collector(&collector) {
-            RpkiRoaLookupArgs {
-                collector: Some(c),
-                ..args
-            }
-        } else {
-            args
+        let args = RpkiRoaLookupArgs {
+            collector: collector_option.clone(),
+            ..args
         };
 
         let roas = match lens.get_roas(&args) {
@@ -531,15 +596,11 @@ fn run_roas(
         let args = RpkiRoaLookupArgs::new()
             .with_asn(*asn)
             .with_date(parsed_date)
-            .with_source(parse_data_source(&source));
+            .with_source(data_source.clone());
 
-        let args = if let Some(c) = parse_collector(&collector) {
-            RpkiRoaLookupArgs {
-                collector: Some(c),
-                ..args
-            }
-        } else {
-            args
+        let args = RpkiRoaLookupArgs {
+            collector: collector_option.clone(),
+            ..args
         };
 
         match lens.get_roas(&args) {
@@ -562,15 +623,11 @@ fn run_roas(
         let args = RpkiRoaLookupArgs::new()
             .with_prefix(prefix)
             .with_date(parsed_date)
-            .with_source(parse_data_source(&source));
+            .with_source(data_source.clone());
 
-        let args = if let Some(c) = parse_collector(&collector) {
-            RpkiRoaLookupArgs {
-                collector: Some(c),
-                ..args
-            }
-        } else {
-            args
+        let args = RpkiRoaLookupArgs {
+            collector: collector_option.clone(),
+            ..args
         };
 
         match lens.get_roas(&args) {
@@ -845,7 +902,7 @@ fn run_aspas(
     provider: Option<u32>,
     date: Option<String>,
     source: String,
-    collector: String,
+    collector: Option<String>,
     refresh: bool,
     output_format: OutputFormat,
     config: &MonocleConfig,
@@ -873,6 +930,26 @@ fn run_aspas(
             return;
         }
     };
+
+    let data_source = match parse_data_source(&source) {
+        Ok(data_source) => data_source,
+        Err(error) => {
+            eprintln!("ERROR: {}", error);
+            std::process::exit(1);
+        }
+    };
+    let collector_option = match collector.as_deref().map(parse_collector).transpose() {
+        Ok(collector) => collector,
+        Err(error) => {
+            eprintln!("ERROR: {}", error);
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(error) = parse_historical_source(&source, collector.as_deref()) {
+        eprintln!("ERROR: {}", error);
+        std::process::exit(1);
+    }
 
     // For historical data, use the lens directly
     // Display data source
@@ -905,8 +982,8 @@ fn run_aspas(
     // Set date and source
     args = RpkiAspaLookupArgs {
         date: Some(parsed_date),
-        source: parse_data_source(&source),
-        collector: parse_collector(&collector),
+        source: data_source,
+        collector: collector_option,
         ..args
     };
 
