@@ -65,10 +65,12 @@
 //! ```
 
 pub mod filter_file;
+pub mod text_dump;
 
 use crate::lens::time::TimeLens;
 use anyhow::anyhow;
 use anyhow::Result;
+use bgpkit_parser::parser::filter::Filter;
 use bgpkit_parser::BgpElem;
 use bgpkit_parser::BgpkitParser;
 use ipnet::IpNet;
@@ -146,6 +148,34 @@ impl Display for ParseElemType {
             ParseElemType::A => "announcement",
             ParseElemType::W => "withdrawal",
         })
+    }
+}
+
+/// MRT output subtype for `--mrt-type`.
+///
+/// Controls whether the MRT export produces TABLE_DUMP_V2 RIB entries
+/// or BGP4MP update messages.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum MrtType {
+    /// TABLE_DUMP_V2 RIB entries (peer-index-table + per-prefix RIB)
+    Rib,
+    /// BGP4MP individual update messages
+    Updates,
+}
+
+impl MrtType {
+    /// Infer the appropriate MRT type from the input format.
+    ///
+    /// Text dumps are always RIB snapshots → `Rib`.
+    /// MRT files default to `Updates` (the existing behavior for
+    /// BGP4MP/UPDATE streams).
+    pub fn infer(is_text_dump: bool) -> Self {
+        if is_text_dump {
+            MrtType::Rib
+        } else {
+            MrtType::Updates
+        }
     }
 }
 
@@ -248,6 +278,8 @@ pub struct ParseFilters {
     #[cfg_attr(feature = "cli", clap(short = 'a', long))]
     pub as_path: Option<String>,
 }
+
+type FilterSpec = (&'static str, String);
 
 impl ParseFilters {
     /// Parse start and end time strings into Unix timestamps
@@ -494,79 +526,90 @@ impl ParseFilters {
         Ok(())
     }
 
-    /// Convert filters to a BgpkitParser
-    ///
-    /// This method creates a parser with all filters applied. Multi-value filters
-    /// use OR logic (matches ANY of the specified values). Negated values (prefixed
-    /// with `!`) exclude matching elements.
-    pub fn to_parser(&self, file_path: &str) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
-        let mut parser = BgpkitParser::new(file_path)?.disable_warnings();
+    fn filter_specs(&self) -> Result<Vec<FilterSpec>> {
+        let mut specs = Vec::new();
 
-        if let Some(v) = &self.as_path {
-            parser = parser.add_filter("as_path", v.to_string().as_str())?;
+        if let Some(value) = &self.as_path {
+            specs.push(("as_path", value.clone()));
         }
 
-        // Origin ASN filter - always use plural filter key for consistency
+        // Origin ASN filter - always use plural filter key for consistency.
         if !self.origin_asn.is_empty() {
-            let value = self.origin_asn.join(",");
-            parser = parser.add_filter("origin_asns", &value)?;
+            specs.push(("origin_asns", self.origin_asn.join(",")));
         }
 
-        // Prefix filter - always use plural filter keys
+        // Prefix filter - always use plural filter keys.
         if !self.prefix.is_empty() {
-            let value = self.prefix.join(",");
             let filter_key = match (self.include_super, self.include_sub) {
                 (false, false) => "prefixes",
                 (true, false) => "prefixes_super",
                 (false, true) => "prefixes_sub",
                 (true, true) => "prefixes_super_sub",
             };
-            parser = parser.add_filter(filter_key, &value)?;
+            specs.push((filter_key, self.prefix.join(",")));
         }
 
-        // Peer IPs filter
         if !self.peer_ip.is_empty() {
-            let v = self.peer_ip.iter().map(|p| p.to_string()).join(",");
-            parser = parser.add_filter("peer_ips", v.as_str())?;
+            let value = self.peer_ip.iter().map(ToString::to_string).join(",");
+            specs.push(("peer_ips", value));
         }
 
-        // Peer ASN filter - always use plural filter key for consistency
+        // Peer ASN filter - always use plural filter key for consistency.
         if !self.peer_asn.is_empty() {
-            let value = self.peer_asn.join(",");
-            parser = parser.add_filter("peer_asns", &value)?;
+            specs.push(("peer_asns", self.peer_asn.join(",")));
         }
 
         // Community filter - bgpkit-parser uses singular filter key name.
         if let Some(value) = self.build_community_filter_value()? {
-            parser = parser.add_filter("community", &value)?;
+            specs.push(("community", value));
         }
 
-        if let Some(v) = &self.elem_type {
-            parser = parser.add_filter("type", v.to_string().as_str())?;
+        if let Some(value) = &self.elem_type {
+            specs.push(("type", value.to_string()));
         }
 
         match self.parse_start_end_strings() {
             Ok((start_ts, end_ts)) => {
-                // in case we have full start_ts and end_ts, like in `monocle search` command input,
-                // we will use the parsed start_ts and end_ts.
-                parser = parser.add_filter("start_ts", start_ts.to_string().as_str())?;
-                parser = parser.add_filter("end_ts", end_ts.to_string().as_str())?;
+                // Full start/end inputs, such as those from `monocle search`.
+                specs.push(("start_ts", start_ts.to_string()));
+                specs.push(("end_ts", end_ts.to_string()));
             }
             Err(_) => {
-                // we could also likely not have any time filters, in this case, add filters
-                // as we see them, and no modification is needed.
+                // No complete time window: retain any individually supplied boundary.
                 let time_lens = TimeLens::new();
-                if let Some(v) = &self.start_ts {
-                    let ts = time_lens.parse_time_string(v.as_str())?.timestamp();
-                    parser = parser.add_filter("start_ts", ts.to_string().as_str())?;
+                if let Some(value) = &self.start_ts {
+                    let timestamp = time_lens.parse_time_string(value)?.timestamp();
+                    specs.push(("start_ts", timestamp.to_string()));
                 }
-                if let Some(v) = &self.end_ts {
-                    let ts = time_lens.parse_time_string(v.as_str())?.timestamp();
-                    parser = parser.add_filter("end_ts", ts.to_string().as_str())?;
+                if let Some(value) = &self.end_ts {
+                    let timestamp = time_lens.parse_time_string(value)?.timestamp();
+                    specs.push(("end_ts", timestamp.to_string()));
                 }
             }
         }
 
+        Ok(specs)
+    }
+
+    /// Convert filters into BgpElem predicates using bgpkit-parser's canonical semantics.
+    pub fn to_filters(&self) -> Result<Vec<Filter>> {
+        let mut filters = Vec::new();
+        for (filter_type, filter_value) in self.filter_specs()? {
+            filters.push(Filter::new(filter_type, &filter_value)?);
+        }
+        Ok(filters)
+    }
+
+    /// Convert filters to a BgpkitParser.
+    ///
+    /// This method creates a parser with all filters applied. Multi-value filters
+    /// use OR logic (matches ANY of the specified values). Negated values (prefixed
+    /// with `!`) exclude matching elements.
+    pub fn to_parser(&self, file_path: &str) -> Result<BgpkitParser<Box<dyn Read + Send>>> {
+        let mut parser = BgpkitParser::new(file_path)?.disable_warnings();
+        for (filter_type, filter_value) in self.filter_specs()? {
+            parser = parser.add_filter(filter_type, &filter_value)?;
+        }
         Ok(parser)
     }
 }
@@ -846,6 +889,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_mrt_type_inference() {
+        assert_eq!(MrtType::infer(true), MrtType::Rib);
+        assert_eq!(MrtType::infer(false), MrtType::Updates);
+    }
+
+    #[test]
     fn test_parse_progress_serialization() {
         // Test that progress types can be serialized for GUI communication
         let progress = ParseProgress::Started {
@@ -1012,6 +1061,33 @@ mod tests {
 
         let values = vec!["!13335".to_string(), "15169".to_string()];
         assert!(ParseFilters::check_negation_consistency(&values, "test").is_err());
+    }
+
+    #[test]
+    fn test_to_filters_uses_canonical_filter_specs() {
+        let filters = ParseFilters {
+            as_path: Some("^13335 ".to_string()),
+            origin_asn: vec!["13335".to_string(), "15169".to_string()],
+            prefix: vec!["0.0.0.0/0".to_string()],
+            ..Default::default()
+        };
+        let actual = match filters.to_filters() {
+            Ok(filters) => filters,
+            Err(error) => panic!("filter conversion failed: {error}"),
+        };
+
+        for (filter_type, filter_value) in [
+            ("as_path", "^13335 "),
+            ("origin_asns", "13335,15169"),
+            ("prefixes", "0.0.0.0/0"),
+        ] {
+            let expected = match Filter::new(filter_type, filter_value) {
+                Ok(filter) => filter,
+                Err(error) => panic!("invalid expected filter: {error}"),
+            };
+            assert!(actual.contains(&expected));
+        }
+        assert_eq!(actual.len(), 3);
     }
 
     #[test]
