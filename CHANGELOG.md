@@ -30,6 +30,12 @@ All notable changes to this project will be documented in this file.
   `rpkiviews`; invalid source/collector combinations now return errors (#134).
 * Added `--use-cache` / `--cache-dir` MRT-file caching and `--fields` output
   selection to the `rib` command (#137).
+* Added Cisco `sh ip bgp` text dump parsing to the `parse` command. The parser
+  auto-detects the fixed-width plaintext format from the preamble, extracts
+  prefix/AS-path/next-hop/metric/local-pref/origin, and supports all standard
+  parse filters, output formats, and MRT export (`--mrt-type rib|updates`).
+  Multi-path continuation lines and wrapped-prefix layouts are handled.
+  Header column detection uses whitespace split rather than fixed positions.
 
 ### Performance Improvements
 
