@@ -289,11 +289,11 @@ fn as_path_from_tokens(tokens: &[String]) -> AsPath {
     }
     if asns.is_empty() {
         return AsPath {
-            segments: vec![AsPathSegment::AsSequence(Vec::new())],
+            segments: vec![AsPathSegment::AsSequence(Default::default())].into(),
         };
     }
     AsPath {
-        segments: vec![AsPathSegment::AsSequence(asns)],
+        segments: vec![AsPathSegment::AsSequence(asns.into())].into(),
     }
 }
 
@@ -345,6 +345,7 @@ fn entry_to_elem(
         only_to_customer: None,
         unknown: None,
         deprecated: None,
+        peer_bgp_id: None,
     })
 }
 

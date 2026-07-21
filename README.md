@@ -563,6 +563,7 @@ The output contains the following fields:
 | `timestamp` | Message timestamp in UTC |
 | `peer_ip` | IP address of the BGP peer |
 | `peer_asn` | ASN of the BGP peer |
+| `peer_bgp_id` | BGP Identifier (Router ID) of the peer, when available |
 | `prefix` | Network prefix being announced/withdrawn |
 | `as_path` | AS path (space-separated) |
 | `origin` | Origin type: IGP, EGP, or INCOMPLETE |
@@ -587,6 +588,7 @@ JSON output example:
   "timestamp": "2024-01-01T00:00:44Z",
   "peer_ip": "2001:7f8:4::9d85:1",
   "peer_asn": 40325,
+  "peer_bgp_id": "192.0.2.254",
   "prefix": "1.1.1.0/24",
   "as_path": "40325 13335",
   "origin": "IGP",

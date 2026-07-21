@@ -393,10 +393,14 @@ mod tests {
             elem_type: ElemType::ANNOUNCE,
             peer_ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
             peer_asn: 64496.into(),
+            peer_bgp_id: None,
             prefix: NetworkPrefix::new("203.0.113.0/24".parse()?, Some(7)),
             next_hop: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 2))),
             as_path: Some(AsPath {
-                segments: vec![AsPathSegment::AsSequence(vec![64496.into(), 64497.into()])],
+                segments: vec![AsPathSegment::AsSequence(
+                    vec![64496.into(), 64497.into()].into(),
+                )]
+                .into(),
             }),
             origin_asns: Some(vec![64497.into()]),
             origin: None,

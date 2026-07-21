@@ -468,10 +468,14 @@ mod tests {
             elem_type: ElemType::ANNOUNCE,
             peer_ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
             peer_asn: 65000.into(),
+            peer_bgp_id: Some(Ipv4Addr::new(192, 0, 2, 254)),
             prefix: NetworkPrefix::from_str("10.0.0.0/8").unwrap(),
             next_hop: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))),
             as_path: Some(AsPath {
-                segments: vec![AsPathSegment::AsSequence(vec![65000.into(), 65001.into()])],
+                segments: vec![AsPathSegment::AsSequence(
+                    vec![65000.into(), 65001.into()].into(),
+                )]
+                .into(),
             }),
             origin_asns: Some(vec![65001.into()]),
             origin: Some(Origin::IGP),
@@ -556,6 +560,7 @@ mod tests {
             obj.get("origin_asns").is_some(),
             "native serialization should include origin_asns (not in DEFAULT_FIELDS_PARSE)"
         );
+        assert_eq!(obj["peer_bgp_id"], "192.0.2.254");
         // Timestamp stays numeric for Unix
         assert!(obj.get("timestamp").unwrap().is_number());
     }

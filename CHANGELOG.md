@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased changes
+## v1.4.0 - 2026-07-21
 
 ### New Features
 
@@ -160,6 +160,16 @@ All notable changes to this project will be documented in this file.
   `--no-default-features --features lib`.
 * Preserved immediate transaction semantics for `pfx2as` refreshes and reused
   shared AS2Rel schema constants when rebuilding indexes.
+
+### Dependencies
+
+* Updated `bgpkit-parser` to v0.18.0.
+  * Default `parse` JSON output and SSE search element batches now include
+    `peer_bgp_id` for TableDumpV2 RIB entries when the peer's BGP Identifier is
+    available.
+  * Known-but-unsupported BGP attributes are retained in the existing
+    `unknown`/`deprecated` fields rather than silently dropped, and malformed
+    BGP input is validated more strictly.
 
 ## v1.3.0 - 2026-05-27
 

@@ -190,10 +190,14 @@ mod tests {
             elem_type: ElemType::ANNOUNCE,
             peer_ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
             peer_asn: 65000.into(),
+            peer_bgp_id: None,
             prefix: NetworkPrefix::from_str("10.0.0.0/8").unwrap(),
             next_hop: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))),
             as_path: Some(AsPath {
-                segments: vec![AsPathSegment::AsSequence(vec![65000.into(), 65001.into()])],
+                segments: vec![AsPathSegment::AsSequence(
+                    vec![65000.into(), 65001.into()].into(),
+                )]
+                .into(),
             }),
             origin_asns: Some(vec![65001.into()]),
             origin: Some(Origin::IGP),
