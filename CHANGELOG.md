@@ -130,6 +130,20 @@ All notable changes to this project will be documented in this file.
 * `GET /api/v1/rpki/roa/lookup` now applies AND semantics when both `prefix`
   and `asn` are provided (filters covering ROAs by origin ASN).
 
+### Build & Infrastructure
+
+* Replaced QEMU-emulated multi-platform Docker build with native per-platform
+  builds: `linux/amd64` on `ubuntu-latest`, `linux/arm64` on `ubuntu-24.04-arm`
+  native runners. Each build pushes by digest; a final manifest-merge job
+  assembles the multi-architecture OCI image index. Expected to reduce CI build
+  time from ~57 minutes to roughly the slower platform's native compile time.
+* Added `cargo-chef` to the Dockerfile for dependency-layer caching. Source-only
+  changes now reuse the pre-compiled dependency layer instead of recompiling all
+  dependencies from scratch.
+* Switched Docker BuildKit cache from GitHub Actions cache to registry-based
+  cache (`bgpkit/monocle:buildcache-{arch}`), removing the 10 GB GHA cache
+  budget constraint.
+
 ### Code Improvements
 
 * Added `HistoricalRpkiCollectorOption` as the preferred general-purpose alias
