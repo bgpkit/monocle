@@ -4,58 +4,82 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
-### Bug Fixes
-
-* Fixed `search --dump-type rib` applying the requested snapshot time window to
-  per-route timestamps inside matching RIB dumps. Stable routes learned before
-  the dump timestamp are now retained, restoring AS-path search results (#136,
-  #138).
-* Fixed `rib` command dropping RIB entries whose per-route timestamp predates
-  the RIB dump time. The base RIB parser was incorrectly applying a `start_ts`
-  filter at the dump timestamp, silently excluding stable routes learned days
-  or weeks earlier (#124).
-* Fixed `rib` command using an earlier RIB than necessary when the target
-  timestamp coincides with a RIB dump time. The broker query's `ts_end` filter
-  is exclusive, so a RIB starting exactly at the target was excluded, forcing
-  the code to select the previous RIB and replay unnecessary update files.
-  This caused ~3× slowdown for common midnight RIB queries.
-
 ### New Features
 
-* Added final SSE search statistics: matched elements, source-file counts and
-  compressed-byte metadata, rate, and matching collectors/files. `completed`,
-  `cancelled`, and `error` now carry the same `SearchStreamResult` payload.
-* Added RPKISPOOL as the default historical RPKI source with Sobornost as the
-  default mirror. The `rpki roas` and `rpki aspas` commands retain `ripe` and
-  `rpkiviews`; invalid source/collector combinations now return errors (#134).
-* Added `--use-cache` / `--cache-dir` MRT-file caching and `--fields` output
-  selection to the `rib` command (#137).
+* Added HTTP/SSE server replacing the previous WebSocket service. The `server`
+  subcommand now starts an HTTP server with REST endpoints and SSE search
+  streaming. Key additions:
+  - Three MVP endpoints: `GET /health`, `GET /api/v1/system/info`,
+    `POST /api/v1/search/stream` (SSE streaming search with progress, element
+    batches, cancellation on disconnect, and max-results limit)
+  - Parallelized SSE search with bounded mpsc channel (capacity 32)
+    backpressure; element batches are never dropped, progress events may be
+    coalesced
+  - Terminal event invariant: exactly one of `completed`, `cancelled`, or
+    `error`. All three carry a `SearchStreamResult` payload with matched
+    elements, source-file counts, compressed-byte metadata, rate, and matching
+    collectors/files
+  - Server admission control (`server_max_concurrent_searches`, default 3);
+    excess requests return HTTP 429. SSE search returns 400 on invalid
+    `peer_ip` values
+  - Phase 2 REST API: stateless endpoints (`/time/parse`, `/country/lookup`,
+    `/ip/lookup`, `GET /ip/public`), DB read-only endpoints
+    (`/database/status`, `/rpki/roa/lookup`, `/rpki/aspa/lookup`,
+    `/pfx2as/lookup`, `/as2rel/relationship`, `POST /as2rel/search`),
+    DB refresh endpoints (`/database/refresh`, `/inspect/refresh`,
+    `/as2rel/refresh`), and composite endpoints (`/rpki/roa/validate`,
+    `/inspect/query`). ASPA validation is deferred. DB-backed endpoints
+    return `NOT_INITIALIZED` (HTTP 503) if required data is missing
+  - Token-based auth middleware (`server_auth_enabled` / `server_auth_token`);
+    when enabled, `/api/v1/*` requires `Authorization: Bearer <token>`
+    (case-insensitive per RFC 7235); `/health` stays open. Server refuses to
+    start if auth is enabled but token is empty
+  - CLI remote search mode: `--remote-url` flag sends queries to a remote
+    Monocle HTTP service; `--remote-token` provides Bearer auth. Consumes SSE
+    stream and formats results with existing CLI formatters. Remote search
+    exits with non-zero status on `error`/`cancelled` SSE events or connection
+    drop without `completed`. Applies `--filter-file`/`--prefix-file` merging
+    and filter validation before dispatch
+  - Docker Compose deployment with health check, persistent volumes, and
+    env-based configuration. Docker runtime runs as non-root `monocle` user
+    with pre-created config directory and `HOME` set
+  - Server configuration via `monocle.toml` and `MONOCLE_*` environment
+    variables: `server_address`, `server_port`, `server_max_search_batch_size`,
+    `server_max_search_results`, `server_search_timeout_secs`,
+    `server_max_concurrent_searches`, `search_concurrency`
 * Added Cisco `sh ip bgp` text dump parsing to the `parse` command. The parser
   auto-detects the fixed-width plaintext format from the preamble, extracts
   prefix/AS-path/next-hop/metric/local-pref/origin, and supports all standard
   parse filters, output formats, and MRT export (`--mrt-type rib|updates`).
   Multi-path continuation lines and wrapped-prefix layouts are handled.
   Header column detection uses whitespace split rather than fixed positions.
-
-### Performance Improvements
-
-* Added `tracing::info!` progress logging to the `rib` command (visible with
-  `--debug`): RIB download/parse reports message counts, and update replay
-  shows per-file progress.
+* Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to
+  `monocle parse` and `monocle search` for loading large filter sets from
+  files. File filters merge with CLI flags — union within each dimension (OR),
+  AND across dimensions. Supports the RIB-extract → filter-updates workflow at
+  scale (#117).
+* Added RPKISPOOL as the default historical RPKI source with Sobornost as the
+  default mirror. The `rpki roas` and `rpki aspas` commands retain `ripe` and
+  `rpkiviews`; invalid source/collector combinations now return errors (#134).
+* Added `--use-cache` / `--cache-dir` MRT-file caching and `--fields` output
+  selection to the `rib` command (#137).
+* Added `--concurrency` to local search and server commands. Explicit values
+  use local rayon thread pools; unset/0 keeps rayon defaults including
+  `RAYON_NUM_THREADS`.
 
 ### Breaking Changes
 
-* Replaced WebSocket server with HTTP/SSE service. The `server` subcommand now
-  starts an HTTP server with REST endpoints and SSE search streaming instead of
-  a WebSocket server. All WebSocket modules (`protocol`, `handler`, `sink`,
-  `op_sink`, `router`, `operations`, `handlers/*`) have been removed.
+* Replaced WebSocket server with HTTP/SSE service. All WebSocket modules
+  (`protocol`, `handler`, `sink`, `op_sink`, `router`, `operations`,
+  `handlers/*`) have been removed.
 * Updated `axum` to 0.8 and `tower-http` to 0.6.
 * Removed `uuid` and `async-trait` dependencies (no longer needed without
   WebSocket operation tracking).
 * Updated `ServerArgs` CLI flags: removed `--data-dir`, `--max-concurrent-ops`,
   `--max-message-size`, `--connection-timeout-secs`, `--ping-interval-secs`;
-  added `--max-search-batch-size`, `--max-search-results`, `--search-timeout-secs`.
-  `--address` and `--port` are now optional (default to config values).
+  added `--max-search-batch-size`, `--max-search-results`,
+  `--search-timeout-secs`. `--address` and `--port` are now optional (default
+  to config values).
 
 ### Performance Improvements
 
@@ -73,6 +97,38 @@ All notable changes to this project will be documented in this file.
   (tables are cleared before insert, so no conflicts are possible).
 * Added `db_refresh_bench` example for measuring refresh performance
   with real or synthetic data.
+* Added `tracing::info!` progress logging to the `rib` command (visible with
+  `--debug`): RIB download/parse reports message counts, and update replay
+  shows per-file progress.
+
+### Bug Fixes
+
+* Fixed `search --dump-type rib` applying the requested snapshot time window to
+  per-route timestamps inside matching RIB dumps. Stable routes learned before
+  the dump timestamp are now retained, restoring AS-path search results (#136,
+  #138).
+* Fixed `rib` command dropping RIB entries whose per-route timestamp predates
+  the RIB dump time. The base RIB parser was incorrectly applying a `start_ts`
+  filter at the dump timestamp, silently excluding stable routes learned days
+  or weeks earlier (#124).
+* Fixed `rib` command using an earlier RIB than necessary when the target
+  timestamp coincides with a RIB dump time. The broker query's `ts_end` filter
+  is exclusive, so a RIB starting exactly at the target was excluded, forcing
+  the code to select the previous RIB and replay unnecessary update files.
+  This caused ~3× slowdown for common midnight RIB queries.
+* Fixed `--time-format rfc3339` being ignored for `json`, `json-line`, and
+  `json-pretty` output formats. JSON output now honors `--time-format`: `unix`
+  (default) emits a numeric `timestamp` field (backward compatible); `rfc3339`
+  emits an RFC 3339 string (#123).
+* Validated `prefix` input in `pfx2as_lookup` and `roa_lookup` REST endpoints
+  before spawning blocking tasks, so invalid prefixes return 400 instead of
+  500.
+* Auth middleware now accepts case-insensitive `Bearer` scheme tokens per
+  RFC 7235.
+* `POST /api/v1/database/refresh` with `source=pfx2as` now returns HTTP 501
+  instead of 200, so automation can detect the operation is not implemented.
+* `GET /api/v1/rpki/roa/lookup` now applies AND semantics when both `prefix`
+  and `asn` are provided (filters covering ROAs by origin ASN).
 
 ### Code Improvements
 
@@ -83,99 +139,13 @@ All notable changes to this project will be documented in this file.
   current Clippy checks.
 * Made refresh index rebuilds atomic by wrapping index drops, table clears,
   inserts, and index recreation in one transaction; indexes are dropped before
-  clearing tables to avoid unnecessary per-row index maintenance during refresh.
-* Ensured upgraded `pfx2as` databases drop removed legacy indexes during refresh
-  and kept the benchmark example buildable with `--no-default-features --features lib`.
+  clearing tables to avoid unnecessary per-row index maintenance during
+  refresh.
+* Ensured upgraded `pfx2as` databases drop removed legacy indexes during
+  refresh and kept the benchmark example buildable with
+  `--no-default-features --features lib`.
 * Preserved immediate transaction semantics for `pfx2as` refreshes and reused
   shared AS2Rel schema constants when rebuilding indexes.
-
-### New Features
-
-* Added HTTP/SSE server with three MVP endpoints:
-  - `GET /health` — health check for container orchestration
-  - `GET /api/v1/system/info` — server metadata and endpoint list
-  - `POST /api/v1/search/stream` — SSE streaming BGP search with progress,
-    element batches, cancellation on disconnect, and max-results limit
-* Added server configuration fields to `MonocleConfig`: `server_address`,
-  `server_port`, `server_max_search_batch_size`, `server_max_search_results`,
-  `server_search_timeout_secs`, `server_max_concurrent_searches`, and shared
-  `search_concurrency`. All configurable via `monocle.toml` and `MONOCLE_*`
-  environment variables.
-* Parallelized SSE search streaming through the shared search executor while
-  preserving cancellation, bounded-channel backpressure, max-results handling,
-  timeout handling, and the single-terminal-event invariant.
-* Bounded mpsc channel (capacity 32) with backpressure: element batches are
-  never dropped; progress events may be coalesced under backpressure.
-* Terminal event invariant: exactly one of `completed`, `cancelled`, or `error`.
-* Added `--concurrency` to local search and server commands. Explicit values use
-  local rayon thread pools; unset/0 keeps rayon defaults including
-  `RAYON_NUM_THREADS`.
-* Added server admission control for SSE search requests via
-  `server_max_concurrent_searches` (default 3); excess requests return HTTP 429.
-* Added Phase 2 REST API endpoints:
-  - Tier 1 (stateless): `POST /time/parse`, `POST /country/lookup`,
-    `POST /ip/lookup`, `GET /ip/public`
-  - Tier 2 (DB read-only, cache-only): `GET /database/status`,
-    `GET /rpki/roa/lookup`, `GET /rpki/aspa/lookup`, `GET /pfx2as/lookup`,
-    `GET /as2rel/relationship`, `POST /as2rel/search`
-  - Tier 3 (DB refresh): `POST /database/refresh`, `POST /inspect/refresh`,
-    `POST /as2rel/refresh`
-  - Tier 4 (composite, cache-only): `POST /rpki/roa/validate`,
-    `POST /inspect/query`
-  ASPA validation (`/rpki/aspa/validate`) is deferred — it requires full
-  AS path validation combined with AS relationship inference data (as2rel),
-  not a simple membership check.
-* Added token-based auth middleware (Phase 3):
-  - Config fields `server_auth_enabled` (default: false) and
-    `server_auth_token` in `MonocleConfig`
-  - CLI flags `--auth-enabled` and `--auth-token`
-  - Env vars `MONOCLE_SERVER_AUTH_ENABLED` and `MONOCLE_SERVER_AUTH_TOKEN`
-  - When enabled, `/api/v1/*` requires `Authorization: Bearer <token>`;
-    `/health` stays open for container health checks
-  - Server refuses to start if auth is enabled but token is empty
-* Added CLI remote search mode (Phase 4):
-  - `--remote-url` flag on `monocle search` sends the query to a remote
-    Monocle HTTP service instead of running locally
-  - `--remote-token` provides the Bearer token for auth
-  - Consumes SSE stream and formats results with existing CLI output
-    formatters (PSV, JSON, table, markdown)
-* Added Docker Compose deployment config (Phase 5):
-  - Updated `Dockerfile` with volume mounts for `/data/monocle` and
-    `/cache/monocle`
-  - `docker-compose.yml` with health check, persistent volumes, and
-    env-based configuration
-  - `monocle.toml.example` showing all service configuration options
-  All DB-backed endpoints return `NOT_INITIALIZED` (HTTP 503) if required
-  data is missing. No refresh policy knobs — users refresh via explicit
-  `/refresh` endpoints.
-
-### Added `--filter-file` (JSON) and `--prefix-file` (newline text) flags to `monocle parse`
-  and `monocle search` for loading large filter sets from files. File filters merge with
-  CLI flags — union within each dimension (OR), AND across dimensions. Supports the
-  RIB-extract → filter-updates workflow at scale (#117).
-
-### Bug Fixes
-
-* Fixed `--time-format rfc3339` being ignored for `json`, `json-line`, and `json-pretty`
-  output formats. JSON output now honors `--time-format`: `unix` (default) emits a numeric
-  `timestamp` field (backward compatible); `rfc3339` emits an RFC 3339 string (#123).
-* Validated `prefix` input in `pfx2as_lookup` and `roa_lookup` REST endpoints before
-  spawning blocking tasks, so invalid prefixes return 400 instead of 500.
-* Remote search client now exits with a non-zero status when the SSE stream ends
-  with an `error` or `cancelled` event, or when the connection drops without a
-  `completed` event.
-* Docker runtime image now runs as a dedicated non-root `monocle` user. The
-  config directory (`/home/monocle/.config/monocle`) is pre-created and `HOME`
-  is set so the server can initialize its config on startup.
-* Remote search now applies `--filter-file` / `--prefix-file` merging and filter
-  validation before dispatching, matching local search behavior.
-* Auth middleware now accepts case-insensitive `Bearer` scheme tokens per RFC 7235.
-* `POST /api/v1/database/refresh` with `source=pfx2as` now returns HTTP 501
-  instead of 200, so automation can detect the operation is not implemented.
-* SSE search now returns 400 on invalid `peer_ip` values instead of silently
-  dropping them.
-* `GET /api/v1/rpki/roa/lookup` now applies AND semantics when both `prefix`
-  and `asn` are provided (filters covering ROAs by origin ASN).
 
 ## v1.3.0 - 2026-05-27
 
