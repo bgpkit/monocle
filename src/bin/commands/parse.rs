@@ -199,7 +199,8 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
                 std::process::exit(1);
             }
         };
-        match text_dump::parse_text_dump(buf_reader) {
+        let timestamp = text_dump::infer_timestamp_from_path(file_path_str).unwrap_or(0.0);
+        match text_dump::parse_text_dump_with_timestamp(buf_reader, timestamp) {
             Ok(elems) => elems
                 .into_iter()
                 .filter(|elem| elem.match_filters(&text_filters))

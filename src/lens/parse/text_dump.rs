@@ -197,12 +197,26 @@ fn shift_columns_left(columns: ColumnPositions) -> Option<ColumnPositions> {
     ))
 }
 
+/// Detect a "wrapped" prefix-only line (no route data, just a prefix after
+/// the status flags). The next-hop column position is used to distinguish
+/// prefix-only lines from full route lines: if the line segment at the
+/// next-hop position is empty, the line carries only a prefix.
 fn parse_wrapped_prefix_line(line: &str, next_hop_start: usize) -> Option<String> {
+    // If the line extends into the next-hop column, check whether the
+    // characters there form route data (digits/IP) or are just whitespace.
     if line.len() > next_hop_start {
-        return None;
+        let rest = line[next_hop_start..].trim();
+        if !rest.is_empty() {
+            return None; // has route data → regular line, not a wrapped prefix
+        }
     }
 
-    let prefix = line.get(3..next_hop_start)?.trim();
+    let prefix = if line.len() > next_hop_start {
+        line.get(3..next_hop_start)?
+    } else {
+        line.get(3..)?
+    }
+    .trim();
     prefix.parse::<IpNet>().ok().map(|_| prefix.to_string())
 }
 
@@ -258,6 +272,11 @@ fn parse_route_line(line: &str, columns: ColumnPositions) -> Option<RouteEntry> 
 
 // ── BgpElem construction ───────────────────────────────────────────
 
+/// Convert path tokens into an AsPath.
+///
+/// AS-set delimiters (`{` / `}`) are silently dropped, flattening AS-sets
+/// into plain AS-sequences. This is intentional: the parser aims to recover
+/// the AS-level propagation path, and set membership is not preserved.
 fn as_path_from_tokens(tokens: &[String]) -> AsPath {
     let mut asns: Vec<Asn> = Vec::new();
     for token in tokens {
@@ -329,9 +348,50 @@ fn entry_to_elem(
     })
 }
 
+// ── Timestamp inference ────────────────────────────────────────────
+
+/// Try to extract a Unix timestamp from a file path or URL.
+///
+/// Recognises PCH-style date components like `...2026.07.01.gz` or
+/// `...YYYY.MM.DD...` and converts them to seconds since the Unix epoch.
+/// Returns `None` when no recognisable date is found.
+pub fn infer_timestamp_from_path(path: &str) -> Option<f64> {
+    // Scan for YYYY.MM.DD pattern without pulling in the regex crate.
+    let bytes = path.as_bytes();
+    for window in bytes.windows(10) {
+        if window.len() == 10
+            && window[0].is_ascii_digit()
+            && window[1].is_ascii_digit()
+            && window[2].is_ascii_digit()
+            && window[3].is_ascii_digit()
+            && window[4] == b'.'
+            && window[5].is_ascii_digit()
+            && window[6].is_ascii_digit()
+            && window[7] == b'.'
+            && window[8].is_ascii_digit()
+            && window[9].is_ascii_digit()
+        {
+            let y: i32 = std::str::from_utf8(&window[0..4]).ok()?.parse().ok()?;
+            let m: u32 = std::str::from_utf8(&window[5..7]).ok()?.parse().ok()?;
+            let d: u32 = std::str::from_utf8(&window[8..10]).ok()?.parse().ok()?;
+            // Use noon UTC to avoid DST boundary issues.
+            let dt = chrono::NaiveDate::from_ymd_opt(y, m, d)?.and_hms_opt(12, 0, 0)?;
+            return Some(dt.and_utc().timestamp() as f64);
+        }
+    }
+    None
+}
+
 // ── Top-level parse ────────────────────────────────────────────────
 
-pub fn parse_text_dump<R: BufRead>(mut reader: R) -> std::io::Result<Vec<BgpElem>> {
+pub fn parse_text_dump<R: BufRead>(reader: R) -> std::io::Result<Vec<BgpElem>> {
+    parse_text_dump_with_timestamp(reader, 0.0)
+}
+
+pub fn parse_text_dump_with_timestamp<R: BufRead>(
+    mut reader: R,
+    timestamp: f64,
+) -> std::io::Result<Vec<BgpElem>> {
     let header = parse_header(&mut reader)?;
     let column_positions = match header.column_positions {
         Some(positions) => positions,
@@ -361,7 +421,6 @@ pub fn parse_text_dump<R: BufRead>(mut reader: R) -> std::io::Result<Vec<BgpElem
         }
     };
 
-    let timestamp = 0.0_f64;
     let wrapped_column_positions = shift_columns_left(column_positions);
 
     let mut buf = String::new();
@@ -376,11 +435,6 @@ pub fn parse_text_dump<R: BufRead>(mut reader: R) -> std::io::Result<Vec<BgpElem
             continue;
         }
 
-        if let Some(prefix) = parse_wrapped_prefix_line(&line, column_positions.0) {
-            current_prefix = prefix;
-            continue;
-        }
-
         let entry = parse_route_line(&line, column_positions).or_else(|| {
             wrapped_column_positions.and_then(|positions| parse_route_line(&line, positions))
         });
@@ -389,6 +443,12 @@ pub fn parse_text_dump<R: BufRead>(mut reader: R) -> std::io::Result<Vec<BgpElem
                 current_prefix = entry.prefix.clone();
             }
             entries.push((current_prefix.clone(), entry));
+            continue;
+        }
+
+        if let Some(prefix) = parse_wrapped_prefix_line(&line, column_positions.0) {
+            current_prefix = prefix;
+            continue;
         }
     }
 
