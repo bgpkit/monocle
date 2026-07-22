@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased changes
+
+### New Features
+
+* `monocle parse` now supports route-views `sh ip bgp` snapshots
+  (e.g. `oix-full-snapshot-*.bz2`). These dumps omit the Cisco
+  `BGP table version` / `local AS` preamble, so `peer_ip` and `peer_asn`
+  default to the unspecified sentinels `0.0.0.0` and AS0. Timestamp inference
+  also recognizes the `YYYY-MM-DD-HHMM` component in route-views snapshot
+  filenames, using the embedded time of day.
+  ([#145](https://github.com/bgpkit/monocle/issues/145))
+
 ## v1.4.0 - 2026-07-21
 
 ### New Features
