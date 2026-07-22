@@ -14,6 +14,11 @@
 //!  *> 1.0.0.0/24       103.77.108.118           0             0 13335 i
 //!  *=                  103.77.108.11            0             0 13335 i
 //! ```
+//!
+//! Route-views `sh ip bgp` snapshots (e.g. `oix-full-snapshot-*.bz2`) use the
+//! same fixed-width layout but omit the `BGP table version` / `local AS`
+//! preamble. When the preamble is absent, `peer_ip` and `peer_asn` default to
+//! the unspecified sentinel values `0.0.0.0` and AS0.
 
 use bgpkit_parser::models::*;
 use ipnet::IpNet;
@@ -43,8 +48,9 @@ pub fn detect_text_dump<R: Read>(mut reader: R) -> std::io::Result<(bool, Vec<u8
 
     let is_text = n > 0
         && buf[0].is_ascii_graphic()
-        && std::str::from_utf8(&buf[..n.min(128)])
-            .is_ok_and(|s| s.contains("BGP table") || s.contains("Next Hop"));
+        && std::str::from_utf8(&buf[..n.min(128)]).is_ok_and(|s| {
+            s.contains("BGP table") || s.contains("Next Hop") || s.contains("Status codes:")
+        });
 
     Ok((is_text, buf))
 }
@@ -353,12 +359,63 @@ fn entry_to_elem(
 
 /// Try to extract a Unix timestamp from a file path or URL.
 ///
-/// Recognises PCH-style date components like `...2026.07.01.gz` or
-/// `...YYYY.MM.DD...` and converts them to seconds since the Unix epoch.
-/// Returns `None` when no recognisable date is found.
+/// Recognises route-views-style timestamps like
+/// `oix-full-snapshot-2026-07-01-0000.bz2` (`YYYY-MM-DD-HHMM`, using the
+/// embedded time of day) and PCH-style date components like
+/// `...2026.07.01.gz` (`YYYY.MM.DD`, noon UTC). Returns `None` when no
+/// recognisable date is found.
 pub fn infer_timestamp_from_path(path: &str) -> Option<f64> {
-    // Scan for YYYY.MM.DD pattern without pulling in the regex crate.
     let bytes = path.as_bytes();
+
+    // Scan for YYYY-MM-DD-HHMM pattern (route-views snapshot filenames).
+    for (idx, window) in bytes.windows(15).enumerate() {
+        if window[0].is_ascii_digit()
+            && window[1].is_ascii_digit()
+            && window[2].is_ascii_digit()
+            && window[3].is_ascii_digit()
+            && window[4] == b'-'
+            && window[5].is_ascii_digit()
+            && window[6].is_ascii_digit()
+            && window[7] == b'-'
+            && window[8].is_ascii_digit()
+            && window[9].is_ascii_digit()
+            && window[10] == b'-'
+            && window[11].is_ascii_digit()
+            && window[12].is_ascii_digit()
+            && window[13].is_ascii_digit()
+            && window[14].is_ascii_digit()
+        {
+            let y: Option<i32> = std::str::from_utf8(&window[0..4])
+                .ok()
+                .and_then(|s| s.parse().ok());
+            let m: Option<u32> = std::str::from_utf8(&window[5..7])
+                .ok()
+                .and_then(|s| s.parse().ok());
+            let d: Option<u32> = std::str::from_utf8(&window[8..10])
+                .ok()
+                .and_then(|s| s.parse().ok());
+            let hh: Option<u32> = std::str::from_utf8(&window[11..13])
+                .ok()
+                .and_then(|s| s.parse().ok());
+            let mm: Option<u32> = std::str::from_utf8(&window[13..15])
+                .ok()
+                .and_then(|s| s.parse().ok());
+            // Require a separator before the date to avoid matching digit
+            // runs inside longer numbers.
+            if idx > 0 && bytes[idx - 1].is_ascii_digit() {
+                continue;
+            }
+            if let (Some(y), Some(m), Some(d), Some(hh), Some(mm)) = (y, m, d, hh, mm) {
+                if let Some(dt) = chrono::NaiveDate::from_ymd_opt(y, m, d)
+                    .and_then(|date| date.and_hms_opt(hh, mm, 0))
+                {
+                    return Some(dt.and_utc().timestamp() as f64);
+                }
+            }
+        }
+    }
+
+    // Scan for YYYY.MM.DD pattern (PCH file URLs).
     for window in bytes.windows(10) {
         if window.len() == 10
             && window[0].is_ascii_digit()
@@ -403,24 +460,13 @@ pub fn parse_text_dump_with_timestamp<R: BufRead>(
             ));
         }
     };
-    let peer_ip = match header.router_id {
-        Some(ip) => ip,
-        None => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "missing router ID in text dump header",
-            ));
-        }
-    };
-    let peer_asn = match header.local_as {
-        Some(asn) => asn,
-        None => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "missing local AS in text dump header",
-            ));
-        }
-    };
+    // Route-views style snapshots omit the `BGP table version` / `local AS`
+    // preamble. Fall back to the unspecified sentinels rather than rejecting
+    // the dump: `0.0.0.0` and AS0 carry no peer identity.
+    let peer_ip = header
+        .router_id
+        .unwrap_or_else(|| IpAddr::from([0, 0, 0, 0]));
+    let peer_asn = header.local_as.unwrap_or(0);
 
     let wrapped_column_positions = shift_columns_left(column_positions);
 
@@ -673,5 +719,65 @@ RPKI validation codes: V valid, I invalid, N Not found
         assert_eq!(u32::from(elem.peer_asn), 3856);
         assert_eq!(elem.origin, Some(Origin::IGP));
         assert_eq!(elem.origin_asns, Some(vec![Asn::from(13335u32)]));
+    }
+
+    const ROUTE_VIEWS_HEADER: &str =
+        "   Network            Next Hop            Metric LocPrf Weight Path";
+
+    #[test]
+    fn test_detect_text_dump_route_views() {
+        let data = b"Status codes: s suppressed, d damped, h history, * valid, > best, i - internal,\n              r RIB-failure, S Stale\nOrigin codes: i - IGP, e - EGP, ? - incomplete\n";
+        let (is_text, _buf) = match detect_text_dump(&data[..]) {
+            Ok(result) => result,
+            Err(error) => panic!("text dump detection failed: {error}"),
+        };
+        assert!(is_text);
+    }
+
+    #[test]
+    fn test_parse_route_views_dump() {
+        let dump = format!(
+            "Status codes: s suppressed, d damped, h history, * valid, > best, i - internal,\n              r RIB-failure, S Stale\nOrigin codes: i - IGP, e - EGP, ? - incomplete\n\n{ROUTE_VIEWS_HEADER}\n*  0.0.0.0/0          147.28.0.3               0      0      0 3130 174 i\n*  1.0.0.0/24         12.0.1.63                0      0      0 7018 13335 i\n*  1.0.0.0/24         129.250.1.71          2001      0      0 2914 13335 i\n"
+        );
+        let elems = match parse_text_dump(dump.as_bytes()) {
+            Ok(elems) => elems,
+            Err(error) => panic!("route-views dump parsing failed: {error}"),
+        };
+        assert_eq!(elems.len(), 3);
+        // No router ID / local AS preamble: unspecified sentinel values.
+        assert_eq!(elems[0].peer_ip.to_string(), "0.0.0.0");
+        assert_eq!(u32::from(elems[0].peer_asn), 0);
+
+        assert_eq!(elems[0].prefix.prefix.to_string(), "0.0.0.0/0");
+        assert_eq!(elems[0].med, Some(0));
+        assert_eq!(elems[0].origin_asns, Some(vec![Asn::from(174u32)]));
+
+        assert_eq!(elems[2].prefix.prefix.to_string(), "1.0.0.0/24");
+        assert_eq!(elems[2].med, Some(2001));
+        assert_eq!(elems[2].origin, Some(Origin::IGP));
+        assert_eq!(elems[2].origin_asns, Some(vec![Asn::from(13335u32)]));
+    }
+
+    #[test]
+    fn test_infer_timestamp_route_views_path() {
+        let ts = infer_timestamp_from_path(
+            "https://archive.routeviews.org/oix-route-views/2026.07/oix-full-snapshot-2026-07-01-0000.bz2",
+        );
+        // 2026-07-01 00:00:00 UTC
+        assert_eq!(ts, Some(1782864000.0));
+    }
+
+    #[test]
+    fn test_infer_timestamp_pch_path() {
+        let ts = infer_timestamp_from_path(
+            "https://www.pch.net/resources/data/routing-tables/2026/2026.07/rib-ipv4.2026.07.01.gz",
+        );
+        // 2026-07-01 12:00:00 UTC (noon convention for date-only paths)
+        assert_eq!(ts, Some(1782907200.0));
+    }
+
+    #[test]
+    fn test_infer_timestamp_no_date() {
+        assert_eq!(infer_timestamp_from_path("/tmp/some-file.gz"), None);
     }
 }
