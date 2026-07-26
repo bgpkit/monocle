@@ -19,11 +19,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ------------------------------------------------------------------------------
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo chef cook --release --features cli --bin monocle --recipe-path recipe.json
+RUN cargo chef cook --release --features cli --bin monocle --recipe-path recipe.json
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo build --release --features cli --bin monocle && \
+RUN cargo build --release --features cli --bin monocle && \
     cp /app/target/release/monocle /usr/local/bin/monocle
 
 # ------------------------------------------------------------------------------
