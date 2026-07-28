@@ -79,6 +79,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::io::Read;
 use std::net::IpAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -277,6 +278,55 @@ pub struct ParseFilters {
     /// Filter by AS path regex string
     #[cfg_attr(feature = "cli", clap(short = 'a', long))]
     pub as_path: Option<String>,
+
+    // --- bgpkit-parser v0.19 extended element filters ---
+    // Each accepts the literal value, or `*` (present) / `!*` (absent) for
+    // optional fields (otc, next_hop, origin, local_pref, med, aggr_asn,
+    // aggr_ip, peer_bgp_id).
+    /// Filter by only-to-customer ASN (RFC 9234). Use `*`/`!*` for presence.
+    #[cfg_attr(feature = "cli", clap(long, visible_alias = "otc-asn"))]
+    #[serde(default)]
+    pub otc: Option<String>,
+
+    /// Filter by next-hop IP address. Use `*`/`!*` for presence.
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub next_hop: Option<String>,
+
+    /// Filter by ORIGIN attribute: igp, egp, or incomplete. Use `*`/`!*` for presence.
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub origin: Option<String>,
+
+    /// Filter by LOCAL_PREF value. Use `*`/`!*` for presence.
+    #[cfg_attr(feature = "cli", clap(long, visible_alias = "lp"))]
+    #[serde(default)]
+    pub local_pref: Option<String>,
+
+    /// Filter by MED value. Use `*`/`!*` for presence.
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub med: Option<String>,
+
+    /// Filter by atomic-aggregate flag: true or false.
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub atomic_aggregate: Option<bool>,
+
+    /// Filter by aggregator ASN. Use `*`/`!*` for presence.
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub aggr_asn: Option<String>,
+
+    /// Filter by aggregator IP address. Use `*`/`!*` for presence.
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default)]
+    pub aggr_ip: Option<String>,
+
+    /// Filter by peer BGP identifier (router ID). Use `*`/`!*` for presence.
+    #[cfg_attr(feature = "cli", clap(long, visible_alias = "peer-router-id"))]
+    #[serde(default)]
+    pub peer_bgp_id: Option<String>,
 }
 
 type FilterSpec = (&'static str, String);
@@ -397,6 +447,9 @@ impl ParseFilters {
         Self::check_negation_consistency(&self.peer_asn, "peer-asn")?;
         Self::check_negation_consistency(&self.prefix, "prefix")?;
         Self::check_negation_consistency(&self.communities, "community")?;
+
+        // --- v0.19 extended element filter validation ---
+        self.validate_extended_filters()?;
 
         Ok(())
     }
@@ -526,6 +579,76 @@ impl ParseFilters {
         Ok(())
     }
 
+    /// Validate bgpkit-parser v0.19 extended element filter values.
+    ///
+    /// Each field accepts the literal value, or the presence wildcards `*`
+    /// (present) / `!*` (absent) for optional BGP attributes. Literal values
+    /// are type-checked: ASN (u32), IP address, or origin keyword.
+    fn validate_extended_filters(&self) -> Result<()> {
+        // Helper: strip a leading `!` for presence-negated or value-negated inputs.
+        fn strip_neg(v: &str) -> &str {
+            v.strip_prefix('!').unwrap_or(v)
+        }
+
+        // Helper: validate an optional string field that is either a wildcard
+        // (`*` / `!*`) or a concrete u32 value (with optional `!` prefix).
+        fn validate_u32_field(value: &Option<String>, field: &str) -> Result<()> {
+            if let Some(v) = value {
+                let v = v.trim();
+                if v == "*" || v == "!*" {
+                    return Ok(());
+                }
+                let raw = strip_neg(v);
+                if raw.parse::<u32>().is_err() {
+                    return Err(anyhow!(
+                        "Invalid {field} '{v}': must be a u32, or '*'/'!*' for presence"
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        validate_u32_field(&self.otc, "otc")?;
+        validate_u32_field(&self.local_pref, "local-pref")?;
+        validate_u32_field(&self.med, "med")?;
+        validate_u32_field(&self.aggr_asn, "aggr-asn")?;
+
+        // IP-address fields (next_hop, aggr_ip, peer_bgp_id)
+        for (value, field) in [
+            (&self.next_hop, "next-hop"),
+            (&self.aggr_ip, "aggr-ip"),
+            (&self.peer_bgp_id, "peer-bgp-id"),
+        ] {
+            if let Some(v) = value {
+                let v = v.trim();
+                if v == "*" || v == "!*" {
+                    continue;
+                }
+                if IpAddr::from_str(strip_neg(v)).is_err() {
+                    return Err(anyhow!(
+                        "Invalid {field} '{v}': must be an IP address, or '*'/'!*' for presence"
+                    ));
+                }
+            }
+        }
+
+        // origin: igp | egp | incomplete | * | !*
+        if let Some(v) = &self.origin {
+            let v = v.trim();
+            if v == "*" || v == "!*" {
+                return Ok(());
+            }
+            let raw = strip_neg(v).to_lowercase();
+            if !matches!(raw.as_str(), "igp" | "egp" | "incomplete") {
+                return Err(anyhow!(
+                    "Invalid origin '{v}': must be igp, egp, or incomplete (or '*'/'!*' for presence)"
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     fn filter_specs(&self) -> Result<Vec<FilterSpec>> {
         let mut specs = Vec::new();
 
@@ -566,6 +689,35 @@ impl ParseFilters {
 
         if let Some(value) = &self.elem_type {
             specs.push(("type", value.to_string()));
+        }
+
+        // --- bgpkit-parser v0.19 extended element filters ---
+        if let Some(v) = &self.otc {
+            specs.push(("otc", v.clone()));
+        }
+        if let Some(v) = &self.next_hop {
+            specs.push(("next_hop", v.clone()));
+        }
+        if let Some(v) = &self.origin {
+            specs.push(("origin", v.clone()));
+        }
+        if let Some(v) = &self.local_pref {
+            specs.push(("local_pref", v.clone()));
+        }
+        if let Some(v) = &self.med {
+            specs.push(("med", v.clone()));
+        }
+        if let Some(v) = self.atomic_aggregate {
+            specs.push(("atomic", v.to_string()));
+        }
+        if let Some(v) = &self.aggr_asn {
+            specs.push(("aggr_asn", v.clone()));
+        }
+        if let Some(v) = &self.aggr_ip {
+            specs.push(("aggr_ip", v.clone()));
+        }
+        if let Some(v) = &self.peer_bgp_id {
+            specs.push(("peer_bgp_id", v.clone()));
         }
 
         match self.parse_start_end_strings() {
@@ -1136,5 +1288,140 @@ mod tests {
             ..Default::default()
         };
         assert!(filters.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_extended_filters_valid() {
+        // All valid v0.19 filter values
+        let filters = ParseFilters {
+            otc: Some("65200".to_string()),
+            next_hop: Some("10.0.0.1".to_string()),
+            origin: Some("igp".to_string()),
+            local_pref: Some("100".to_string()),
+            med: Some("50".to_string()),
+            atomic_aggregate: Some(true),
+            aggr_asn: Some("65001".to_string()),
+            aggr_ip: Some("192.168.1.1".to_string()),
+            peer_bgp_id: Some("10.0.0.1".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_ok());
+
+        // Presence wildcards
+        let filters = ParseFilters {
+            otc: Some("*".to_string()),
+            next_hop: Some("*".to_string()),
+            origin: Some("*".to_string()),
+            local_pref: Some("*".to_string()),
+            med: Some("*".to_string()),
+            aggr_asn: Some("*".to_string()),
+            aggr_ip: Some("*".to_string()),
+            peer_bgp_id: Some("*".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_ok());
+
+        // Absence wildcards
+        let filters = ParseFilters {
+            otc: Some("!*".to_string()),
+            next_hop: Some("!*".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_ok());
+
+        // Negated concrete values
+        let filters = ParseFilters {
+            otc: Some("!65200".to_string()),
+            origin: Some("!igp".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_ok());
+
+        // IPv6 next-hop
+        let filters = ParseFilters {
+            next_hop: Some("2001:db8::1".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_extended_filters_invalid() {
+        // Invalid u32 for otc
+        let filters = ParseFilters {
+            otc: Some("not-a-number".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
+
+        // Invalid IP for next_hop
+        let filters = ParseFilters {
+            next_hop: Some("999.999.999.999".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
+
+        // Invalid origin keyword
+        let filters = ParseFilters {
+            origin: Some("bgp".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
+
+        // Invalid u32 for local_pref
+        let filters = ParseFilters {
+            local_pref: Some("-1".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
+
+        // Invalid IP for aggr_ip
+        let filters = ParseFilters {
+            aggr_ip: Some("not-an-ip".to_string()),
+            ..Default::default()
+        };
+        assert!(filters.validate().is_err());
+    }
+
+    #[test]
+    fn test_extended_filters_wired_to_parser() {
+        // Verify that the v0.19 filter specs are correctly emitted for
+        // bgpkit-parser consumption via Filter::new.
+        let filters = ParseFilters {
+            otc: Some("65200".to_string()),
+            next_hop: Some("10.0.0.1".to_string()),
+            origin: Some("igp".to_string()),
+            local_pref: Some("100".to_string()),
+            med: Some("50".to_string()),
+            atomic_aggregate: Some(true),
+            aggr_asn: Some("65001".to_string()),
+            aggr_ip: Some("192.168.1.1".to_string()),
+            peer_bgp_id: Some("10.0.0.1".to_string()),
+            ..Default::default()
+        };
+
+        let actual = filters.to_filters().expect("filter conversion failed");
+
+        // Each extended filter should produce a corresponding Filter value
+        // that bgpkit-parser recognises.
+        for (filter_type, filter_value) in [
+            ("otc", "65200"),
+            ("next_hop", "10.0.0.1"),
+            ("origin", "igp"),
+            ("local_pref", "100"),
+            ("med", "50"),
+            ("atomic", "true"),
+            ("aggr_asn", "65001"),
+            ("aggr_ip", "192.168.1.1"),
+            ("peer_bgp_id", "10.0.0.1"),
+        ] {
+            let expected = Filter::new(filter_type, filter_value)
+                .unwrap_or_else(|e| panic!("invalid expected filter {filter_type}: {e}"));
+            assert!(
+                actual.contains(&expected),
+                "missing filter for {filter_type}={filter_value}"
+            );
+        }
+        assert_eq!(actual.len(), 9);
     }
 }

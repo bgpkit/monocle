@@ -17,7 +17,7 @@
 //! |------|-------------|--------------|
 //! | `TimeLens` | Time parsing and formatting | chrono, dateparser |
 //! | `CountryLens` | Country code/name lookup | bgpkit-commons |
-//! | `IpLens` | IP information lookup | ureq, radar-rs |
+//! | `IpLens` | IP information lookup | ipnet, bgpkit-commons |
 //! | `ParseLens` | MRT file parsing | bgpkit-parser |
 //! | `SearchLens` | BGP message search | bgpkit-broker, bgpkit-parser, rayon |
 //! | `RpkiLens` | RPKI validation and data | bgpkit-commons |

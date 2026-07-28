@@ -96,12 +96,10 @@ lib = [
     "dep:bgpkit-parser",
     "dep:bgpkit-commons",
     "dep:itertools",
-    "dep:radar-rs",
     "dep:rayon",
     "dep:regex",
     # Display (always included with lib)
     "dep:tabled",
-    "dep:json_to_table",
 ]
 
 # HTTP/SSE server feature - for programmatic API access
@@ -159,16 +157,14 @@ chrono-humanize = { version = "0.2", optional = true }
 dateparser = { version = "0.2", optional = true }
 humantime = { version = "2.1", optional = true }
 bgpkit-broker = { version = "0.10.1", optional = true }
-bgpkit-parser = { version = "0.18.0", features = ["serde"], optional = true }
-bgpkit-commons = { version = "0.10.3", features = ["asinfo", "rpki", "countries"], optional = true }
+bgpkit-parser = { version = "0.19.0", features = ["serde"], optional = true }
+bgpkit-commons = { version = "0.12.0", features = ["asinfo", "rpki", "countries"], optional = true }
 itertools = { version = "0.14", optional = true }
-radar-rs = { version = "0.1.0", optional = true }
 rayon = { version = "1.8", optional = true }
 regex = { version = "1.11", optional = true }
 
 # Display
-tabled = { version = "0.20", optional = true }
-json_to_table = { version = "0.12.0", optional = true }
+tabled = { version = "0.21", optional = true }
 
 # =============================================================================
 # Server dependencies (enabled by "server" feature)
@@ -190,7 +186,6 @@ tracing-subscriber = { version = "0.3", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"], optional = true }
 
 [dev-dependencies]
-bgpkit-parser = { version = "0.18.0", features = ["serde"] }
 tempfile = "3"
 futures-util = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
