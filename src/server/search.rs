@@ -72,6 +72,25 @@ pub struct SearchStreamFilters {
     pub elem_type: Option<String>,
     #[serde(default)]
     pub as_path: Option<String>,
+    // --- bgpkit-parser v0.19 extended element filters ---
+    #[serde(default)]
+    pub otc: Option<String>,
+    #[serde(default)]
+    pub next_hop: Option<String>,
+    #[serde(default)]
+    pub origin: Option<String>,
+    #[serde(default)]
+    pub local_pref: Option<String>,
+    #[serde(default)]
+    pub med: Option<String>,
+    #[serde(default)]
+    pub atomic_aggregate: Option<bool>,
+    #[serde(default)]
+    pub aggr_asn: Option<String>,
+    #[serde(default)]
+    pub aggr_ip: Option<String>,
+    #[serde(default)]
+    pub peer_bgp_id: Option<String>,
     /// Start timestamp (unix or human-readable). Required.
     pub start_ts: String,
     /// End timestamp (unix or human-readable). Required.
@@ -131,6 +150,15 @@ impl TryFrom<SearchStreamFilters> for SearchFilters {
             end_ts: Some(f.end_ts),
             duration: None,
             as_path: f.as_path,
+            otc: f.otc,
+            next_hop: f.next_hop,
+            origin: f.origin,
+            local_pref: f.local_pref,
+            med: f.med,
+            atomic_aggregate: f.atomic_aggregate,
+            aggr_asn: f.aggr_asn,
+            aggr_ip: f.aggr_ip,
+            peer_bgp_id: f.peer_bgp_id,
         };
 
         Ok(SearchFilters {

@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+* Added nine bgpkit-parser v0.19 extended element filters to `monocle search`
+  and `monocle parse`: `--otc`, `--next-hop`, `--origin`, `--local-pref`,
+  `--med`, `--atomic-aggregate`, `--aggr-asn`, `--aggr-ip`, and
+  `--peer-bgp-id`. Optional-attribute filters support `*` (present) and `!*`
+  (absent) presence wildcards. The SSE `SearchStreamFilters` DTO exposes the
+  same fields for programmatic access.
+
+### Code Improvements
+
+* Removed unused `radar-rs` dependency (Cloudflare Radar API support was
+  removed during the lens refactor but the Cargo.toml entry survived).
+* Fixed `bgpkit-parser` dev-dependency version conflict: `[dev-dependencies]`
+  pinned v0.18.0 while the main dependency uses v0.19.0, causing
+  `E0464: multiple candidates for rlib` on `cargo test --all-features`.
+
 * `monocle parse` now supports route-views `sh ip bgp` snapshots
   (e.g. `oix-full-snapshot-*.bz2`). These dumps omit the Cisco
   `BGP table version` / `local AS` preamble, so `peer_ip` and `peer_asn`
