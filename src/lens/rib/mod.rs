@@ -1008,7 +1008,7 @@ impl<'a> RibLens<'a> {
                 "{}.partial",
                 cache_path.file_name().unwrap_or_default().to_string_lossy()
             ));
-            oneio::download(url, partial_path.to_str().unwrap_or_default(), None)?;
+            oneio::download(url, partial_path.to_str().unwrap_or_default())?;
             std::fs::rename(partial_path, &cache_path)?;
         }
         Ok(cache_path.to_string_lossy().into_owned())
