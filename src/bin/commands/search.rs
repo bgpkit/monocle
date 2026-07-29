@@ -209,7 +209,7 @@ fn download_to_cache(url: &str, cache_path: &Path) -> Result<(), anyhow::Error> 
     };
 
     // Download to .partial file
-    oneio::download(url, partial_path.to_str().unwrap_or_default(), None)?;
+    oneio::download(url, partial_path.to_str().unwrap_or_default())?;
 
     // Rename .partial to final path
     std::fs::rename(&partial_path, cache_path)?;

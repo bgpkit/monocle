@@ -308,11 +308,14 @@ impl FilterFile {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn load(path: &Path) -> Result<Self> {
-        let content = oneio::read_to_string(
+        let content = oneio::read_to_bytes(
             path.to_str()
                 .ok_or_else(|| anyhow!("filter file path is not valid UTF-8"))?,
         )
         .map_err(|e| anyhow!("Failed to read filter file '{}': {}", path.display(), e))?;
+
+        let content = String::from_utf8(content)
+            .map_err(|_| anyhow!("Prefix file '{}' containts non-utf8 data", path.display()))?;
 
         let file: FilterFile = serde_json::from_str(&content)
             .map_err(|e| anyhow!("Failed to parse filter file '{}': {}", path.display(), e))?;
@@ -461,11 +464,14 @@ impl FilterFile {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn load_prefix_file(path: &Path) -> Result<Vec<String>> {
-    let content = oneio::read_to_string(
+    let content = oneio::read_to_bytes(
         path.to_str()
             .ok_or_else(|| anyhow!("prefix file path is not valid UTF-8"))?,
     )
     .map_err(|e| anyhow!("Failed to read prefix file '{}': {}", path.display(), e))?;
+
+    let content = String::from_utf8(content)
+        .map_err(|_| anyhow!("Prefix file '{}' containts non-utf8 data", path.display()))?;
 
     let prefixes: Vec<String> = content
         .lines()

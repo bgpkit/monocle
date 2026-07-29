@@ -149,7 +149,7 @@ tracing = "0.1"
 
 # Database
 ipnet = { version = "2.10", features = ["json"], optional = true }
-oneio = { version = "0.20.1", default-features = false, features = ["https", "gz", "bz", "json"], optional = true }
+oneio = { version = "0.24.2", default-features = false, features = ["https", "gz", "bz", "json", "zstd"], optional = true }
 tempfile = { version = "3", optional = true }
 
 # Lenses
