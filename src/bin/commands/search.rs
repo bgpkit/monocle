@@ -887,9 +887,13 @@ fn run_inner(config: &MonocleConfig, args: SearchArgs, output_format: OutputForm
         }
 
         if let Some((encoder, writer)) = &mut mrt_writer {
-            let bytes = encoder.export_bytes();
-            if let Err(e) = writer.write_all(&bytes) {
-                eprintln!("Failed to write MRT data: {}", e);
+            match encoder.export_bytes() {
+                Ok(bytes) => {
+                    if let Err(e) = writer.write_all(&bytes) {
+                        eprintln!("Failed to write MRT data: {}", e);
+                    }
+                }
+                Err(e) => eprintln!("Failed to encode MRT data: {}", e),
             }
         }
         drop(mrt_writer);

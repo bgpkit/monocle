@@ -245,19 +245,23 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
             MrtType::Rib => {
                 let mut encoder = MrtRibEncoder::new();
                 for (elem, _) in &elems {
-                    encoder.process_elem(elem);
+                    if let Err(e) = encoder.process_elem(elem) {
+                        eprintln!("Failed to encode element: {}", e);
+                    }
                 }
-                let bytes = encoder.export_bytes();
-                match oneio::get_writer(mrt_out_str) {
-                    Ok(mut w) => {
-                        if let Err(e) = w.write_all(&bytes) {
-                            eprintln!("Failed to write MRT data: {}", e);
+                match encoder.export_bytes() {
+                    Ok(bytes) => match oneio::get_writer(mrt_out_str) {
+                        Ok(mut w) => {
+                            if let Err(e) = w.write_all(&bytes) {
+                                eprintln!("Failed to write MRT data: {}", e);
+                            }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to create MRT writer: {}", e);
-                        std::process::exit(1);
-                    }
+                        Err(e) => {
+                            eprintln!("Failed to create MRT writer: {}", e);
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(e) => eprintln!("Failed to encode MRT data: {}", e),
                 }
             }
             MrtType::Updates => {
@@ -265,17 +269,19 @@ pub fn run(args: ParseArgs, output_format: OutputFormat) {
                 for (elem, _) in &elems {
                     encoder.process_elem(elem);
                 }
-                let bytes = encoder.export_bytes();
-                match oneio::get_writer(mrt_out_str) {
-                    Ok(mut w) => {
-                        if let Err(e) = w.write_all(&bytes) {
-                            eprintln!("Failed to write MRT data: {}", e);
+                match encoder.export_bytes() {
+                    Ok(bytes) => match oneio::get_writer(mrt_out_str) {
+                        Ok(mut w) => {
+                            if let Err(e) = w.write_all(&bytes) {
+                                eprintln!("Failed to write MRT data: {}", e);
+                            }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to create MRT writer: {}", e);
-                        std::process::exit(1);
-                    }
+                        Err(e) => {
+                            eprintln!("Failed to create MRT writer: {}", e);
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(e) => eprintln!("Failed to encode MRT data: {}", e),
                 }
             }
         }
