@@ -15,6 +15,16 @@ All notable changes to this project will be documented in this file.
 
 ### Code Improvements
 
+* Replaced Monocle's local Cisco `sh ip bgp` text dump implementation
+  (783-line `src/lens/parse/text_dump.rs`) with a re-export of the upstream
+  `bgpkit_parser::parser::text_dump` module (bgpkit-parser v0.20.0). The
+  `monocle::lens::parse::text_dump::*` paths are unchanged, so the `parse`
+  command's format auto-detection and timestamp inference work identically.
+  The parser now carries the text dump test coverage (17 tests).
+* Updated `export_bytes()`/`process_elem()` call sites in `monocle parse` and
+  `monocle search` MRT export for bgpkit-parser v0.20.0's fallible encoding
+  API: encoding errors are reported instead of silently truncating (upstream
+  issue #313).
 * Removed unused `radar-rs` dependency (Cloudflare Radar API support was
   removed during the lens refactor but the Cargo.toml entry survived).
 * Fixed `bgpkit-parser` dev-dependency version conflict: `[dev-dependencies]`

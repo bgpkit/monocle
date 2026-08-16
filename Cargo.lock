@@ -241,7 +241,7 @@ dependencies = [
  "chrono",
  "ipnet",
  "ipnet-trie",
- "oneio",
+ "oneio 0.24.2",
  "regex",
  "serde",
  "serde_json",
@@ -253,9 +253,9 @@ dependencies = [
 
 [[package]]
 name = "bgpkit-parser"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "919df0ca6e4c6469bba59cd23051e9bc5ef63470ae4e2f4e9b925d2fcf29621e"
+checksum = "7c58fcccfe233d986f01f79d34af0dc17fb29174b8d3ca0af72436f2a08af9e0"
 dependencies = [
  "bitflags",
  "bytes",
@@ -264,7 +264,7 @@ dependencies = [
  "itertools 0.15.0",
  "log",
  "num_enum",
- "oneio",
+ "oneio 0.25.0",
  "regex",
  "serde",
  "smallvec",
@@ -1456,7 +1456,7 @@ dependencies = [
  "ipnet",
  "itertools 0.14.0",
  "libc",
- "oneio",
+ "oneio 0.24.2",
  "rayon",
  "regex",
  "reqwest",
@@ -1541,6 +1541,22 @@ dependencies = [
  "suppaftp",
  "thiserror",
  "xz2",
+ "zstd",
+]
+
+[[package]]
+name = "oneio"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c4968f8ba9447244a5297118fa1e1c9753bb4fd09d3069fdce188fde0db4f9a"
+dependencies = [
+ "bzip2",
+ "dotenvy",
+ "flate2",
+ "reqwest",
+ "rustls",
+ "suppaftp",
+ "thiserror",
  "zstd",
 ]
 
