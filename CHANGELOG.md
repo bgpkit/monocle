@@ -6,12 +6,27 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+* `monocle parse` now supports route-views `sh ip bgp` snapshots
+  (e.g. `oix-full-snapshot-*.bz2`). These dumps omit the Cisco
+  `BGP table version` / `local AS` preamble, so `peer_ip` and `peer_asn`
+  default to the unspecified sentinels `0.0.0.0` and AS0. Timestamp inference
+  also recognizes the `YYYY-MM-DD-HHMM` component in route-views snapshot
+  filenames, using the embedded time of day.
+  ([#145](https://github.com/bgpkit/monocle/issues/145))
 * Added nine bgpkit-parser v0.19 extended element filters to `monocle search`
   and `monocle parse`: `--otc`, `--next-hop`, `--origin`, `--local-pref`,
   `--med`, `--atomic-aggregate`, `--aggr-asn`, `--aggr-ip`, and
   `--peer-bgp-id`. Optional-attribute filters support `*` (present) and `!*`
   (absent) presence wildcards. The SSE `SearchStreamFilters` DTO exposes the
   same fields for programmatic access.
+  ([#148](https://github.com/bgpkit/monocle/pull/148))
+
+### Bug Fixes
+
+* Fixed `bgpkit-parser` dev-dependency version conflict: `[dev-dependencies]`
+  pinned v0.18.0 while the main dependency used v0.19.0, causing
+  `E0464: multiple candidates for rlib` on `cargo test --all-features`.
+  ([#148](https://github.com/bgpkit/monocle/pull/148))
 
 ### Code Improvements
 
@@ -21,23 +36,15 @@ All notable changes to this project will be documented in this file.
   `monocle::lens::parse::text_dump::*` paths are unchanged, so the `parse`
   command's format auto-detection and timestamp inference work identically.
   The parser now carries the text dump test coverage (17 tests).
+  ([#150](https://github.com/bgpkit/monocle/pull/150))
 * Updated `export_bytes()`/`process_elem()` call sites in `monocle parse` and
   `monocle search` MRT export for bgpkit-parser v0.20.0's fallible encoding
   API: encoding errors are reported instead of silently truncating (upstream
   issue #313).
+  ([#150](https://github.com/bgpkit/monocle/pull/150))
 * Removed unused `radar-rs` dependency (Cloudflare Radar API support was
   removed during the lens refactor but the Cargo.toml entry survived).
-* Fixed `bgpkit-parser` dev-dependency version conflict: `[dev-dependencies]`
-  pinned v0.18.0 while the main dependency uses v0.19.0, causing
-  `E0464: multiple candidates for rlib` on `cargo test --all-features`.
-
-* `monocle parse` now supports route-views `sh ip bgp` snapshots
-  (e.g. `oix-full-snapshot-*.bz2`). These dumps omit the Cisco
-  `BGP table version` / `local AS` preamble, so `peer_ip` and `peer_asn`
-  default to the unspecified sentinels `0.0.0.0` and AS0. Timestamp inference
-  also recognizes the `YYYY-MM-DD-HHMM` component in route-views snapshot
-  filenames, using the embedded time of day.
-  ([#145](https://github.com/bgpkit/monocle/issues/145))
+  ([#148](https://github.com/bgpkit/monocle/pull/148))
 
 ## v1.4.0 - 2026-07-21
 
