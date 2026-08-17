@@ -48,6 +48,24 @@ pub struct RemoteSearchFilters {
     pub as_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub only_to_customer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_hop: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_pref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub med: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub atomic_aggregate: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggr_asn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggr_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_bgp_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub generic_filters: Vec<String>,
     pub start_ts: String,
     pub end_ts: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -249,16 +267,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_remote_filters_serialize_only_to_customer() {
+    fn test_remote_filters_serialize_extended_and_generic_filters() {
         let filters = RemoteSearchFilters {
             only_to_customer: Some("6777".to_string()),
+            next_hop: Some("2001:db8::1".to_string()),
+            origin: Some("igp".to_string()),
+            local_pref: Some("100".to_string()),
+            med: Some("50".to_string()),
+            atomic_aggregate: Some(true),
+            aggr_asn: Some("64496".to_string()),
+            aggr_ip: Some("192.0.2.1".to_string()),
+            peer_bgp_id: Some("192.0.2.2".to_string()),
+            generic_filters: vec!["ip_version=ipv6".to_string()],
             start_ts: "1".to_string(),
             end_ts: "2".to_string(),
             ..Default::default()
         };
         let json = serde_json::to_value(&filters).unwrap();
         assert_eq!(json["only_to_customer"], "6777");
-        // Unset optional dimensions are omitted from the wire payload
-        assert!(json.get("next_hop").is_none());
+        assert_eq!(json["next_hop"], "2001:db8::1");
+        assert_eq!(json["origin"], "igp");
+        assert_eq!(json["local_pref"], "100");
+        assert_eq!(json["med"], "50");
+        assert_eq!(json["atomic_aggregate"], true);
+        assert_eq!(json["aggr_asn"], "64496");
+        assert_eq!(json["aggr_ip"], "192.0.2.1");
+        assert_eq!(json["peer_bgp_id"], "192.0.2.2");
+        assert_eq!(
+            json["generic_filters"],
+            serde_json::json!(["ip_version=ipv6"])
+        );
     }
 }

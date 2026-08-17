@@ -306,8 +306,9 @@ impl SearchFilters {
         Ok(broker)
     }
 
-    /// Validate the filters
+    /// Validate source-selection and parser filters before searching.
     pub fn validate(&self) -> Result<()> {
+        self.parse_filters.validate()?;
         let _ = self.parse_filters.parse_start_end_strings()?;
         Ok(())
     }
