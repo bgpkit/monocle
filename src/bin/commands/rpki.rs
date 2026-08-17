@@ -432,43 +432,6 @@ fn parse_data_source(source: &str) -> Result<RpkiDataSource, String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_rpkispools_data_source() {
-        assert!(matches!(
-            parse_data_source("rpkispools"),
-            Ok(RpkiDataSource::RpkiSpools)
-        ));
-    }
-
-    #[test]
-    fn test_parse_data_source_explains_cloudflare_is_current_only() {
-        let error = match parse_data_source("cloudflare") {
-            Err(error) => error,
-            Ok(_) => panic!("cloudflare is not historical"),
-        };
-        assert!(error.contains("current (undated) RPKI data"));
-    }
-
-    #[test]
-    fn test_parse_collector_lists_rpkiviews_only_massars() {
-        let error = match parse_collector("unknown") {
-            Err(error) => error,
-            Ok(_) => panic!("collector should be rejected"),
-        };
-        assert!(error.contains("massars"));
-    }
-
-    #[test]
-    fn test_reject_unknown_historical_source_and_collector() {
-        assert!(parse_data_source("unknown").is_err());
-        assert!(parse_collector("unknown").is_err());
-    }
-}
-
 fn parse_collector(collector: &str) -> Result<HistoricalRpkiCollectorOption, String> {
     match collector.to_lowercase().as_str() {
         "sobornost" => Ok(HistoricalRpkiCollectorOption::Sobornost),
@@ -1123,5 +1086,42 @@ fn output_aspas_entries(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_rpkispools_data_source() {
+        assert!(matches!(
+            parse_data_source("rpkispools"),
+            Ok(RpkiDataSource::RpkiSpools)
+        ));
+    }
+
+    #[test]
+    fn test_parse_data_source_explains_cloudflare_is_current_only() {
+        let error = match parse_data_source("cloudflare") {
+            Err(error) => error,
+            Ok(_) => panic!("cloudflare is not historical"),
+        };
+        assert!(error.contains("current (undated) RPKI data"));
+    }
+
+    #[test]
+    fn test_parse_collector_lists_rpkiviews_only_massars() {
+        let error = match parse_collector("unknown") {
+            Err(error) => error,
+            Ok(_) => panic!("collector should be rejected"),
+        };
+        assert!(error.contains("massars"));
+    }
+
+    #[test]
+    fn test_reject_unknown_historical_source_and_collector() {
+        assert!(parse_data_source("unknown").is_err());
+        assert!(parse_collector("unknown").is_err());
     }
 }

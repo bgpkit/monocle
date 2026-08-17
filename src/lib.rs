@@ -1,5 +1,6 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 //! Monocle - A BGP information toolkit
 //!

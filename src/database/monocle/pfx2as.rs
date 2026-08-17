@@ -756,8 +756,7 @@ mod tests {
     use rusqlite::Connection;
 
     fn create_test_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn
+        Connection::open_in_memory().unwrap()
     }
 
     #[test]

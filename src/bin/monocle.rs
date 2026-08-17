@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 use clap::{Args, Parser, Subcommand};
 use monocle::utils::OutputFormat;

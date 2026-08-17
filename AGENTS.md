@@ -36,7 +36,7 @@ The GitHub Actions workflow runs these checks on PRs:
 
 ```bash
 cargo fmt --check              # Check formatting
-cargo clippy --all-features -- -D warnings  # Lint
+cargo clippy --all-targets --all-features -- -D warnings  # Lint
 cargo test --all-features --verbose         # All tests
 ```
 

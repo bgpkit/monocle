@@ -393,11 +393,12 @@ mod tests {
         };
 
         // Test RFC3339 format
-        let output = lens.format_results(&[bgp_time.clone()], &TimeOutputFormat::Rfc3339);
+        let output =
+            lens.format_results(std::slice::from_ref(&bgp_time), &TimeOutputFormat::Rfc3339);
         assert_eq!(output, "2023-10-11T15:00:00+00:00");
 
         // Test Unix format
-        let output = lens.format_results(&[bgp_time.clone()], &TimeOutputFormat::Unix);
+        let output = lens.format_results(std::slice::from_ref(&bgp_time), &TimeOutputFormat::Unix);
         assert_eq!(output, "1697043600");
 
         // Test JSON format
@@ -414,7 +415,7 @@ mod tests {
             human: "about 1 year ago".to_string(),
         };
 
-        let compact = lens.format_json(&[bgp_time.clone()], false);
+        let compact = lens.format_json(std::slice::from_ref(&bgp_time), false);
         assert!(!compact.contains('\n') || compact.matches('\n').count() == 0);
 
         let pretty = lens.format_json(&[bgp_time], true);

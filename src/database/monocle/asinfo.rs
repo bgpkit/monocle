@@ -1122,7 +1122,7 @@ mod tests {
         assert_eq!(names.len(), 2);
         assert_eq!(names.get(&13335), Some(&"CLOUDFLARENET".to_string()));
         assert_eq!(names.get(&15169), Some(&"GOOGLE".to_string()));
-        assert!(names.get(&99999).is_none());
+        assert!(!names.contains_key(&99999));
     }
 
     #[test]
@@ -1220,7 +1220,7 @@ mod tests {
         assert_eq!(names.get(&3), Some(&"AS2ORG_ORG3".to_string()));
         assert_eq!(names.get(&4), Some(&"AS2ORG_NAME4".to_string()));
         assert_eq!(names.get(&5), Some(&"CORE5".to_string()));
-        assert!(names.get(&99999).is_none());
+        assert!(!names.contains_key(&99999));
     }
 
     #[test]

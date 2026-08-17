@@ -4,66 +4,58 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+## v1.5.0 - 2026-08-17
+
 ### New Features
 
-* Added repeatable `--filter key=value|key!=value` expressions to `monocle parse`
-  and `monocle search`. Generic filters use bgpkit-parser's validation and matching
-  semantics, including IP-family filtering and parser-native regular expressions;
-  timestamp keys are rejected in favor of Monocle's `--start-ts`, `--end-ts`, and
-  `--duration` options. Generic filters are retained when `ParseFilters` is
-  serialized, and local and remote search forward all extended element filters
-  and generic filters through the SSE request schema.
-* `monocle parse` now supports route-views `sh ip bgp` snapshots
-  (e.g. `oix-full-snapshot-*.bz2`). These dumps omit the Cisco
-  `BGP table version` / `local AS` preamble, so `peer_ip` and `peer_asn`
-  default to the unspecified sentinels `0.0.0.0` and AS0. Timestamp inference
-  also recognizes the `YYYY-MM-DD-HHMM` component in route-views snapshot
-  filenames, using the embedded time of day.
-  ([#145](https://github.com/bgpkit/monocle/issues/145))
-* Added nine bgpkit-parser extended element filters to `monocle search`
-  and `monocle parse`: `--only-to-customer` (alias `--otc`), `--next-hop`,
+* `monocle parse` recognizes Route Views `sh ip bgp` snapshots such as
+  `oix-full-snapshot-*.bz2`. These snapshots omit the Cisco router-ID/local-AS
+  preamble, so parsed elements use `0.0.0.0` and AS0 for unavailable peer
+  identity. Filename timestamps retain their embedded time of day.
+  ([#146](https://github.com/bgpkit/monocle/pull/146))
+* Added nine parser-backed element filters to `monocle parse`, `monocle search`,
+  and the SSE search API: `--only-to-customer` (`--otc` alias), `--next-hop`,
   `--origin`, `--local-pref`, `--med`, `--atomic-aggregate`, `--aggr-asn`,
-  `--aggr-ip`, and `--peer-bgp-id`. Optional-attribute filters support `*`
-  (present) and `!*` (absent) presence wildcards. The SSE `SearchStreamFilters`
-  DTO exposes the same fields for programmatic access.
+  `--aggr-ip`, and `--peer-bgp-id`. Optional attributes support `*` for
+  presence and `!*` for absence.
   ([#148](https://github.com/bgpkit/monocle/pull/148))
-* `monocle parse`, `monocle search`, and `monocle rib` accept
-  `only-to-customer` as a selectable output field: `--fields only-to-customer`
-  displays the RFC 9234 only-to-customer ASN in JSON, table, PSV, and markdown
-  formats (empty/null when the attribute is absent). The custom JSON
-  projection emits the `only_to_customer` key to match the native element
-  serialization. The local RIB store (`monocle rib`) now persists the OTC
-  attribute for both reconstructed RIB states and the incremental updates
-  table, with automatic column migration for databases created before this
-  change, and `monocle search --remote-url` forwards the `--only-to-customer`
-  filter to the server. A runnable example (`cargo run --example
-  only_to_customer --features lib`) demonstrates value, `*` presence, and `!*`
-  absence filters on real Route Views data.
+* Added zstd-compressed input support by upgrading to oneio 0.24.
+  ([#149](https://github.com/bgpkit/monocle/pull/149))
+* Added the RFC 9234 only-to-customer attribute as a selectable output field for
+  `parse`, `search`, and `rib`; `rib` now persists it in local SQLite state.
+  The preferred user-facing name is `only-to-customer`, with `--otc` retained as
+  an alias. The remote search client forwards the field, and a runnable example
+  demonstrates value and presence filtering.
+  ([#151](https://github.com/bgpkit/monocle/pull/151))
+* Added repeatable `--filter key=value|key!=value` expressions to `parse` and
+  `search`. They use bgpkit-parser's validation and matching semantics, cover
+  IP-family filtering and parser-native regular expressions, and reject time
+  keys in favor of `--start-ts`, `--end-ts`, and `--duration`. Generic filters
+  serialize with `ParseFilters` and are forwarded by remote search.
+  ([#152](https://github.com/bgpkit/monocle/pull/152))
 
 ### Bug Fixes
 
-* Fixed `bgpkit-parser` dev-dependency version conflict: `[dev-dependencies]`
-  pinned an older version while the main dependency used a newer one, causing
-  `E0464: multiple candidates for rlib` on `cargo test --all-features`.
+* Fixed Docker builds on Railway Metal by removing unsupported BuildKit cache
+  mounts. ([b01a6cb](https://github.com/bgpkit/monocle/commit/b01a6cb656ea603f6f0c3ace0d24eeb985a0d60e))
+* Fixed the bgpkit-parser dev-dependency conflict that could produce `E0464`
+  multiple-candidate errors during all-feature test builds.
   ([#148](https://github.com/bgpkit/monocle/pull/148))
 
 ### Code Improvements
 
-* Replaced Monocle's local Cisco `sh ip bgp` text dump implementation
-  (783-line `src/lens/parse/text_dump.rs`) with a re-export of the upstream
-  `bgpkit_parser::parser::text_dump` module (bgpkit-parser v0.20.0). The
-  `monocle::lens::parse::text_dump::*` paths are unchanged, so the `parse`
-  command's format auto-detection and timestamp inference work identically.
-  The parser now carries the text dump test coverage (17 tests).
+* Replaced Monocle's local Cisco text-dump parser with the upstream
+  `bgpkit_parser::parser::text_dump` implementation. The public
+  `monocle::lens::parse::text_dump::*` paths remain stable, and MRT export now
+  reports bgpkit-parser v0.20.0 encoding errors instead of silently truncating.
   ([#150](https://github.com/bgpkit/monocle/pull/150))
-* Updated `export_bytes()`/`process_elem()` call sites in `monocle parse` and
-  `monocle search` MRT export for bgpkit-parser v0.20.0's fallible encoding
-  API: encoding errors are reported instead of silently truncating (upstream
-  issue #313).
-  ([#150](https://github.com/bgpkit/monocle/pull/150))
-* Removed unused `radar-rs` dependency (Cloudflare Radar API support was
-  removed during the lens refactor but the Cargo.toml entry survived).
+* Removed the unused `radar-rs` dependency.
   ([#148](https://github.com/bgpkit/monocle/pull/148))
+
+### Contributors
+
+* @ties — zstd-compressed input support via oneio 0.24
+  ([#149](https://github.com/bgpkit/monocle/pull/149))
 
 ## v1.4.0 - 2026-07-21
 

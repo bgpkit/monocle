@@ -1411,95 +1411,6 @@ fn run_inner(config: &MonocleConfig, args: SearchArgs, output_format: OutputForm
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_url_to_cache_path_ripe_ris() {
-        let cache_dir = PathBuf::from("/cache");
-        let url = "https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz";
-        let collector = "rrc00";
-
-        let result = url_to_cache_path(&cache_dir, collector, url);
-        assert_eq!(
-            result,
-            Some(PathBuf::from(
-                "/cache/rrc00/2024.01/updates.20240101.0000.gz"
-            ))
-        );
-    }
-
-    #[test]
-    fn test_url_to_cache_path_routeviews_main() {
-        let cache_dir = PathBuf::from("/cache");
-        // route-views2 uses /bgpdata/ path (collector not in URL path)
-        let url = "http://archive.routeviews.org/bgpdata/2024.01/UPDATES/updates.20240101.0000.bz2";
-        let collector = "route-views2";
-
-        let result = url_to_cache_path(&cache_dir, collector, url);
-        assert_eq!(
-            result,
-            Some(PathBuf::from(
-                "/cache/route-views2/bgpdata/2024.01/UPDATES/updates.20240101.0000.bz2"
-            ))
-        );
-    }
-
-    #[test]
-    fn test_url_to_cache_path_routeviews_named() {
-        let cache_dir = PathBuf::from("/cache");
-        // route-views6 has collector in URL path
-        let url = "http://archive.routeviews.org/route-views6/bgpdata/2024.01/UPDATES/updates.bz2";
-        let collector = "route-views6";
-
-        let result = url_to_cache_path(&cache_dir, collector, url);
-        assert_eq!(
-            result,
-            Some(PathBuf::from(
-                "/cache/route-views6/bgpdata/2024.01/UPDATES/updates.bz2"
-            ))
-        );
-    }
-
-    #[test]
-    fn test_url_to_cache_path_invalid_url() {
-        let cache_dir = PathBuf::from("/cache");
-        let url = "not-a-valid-url";
-        let collector = "rrc00";
-
-        let result = url_to_cache_path(&cache_dir, collector, url);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_url_to_cache_path_ftp_url() {
-        let cache_dir = PathBuf::from("/cache");
-        // FTP URLs are not HTTP/HTTPS, should return None
-        let url = "ftp://example.com/data/file.gz";
-        let collector = "test";
-
-        let result = url_to_cache_path(&cache_dir, collector, url);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_remote_search_time_bounds_expand_duration() {
-        let filters = SearchFilters {
-            parse_filters: monocle::lens::parse::ParseFilters {
-                start_ts: Some("2026-01-01T00:00:00Z".to_string()),
-                duration: Some("1h".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let (start_ts, end_ts) = remote_search_time_bounds(&filters).expect("valid time bounds");
-        assert_eq!(start_ts, "1767225600");
-        assert_eq!(end_ts, "1767229200");
-    }
-}
-
 /// Wrapper to convert local SearchFilters to wire RemoteSearchFilters and run
 /// the async remote search client on a tokio runtime.
 fn remote_search_time_bounds(filters: &SearchFilters) -> anyhow::Result<(String, String)> {
@@ -1599,5 +1510,94 @@ fn run_remote_search_wrapper(
     )) {
         eprintln!("Remote search failed: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_url_to_cache_path_ripe_ris() {
+        let cache_dir = PathBuf::from("/cache");
+        let url = "https://data.ris.ripe.net/rrc00/2024.01/updates.20240101.0000.gz";
+        let collector = "rrc00";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(
+            result,
+            Some(PathBuf::from(
+                "/cache/rrc00/2024.01/updates.20240101.0000.gz"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_url_to_cache_path_routeviews_main() {
+        let cache_dir = PathBuf::from("/cache");
+        // route-views2 uses /bgpdata/ path (collector not in URL path)
+        let url = "http://archive.routeviews.org/bgpdata/2024.01/UPDATES/updates.20240101.0000.bz2";
+        let collector = "route-views2";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(
+            result,
+            Some(PathBuf::from(
+                "/cache/route-views2/bgpdata/2024.01/UPDATES/updates.20240101.0000.bz2"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_url_to_cache_path_routeviews_named() {
+        let cache_dir = PathBuf::from("/cache");
+        // route-views6 has collector in URL path
+        let url = "http://archive.routeviews.org/route-views6/bgpdata/2024.01/UPDATES/updates.bz2";
+        let collector = "route-views6";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(
+            result,
+            Some(PathBuf::from(
+                "/cache/route-views6/bgpdata/2024.01/UPDATES/updates.bz2"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_url_to_cache_path_invalid_url() {
+        let cache_dir = PathBuf::from("/cache");
+        let url = "not-a-valid-url";
+        let collector = "rrc00";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_url_to_cache_path_ftp_url() {
+        let cache_dir = PathBuf::from("/cache");
+        // FTP URLs are not HTTP/HTTPS, should return None
+        let url = "ftp://example.com/data/file.gz";
+        let collector = "test";
+
+        let result = url_to_cache_path(&cache_dir, collector, url);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_remote_search_time_bounds_expand_duration() {
+        let filters = SearchFilters {
+            parse_filters: monocle::lens::parse::ParseFilters {
+                start_ts: Some("2026-01-01T00:00:00Z".to_string()),
+                duration: Some("1h".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (start_ts, end_ts) = remote_search_time_bounds(&filters).expect("valid time bounds");
+        assert_eq!(start_ts, "1767225600");
+        assert_eq!(end_ts, "1767229200");
     }
 }
