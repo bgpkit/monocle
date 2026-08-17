@@ -279,6 +279,16 @@ pub struct ParseFilters {
     #[cfg_attr(feature = "cli", clap(short = 'a', long))]
     pub as_path: Option<String>,
 
+    /// Apply a bgpkit-parser filter expression (`key=value` or `key!=value`).
+    /// May be specified multiple times. Time filter keys are rejected; use
+    /// `--start-ts`, `--end-ts`, and `--duration` instead.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long = "filter", value_name = "KEY=VALUE", action = clap::ArgAction::Append)
+    )]
+    #[serde(default, skip_serializing)]
+    pub generic_filters: Vec<String>,
+
     // --- bgpkit-parser extended element filters ---
     // Each accepts the literal value, or `*` (present) / `!*` (absent) for
     // optional fields (only_to_customer, next_hop, origin, local_pref, med,
@@ -334,6 +344,17 @@ pub struct ParseFilters {
 }
 
 type FilterSpec = (&'static str, String);
+
+const TIME_FILTER_KEYS: [&str; 4] = ["start_ts", "end_ts", "ts_start", "ts_end"];
+const MULTI_VALUE_FILTER_KEYS: [&str; 7] = [
+    "origin_asns",
+    "prefixes",
+    "prefixes_super",
+    "prefixes_sub",
+    "prefixes_super_sub",
+    "peer_ips",
+    "peer_asns",
+];
 
 impl ParseFilters {
     /// Parse start and end time strings into Unix timestamps
@@ -454,6 +475,7 @@ impl ParseFilters {
 
         // --- v0.19 extended element filter validation ---
         self.validate_extended_filters()?;
+        self.generic_filter_specs()?;
 
         Ok(())
     }
@@ -748,11 +770,75 @@ impl ParseFilters {
         Ok(specs)
     }
 
+    fn generic_filter_specs(&self) -> Result<Vec<(String, String)>> {
+        self.generic_filters
+            .iter()
+            .map(|expression| {
+                let (filter_type, filter_value) = Self::parse_generic_filter_expression(expression)?;
+                if TIME_FILTER_KEYS.contains(&filter_type.as_str()) {
+                    return Err(anyhow!(
+                        "Invalid --filter '{}': time filter '{}' is not supported; use --start-ts, --end-ts, or --duration instead",
+                        expression,
+                        filter_type
+                    ));
+                }
+                Filter::new(&filter_type, &filter_value).map_err(|error| {
+                    anyhow!("Invalid --filter '{}': {}", expression, error)
+                })?;
+                Ok((filter_type, filter_value))
+            })
+            .collect()
+    }
+
+    fn parse_generic_filter_expression(expression: &str) -> Result<(String, String)> {
+        let (filter_type, filter_value, negated) =
+            if let Some((filter_type, filter_value)) = expression.split_once("!=") {
+                (filter_type.trim(), filter_value.trim(), true)
+            } else if let Some((filter_type, filter_value)) = expression.split_once('=') {
+                (filter_type.trim(), filter_value.trim(), false)
+            } else {
+                return Err(anyhow!(
+                    "Invalid --filter '{}': expression must contain '=' or '!='",
+                    expression
+                ));
+            };
+
+        if filter_type.is_empty() {
+            return Err(anyhow!(
+                "Invalid --filter '{}': filter key cannot be empty",
+                expression
+            ));
+        }
+        if filter_value.is_empty() {
+            return Err(anyhow!(
+                "Invalid --filter '{}': filter value cannot be empty",
+                expression
+            ));
+        }
+
+        let filter_value = if negated && MULTI_VALUE_FILTER_KEYS.contains(&filter_type) {
+            filter_value
+                .split(',')
+                .map(|value| format!("!{}", value.trim()))
+                .collect::<Vec<_>>()
+                .join(",")
+        } else if negated {
+            format!("!{filter_value}")
+        } else {
+            filter_value.to_string()
+        };
+
+        Ok((filter_type.to_string(), filter_value))
+    }
+
     /// Convert filters into BgpElem predicates using bgpkit-parser's canonical semantics.
     pub fn to_filters(&self) -> Result<Vec<Filter>> {
         let mut filters = Vec::new();
         for (filter_type, filter_value) in self.filter_specs()? {
             filters.push(Filter::new(filter_type, &filter_value)?);
+        }
+        for (filter_type, filter_value) in self.generic_filter_specs()? {
+            filters.push(Filter::new(&filter_type, &filter_value)?);
         }
         Ok(filters)
     }
@@ -766,6 +852,9 @@ impl ParseFilters {
         let mut parser = BgpkitParser::new(file_path)?.disable_warnings();
         for (filter_type, filter_value) in self.filter_specs()? {
             parser = parser.add_filter(filter_type, &filter_value)?;
+        }
+        for (filter_type, filter_value) in self.generic_filter_specs()? {
+            parser = parser.add_filter(&filter_type, &filter_value)?;
         }
         Ok(parser)
     }
@@ -1428,5 +1517,32 @@ mod tests {
             );
         }
         assert_eq!(actual.len(), 9);
+    }
+
+    #[test]
+    fn test_generic_filters_use_parser_semantics() {
+        let filters = ParseFilters {
+            generic_filters: vec![
+                "ip_version=ipv6".to_string(),
+                "origin_asns!=13335,15169".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        let actual = filters.to_filters().expect("filter conversion failed");
+        assert!(actual.contains(&Filter::new("ip_version", "ipv6").expect("valid IP filter")));
+        assert!(actual.contains(
+            &Filter::new("origin_asns", "!13335,!15169").expect("valid negated origin filter")
+        ));
+    }
+
+    #[test]
+    fn test_generic_filters_reject_time_filter_keys() {
+        let filters = ParseFilters {
+            generic_filters: vec!["start_ts=2026-01-01T00:00:00Z".to_string()],
+            ..Default::default()
+        };
+
+        assert!(filters.validate().is_err());
     }
 }

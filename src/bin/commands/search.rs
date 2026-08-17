@@ -1482,10 +1482,31 @@ mod tests {
         let result = url_to_cache_path(&cache_dir, collector, url);
         assert_eq!(result, None);
     }
+
+    #[test]
+    fn test_remote_search_time_bounds_expand_duration() {
+        let filters = SearchFilters {
+            parse_filters: monocle::lens::parse::ParseFilters {
+                start_ts: Some("2026-01-01T00:00:00Z".to_string()),
+                duration: Some("1h".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (start_ts, end_ts) = remote_search_time_bounds(&filters).expect("valid time bounds");
+        assert_eq!(start_ts, "1767225600");
+        assert_eq!(end_ts, "1767229200");
+    }
 }
 
 /// Wrapper to convert local SearchFilters to wire RemoteSearchFilters and run
 /// the async remote search client on a tokio runtime.
+fn remote_search_time_bounds(filters: &SearchFilters) -> anyhow::Result<(String, String)> {
+    let (start_ts, end_ts) = filters.parse_filters.parse_start_end_strings()?;
+    Ok((start_ts.to_string(), end_ts.to_string()))
+}
+
 fn run_remote_search_wrapper(
     url: &str,
     auth_token: Option<&str>,
@@ -1494,6 +1515,14 @@ fn run_remote_search_wrapper(
     output_format: OutputFormat,
     time_format: TimestampFormat,
 ) {
+    let (start_ts, end_ts) = match remote_search_time_bounds(filters) {
+        Ok(bounds) => bounds,
+        Err(error) => {
+            eprintln!("ERROR: failed to resolve remote search time range: {error}");
+            std::process::exit(1);
+        }
+    };
+
     // Convert internal SearchFilters to wire RemoteSearchFilters
     let wire = RemoteSearchFilters {
         prefix: filters.parse_filters.prefix.clone(),
@@ -1514,8 +1543,17 @@ fn run_remote_search_wrapper(
         }),
         as_path: filters.parse_filters.as_path.clone(),
         only_to_customer: filters.parse_filters.only_to_customer.clone(),
-        start_ts: filters.parse_filters.start_ts.clone().unwrap_or_default(),
-        end_ts: filters.parse_filters.end_ts.clone().unwrap_or_default(),
+        next_hop: filters.parse_filters.next_hop.clone(),
+        origin: filters.parse_filters.origin.clone(),
+        local_pref: filters.parse_filters.local_pref.clone(),
+        med: filters.parse_filters.med.clone(),
+        atomic_aggregate: filters.parse_filters.atomic_aggregate,
+        aggr_asn: filters.parse_filters.aggr_asn.clone(),
+        aggr_ip: filters.parse_filters.aggr_ip.clone(),
+        peer_bgp_id: filters.parse_filters.peer_bgp_id.clone(),
+        generic_filters: filters.parse_filters.generic_filters.clone(),
+        start_ts,
+        end_ts,
         collector: filters.collector.clone(),
         project: filters.project.clone(),
         dump_type: Some(

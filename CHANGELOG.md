@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+* Added repeatable `--filter key=value|key!=value` expressions to `monocle parse`
+  and `monocle search`. Generic filters use bgpkit-parser's validation and matching
+  semantics, including IP-family filtering and parser-native regular expressions;
+  timestamp keys are rejected in favor of Monocle's `--start-ts`, `--end-ts`, and
+  `--duration` options. Local and remote search now forward all extended element
+  filters and generic filters through the SSE request schema.
 * `monocle parse` now supports route-views `sh ip bgp` snapshots
   (e.g. `oix-full-snapshot-*.bz2`). These dumps omit the Cisco
   `BGP table version` / `local AS` preamble, so `peer_ip` and `peer_asn`

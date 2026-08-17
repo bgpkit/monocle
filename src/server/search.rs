@@ -91,6 +91,10 @@ pub struct SearchStreamFilters {
     pub aggr_ip: Option<String>,
     #[serde(default)]
     pub peer_bgp_id: Option<String>,
+    /// Additional bgpkit-parser filter expressions (`key=value` or `key!=value`).
+    /// Time filter keys are rejected; use the required start/end timestamps.
+    #[serde(default)]
+    pub generic_filters: Vec<String>,
     /// Start timestamp (unix or human-readable). Required.
     pub start_ts: String,
     /// End timestamp (unix or human-readable). Required.
@@ -150,6 +154,7 @@ impl TryFrom<SearchStreamFilters> for SearchFilters {
             end_ts: Some(f.end_ts),
             duration: None,
             as_path: f.as_path,
+            generic_filters: f.generic_filters,
             only_to_customer: f.only_to_customer,
             next_hop: f.next_hop,
             origin: f.origin,
@@ -654,6 +659,8 @@ mod tests {
     fn test_search_stream_filters_conversion() {
         let wire = SearchStreamFilters {
             prefix: vec!["1.1.1.0/24".to_string()],
+            next_hop: Some("192.0.2.1".to_string()),
+            generic_filters: vec!["ip_version=ipv4".to_string()],
             start_ts: "2024-01-01T00:00:00Z".to_string(),
             end_ts: "2024-01-01T00:10:00Z".to_string(),
             collector: Some("rrc00".to_string()),
@@ -664,6 +671,11 @@ mod tests {
         let filters: SearchFilters = wire.try_into().expect("conversion should succeed");
         assert_eq!(filters.collector, Some("rrc00".to_string()));
         assert_eq!(filters.parse_filters.prefix, vec!["1.1.1.0/24"]);
+        assert_eq!(filters.parse_filters.next_hop.as_deref(), Some("192.0.2.1"));
+        assert_eq!(
+            filters.parse_filters.generic_filters,
+            vec!["ip_version=ipv4"]
+        );
     }
 
     #[test]
@@ -677,6 +689,19 @@ mod tests {
 
         let result: Result<SearchFilters, _> = wire.try_into();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_search_stream_rejects_generic_time_filter() {
+        let wire = SearchStreamFilters {
+            generic_filters: vec!["start_ts=2026-01-01T00:00:00Z".to_string()],
+            start_ts: "2026-01-01T00:00:00Z".to_string(),
+            end_ts: "2026-01-01T00:10:00Z".to_string(),
+            ..Default::default()
+        };
+
+        let filters: SearchFilters = wire.try_into().expect("conversion should succeed");
+        assert!(filters.validate().is_err());
     }
 
     #[test]
