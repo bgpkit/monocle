@@ -271,6 +271,42 @@ impl RibSqliteStore {
                 "#,
             )
             .map_err(|e| anyhow!("Failed to initialize RIB SQLite schema: {}", e))?;
+
+        // Migrate databases created by older Monocle releases: the
+        // only_to_customer column did not exist before, and opening such a
+        // database with reset=false leaves the tables unchanged (CREATE TABLE
+        // IF NOT EXISTS is a no-op), so the new INSERT statements would fail
+        // with "no column named only_to_customer".
+        self.ensure_column("ribs", "only_to_customer", "INTEGER")?;
+        self.ensure_column("updates", "only_to_customer", "INTEGER")?;
+        Ok(())
+    }
+
+    /// Add a column to a table if it does not already exist, so databases
+    /// created before the column was introduced can still be opened and written.
+    fn ensure_column(&self, table: &str, column: &str, decl: &str) -> Result<()> {
+        let exists = {
+            let mut stmt = self
+                .db
+                .conn
+                .prepare(&format!("PRAGMA table_info({})", table))
+                .map_err(|e| anyhow!("Failed to inspect {}.{}: {}", table, column, e))?;
+            let names = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| anyhow!("Failed to read {} columns: {}", table, e))?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| anyhow!("Failed to collect {} columns: {}", table, e))?;
+            names.iter().any(|n| n == column)
+        };
+        if !exists {
+            self.db
+                .conn
+                .execute(
+                    &format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, decl),
+                    [],
+                )
+                .map_err(|e| anyhow!("Failed to add column {}.{}: {}", table, column, e))?;
+        }
         Ok(())
     }
 
@@ -420,7 +456,7 @@ mod tests {
             atomic: false,
             aggr_asn: None,
             aggr_ip: None,
-            only_to_customer: None,
+            only_to_customer: Some(64497.into()),
             unknown: None,
             deprecated: None,
         })
@@ -442,6 +478,8 @@ mod tests {
         assert_eq!(visited.len(), 1);
         assert_eq!(visited[0].collector.as_ref(), "rrc00");
         assert_eq!(visited[0].path_id, Some(7));
+        // The only-to-customer attribute must survive the BgpElem conversion
+        assert_eq!(visited[0].only_to_customer, Some(64497));
         Ok(())
     }
 
@@ -496,6 +534,98 @@ mod tests {
         assert_eq!(rib_count, 2);
         // Only 2nd RIB has updates stored
         assert_eq!(update_count, 1);
+
+        // The only-to-customer ASN is persisted, not written as NULL
+        let rib_otc: Option<i64> = store
+            .db
+            .conn
+            .query_row("SELECT only_to_customer FROM ribs LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| anyhow!("Failed to read ribs only_to_customer: {}", e))?;
+        assert_eq!(rib_otc, Some(64497));
+
+        let update_otc: Option<i64> = store
+            .db
+            .conn
+            .query_row("SELECT only_to_customer FROM updates LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| anyhow!("Failed to read updates only_to_customer: {}", e))?;
+        assert_eq!(update_otc, Some(64497));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sqlite_store_migrates_old_schema() -> Result<()> {
+        use rusqlite::Connection;
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new()?;
+        let path = temp_file.path().to_str().unwrap();
+
+        // Simulate a database created by an older Monocle release: the
+        // only_to_customer column did not exist in either table.
+        {
+            let conn = Connection::open(path)?;
+            conn.execute_batch(
+                r#"
+                CREATE TABLE ribs (
+                    rib_ts INTEGER NOT NULL, timestamp REAL NOT NULL,
+                    collector TEXT NOT NULL, peer_ip TEXT NOT NULL,
+                    peer_asn INTEGER NOT NULL, prefix TEXT NOT NULL,
+                    path_id INTEGER, as_path TEXT, origin_asns TEXT
+                );
+                CREATE TABLE updates (
+                    rib_ts INTEGER NOT NULL, timestamp REAL NOT NULL,
+                    collector TEXT NOT NULL, peer_ip TEXT NOT NULL,
+                    peer_asn INTEGER NOT NULL, prefix TEXT NOT NULL,
+                    path_id INTEGER, as_path TEXT, origin_asns TEXT,
+                    elem_type TEXT NOT NULL
+                );
+                "#,
+            )?;
+        }
+
+        // Open without reset: the missing columns must be added automatically.
+        let mut store = RibSqliteStore::new(path, false)?;
+
+        let mut state = RibStateStore::new_temp()?;
+        let entry = StoredRibEntry::from_elem(Arc::from("rrc00"), test_elem()?);
+        state.upsert_entry(entry)?;
+        let update = StoredRibUpdate::from_elem(
+            1704069000,
+            Arc::from("rrc00"),
+            test_elem()?,
+            ElemType::ANNOUNCE,
+        );
+
+        // First snapshot: ribs only (snapshot_index 0 does not store updates)
+        store.insert_snapshot(1704067200, &state, &[])?;
+        // Second snapshot: stores the updates, exercising the insert path that
+        // depends on the migrated column.
+        store.insert_snapshot(1704069000, &state, &[update])?;
+        store.finalize_indexes()?;
+
+        // After migration, inserts succeed and the values are the migrated type
+        let rib_otc: Option<i64> = store
+            .db
+            .conn
+            .query_row("SELECT only_to_customer FROM ribs LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| anyhow!("Failed to read migrated ribs only_to_customer: {}", e))?;
+        assert_eq!(rib_otc, Some(64497));
+
+        let update_otc: Option<i64> = store
+            .db
+            .conn
+            .query_row("SELECT only_to_customer FROM updates LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| anyhow!("Failed to read migrated updates only_to_customer: {}", e))?;
+        assert_eq!(update_otc, Some(64497));
 
         Ok(())
     }

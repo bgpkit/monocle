@@ -512,8 +512,9 @@ Use `-f` or `--fields` to select which columns to display:
 # Show only prefix, as_path, and origin
 monocle parse file.mrt -f prefix,as_path,origin
 
-# Available fields: type, timestamp, peer_ip, peer_asn, prefix, as_path, origin,
-#   next_hop, local_pref, med, communities, atomic, aggr_asn, aggr_ip, collector
+# Available fields: type, timestamp, peer_ip, peer_asn, prefix, path_id, as_path,
+#   origin_asns, origin, next_hop, local_pref, med, communities, atomic, aggr_asn,
+#   aggr_ip, only-to-customer, collector
 ```
 
 #### Output Sorting
@@ -575,7 +576,7 @@ The output contains the following fields:
 | `atomic` | Atomic aggregate flag |
 | `aggr_asn` | Aggregator ASN |
 | `aggr_ip` | Aggregator IP |
-| `only_to_customer` | OTC attribute (RFC 9234) |
+| `only_to_customer` | OTC attribute (RFC 9234). Select it with `--fields only-to-customer`; the JSON/PSV key is `only_to_customer` |
 | `unknown` | Unknown attributes |
 | `deprecated` | Deprecated attributes |
 | `collector` | Collector name (for search results) |

@@ -46,6 +46,8 @@ pub struct RemoteSearchFilters {
     pub elem_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub as_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub only_to_customer: Option<String>,
     pub start_ts: String,
     pub end_ts: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -239,4 +241,24 @@ pub async fn run_remote_search(
     Err(anyhow::anyhow!(
         "remote search ended without completion event"
     ))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_remote_filters_serialize_only_to_customer() {
+        let filters = RemoteSearchFilters {
+            only_to_customer: Some("6777".to_string()),
+            start_ts: "1".to_string(),
+            end_ts: "2".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&filters).unwrap();
+        assert_eq!(json["only_to_customer"], "6777");
+        // Unset optional dimensions are omitted from the wire payload
+        assert!(json.get("next_hop").is_none());
+    }
 }

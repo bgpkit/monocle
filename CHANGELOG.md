@@ -27,9 +27,11 @@ All notable changes to this project will be documented in this file.
   projection emits the `only_to_customer` key to match the native element
   serialization. The local RIB store (`monocle rib`) now persists the OTC
   attribute for both reconstructed RIB states and the incremental updates
-  table. A runnable example (`cargo run --example only_to_customer --features
-  lib`) demonstrates value, `*` presence, and `!*` absence filters on real
-  Route Views data.
+  table, with automatic column migration for databases created before this
+  change, and `monocle search --remote-url` forwards the `--only-to-customer`
+  filter to the server. A runnable example (`cargo run --example
+  only_to_customer --features lib`) demonstrates value, `*` presence, and `!*`
+  absence filters on real Route Views data.
 
 ### Bug Fixes
 
