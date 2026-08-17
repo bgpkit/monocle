@@ -1513,6 +1513,7 @@ fn run_remote_search_wrapper(
             monocle::lens::parse::ParseElemType::W => "W".to_string(),
         }),
         as_path: filters.parse_filters.as_path.clone(),
+        only_to_customer: filters.parse_filters.only_to_customer.clone(),
         start_ts: filters.parse_filters.start_ts.clone().unwrap_or_default(),
         end_ts: filters.parse_filters.end_ts.clone().unwrap_or_default(),
         collector: filters.collector.clone(),
