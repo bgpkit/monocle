@@ -1,0 +1,12 @@
+[package]
+name = "monocle-gui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+async-channel = "2.5"
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "runtime_shaders"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "d598c6c0a61c23650dd933d58d046c0708085531" }
+monocle = { path = "../..", features = ["lib"] }

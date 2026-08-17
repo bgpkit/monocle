@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### New Features
+
+* Added a macOS GPUI proof-of-concept application for `monocle search` with
+  time, collector, prefix, origin ASN, and dump-type filters; bounded streaming
+  results; progress reporting; cancellation; and a virtualized results table.
+
 ## v1.5.0 - 2026-08-17
 
 ### New Features
