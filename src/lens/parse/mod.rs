@@ -286,7 +286,7 @@ pub struct ParseFilters {
         feature = "cli",
         clap(long = "filter", value_name = "KEY=VALUE", action = clap::ArgAction::Append)
     )]
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub generic_filters: Vec<String>,
 
     // --- bgpkit-parser extended element filters ---
@@ -1544,5 +1544,23 @@ mod tests {
         };
 
         assert!(filters.validate().is_err());
+    }
+
+    #[test]
+    fn test_generic_filters_serialize_when_present() {
+        let filters = ParseFilters {
+            generic_filters: vec!["ip_version=ipv6".to_string()],
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(&filters).expect("filters should serialize");
+        assert_eq!(
+            serialized["generic_filters"],
+            serde_json::json!(["ip_version=ipv6"])
+        );
+        assert!(serde_json::to_value(ParseFilters::default())
+            .expect("empty filters should serialize")
+            .get("generic_filters")
+            .is_none());
     }
 }
