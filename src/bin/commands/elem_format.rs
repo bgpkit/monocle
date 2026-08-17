@@ -28,6 +28,7 @@ pub const AVAILABLE_FIELDS: &[&str] = &[
     "atomic",
     "aggr_asn",
     "aggr_ip",
+    "only-to-customer",
     "collector",
 ];
 
@@ -233,6 +234,11 @@ pub fn get_field_value_with_time_format(
             .as_ref()
             .map(|i| i.to_string())
             .unwrap_or_default(),
+        "only-to-customer" => elem
+            .only_to_customer
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or_default(),
         "collector" => collector.unwrap_or("").to_string(),
         _ => String::new(),
     }
@@ -367,13 +373,25 @@ pub fn build_json_object(
                 Some(i) => json!(i.to_string()),
                 None => serde_json::Value::Null,
             },
+            "only-to-customer" => match &elem.only_to_customer {
+                Some(a) => json!(a),
+                None => serde_json::Value::Null,
+            },
             "collector" => match collector {
                 Some(c) => json!(c),
                 None => serde_json::Value::Null,
             },
             _ => serde_json::Value::Null,
         };
-        obj.insert((*field).to_string(), value);
+        // The CLI field name uses the "only-to-customer" kebab-case spelling,
+        // but the JSON key follows the BgpElem serde field name (only_to_customer)
+        // so custom projection matches the native element serialization.
+        let key = if *field == "only-to-customer" {
+            "only_to_customer"
+        } else {
+            *field
+        };
+        obj.insert(key.to_string(), value);
     }
 
     serde_json::Value::Object(obj)
@@ -578,5 +596,44 @@ mod tests {
         let ts = obj.get("timestamp").unwrap();
         assert!(ts.is_string(), "rfc3339 timestamp should be a string");
         assert!(ts.as_str().unwrap().contains('T'));
+    }
+
+    #[test]
+    fn test_only_to_customer_field_selection() {
+        let mut elem = test_elem();
+        elem.only_to_customer = Some(65001.into());
+
+        // get_field_value returns the ASN when present, empty when absent
+        assert_eq!(
+            get_field_value_with_time_format(
+                &elem,
+                "only-to-customer",
+                None,
+                TimestampFormat::Unix
+            ),
+            "65001"
+        );
+        assert_eq!(
+            get_field_value_with_time_format(
+                &test_elem(),
+                "only-to-customer",
+                None,
+                TimestampFormat::Unix
+            ),
+            ""
+        );
+
+        // Custom JSON projection emits the numeric ASN under the snake_case key,
+        // matching the native BgpElem serialization used by default JSON output.
+        let fields = vec!["timestamp", "only-to-customer"];
+        let obj = build_json_object(&elem, &fields, None, TimestampFormat::Unix);
+        assert_eq!(obj["only_to_customer"], 65001);
+        assert!(obj.get("only-to-customer").is_none());
+
+        // parse_fields accepts "only-to-customer" as a selectable output field
+        assert_eq!(
+            parse_fields(&Some("only-to-customer".to_string()), false).unwrap(),
+            vec!["only-to-customer"]
+        );
     }
 }

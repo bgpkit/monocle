@@ -279,14 +279,18 @@ pub struct ParseFilters {
     #[cfg_attr(feature = "cli", clap(short = 'a', long))]
     pub as_path: Option<String>,
 
-    // --- bgpkit-parser v0.19 extended element filters ---
+    // --- bgpkit-parser extended element filters ---
     // Each accepts the literal value, or `*` (present) / `!*` (absent) for
-    // optional fields (otc, next_hop, origin, local_pref, med, aggr_asn,
-    // aggr_ip, peer_bgp_id).
+    // optional fields (only_to_customer, next_hop, origin, local_pref, med,
+    // aggr_asn, aggr_ip, peer_bgp_id).
     /// Filter by only-to-customer ASN (RFC 9234). Use `*`/`!*` for presence.
-    #[cfg_attr(feature = "cli", clap(long, visible_alias = "otc-asn"))]
+    /// Maps to the bgpkit-parser filter key `otc` internally.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long = "only-to-customer", visible_alias = "otc")
+    )]
     #[serde(default)]
-    pub otc: Option<String>,
+    pub only_to_customer: Option<String>,
 
     /// Filter by next-hop IP address. Use `*`/`!*` for presence.
     #[cfg_attr(feature = "cli", clap(long))]
@@ -608,7 +612,7 @@ impl ParseFilters {
             Ok(())
         }
 
-        validate_u32_field(&self.otc, "otc")?;
+        validate_u32_field(&self.only_to_customer, "only-to-customer")?;
         validate_u32_field(&self.local_pref, "local-pref")?;
         validate_u32_field(&self.med, "med")?;
         validate_u32_field(&self.aggr_asn, "aggr-asn")?;
@@ -691,8 +695,9 @@ impl ParseFilters {
             specs.push(("type", value.to_string()));
         }
 
-        // --- bgpkit-parser v0.19 extended element filters ---
-        if let Some(v) = &self.otc {
+        // --- bgpkit-parser extended element filters ---
+        if let Some(v) = &self.only_to_customer {
+            // bgpkit-parser's filter key for the only-to-customer attribute is `otc`
             specs.push(("otc", v.clone()));
         }
         if let Some(v) = &self.next_hop {
@@ -1294,7 +1299,7 @@ mod tests {
     fn test_validate_extended_filters_valid() {
         // All valid v0.19 filter values
         let filters = ParseFilters {
-            otc: Some("65200".to_string()),
+            only_to_customer: Some("65200".to_string()),
             next_hop: Some("10.0.0.1".to_string()),
             origin: Some("igp".to_string()),
             local_pref: Some("100".to_string()),
@@ -1309,7 +1314,7 @@ mod tests {
 
         // Presence wildcards
         let filters = ParseFilters {
-            otc: Some("*".to_string()),
+            only_to_customer: Some("*".to_string()),
             next_hop: Some("*".to_string()),
             origin: Some("*".to_string()),
             local_pref: Some("*".to_string()),
@@ -1323,7 +1328,7 @@ mod tests {
 
         // Absence wildcards
         let filters = ParseFilters {
-            otc: Some("!*".to_string()),
+            only_to_customer: Some("!*".to_string()),
             next_hop: Some("!*".to_string()),
             ..Default::default()
         };
@@ -1331,7 +1336,7 @@ mod tests {
 
         // Negated concrete values
         let filters = ParseFilters {
-            otc: Some("!65200".to_string()),
+            only_to_customer: Some("!65200".to_string()),
             origin: Some("!igp".to_string()),
             ..Default::default()
         };
@@ -1349,7 +1354,7 @@ mod tests {
     fn test_validate_extended_filters_invalid() {
         // Invalid u32 for otc
         let filters = ParseFilters {
-            otc: Some("not-a-number".to_string()),
+            only_to_customer: Some("not-a-number".to_string()),
             ..Default::default()
         };
         assert!(filters.validate().is_err());
@@ -1388,7 +1393,7 @@ mod tests {
         // Verify that the v0.19 filter specs are correctly emitted for
         // bgpkit-parser consumption via Filter::new.
         let filters = ParseFilters {
-            otc: Some("65200".to_string()),
+            only_to_customer: Some("65200".to_string()),
             next_hop: Some("10.0.0.1".to_string()),
             origin: Some("igp".to_string()),
             local_pref: Some("100".to_string()),

@@ -72,9 +72,9 @@ pub struct SearchStreamFilters {
     pub elem_type: Option<String>,
     #[serde(default)]
     pub as_path: Option<String>,
-    // --- bgpkit-parser v0.19 extended element filters ---
+    // --- bgpkit-parser extended element filters ---
     #[serde(default)]
-    pub otc: Option<String>,
+    pub only_to_customer: Option<String>,
     #[serde(default)]
     pub next_hop: Option<String>,
     #[serde(default)]
@@ -150,7 +150,7 @@ impl TryFrom<SearchStreamFilters> for SearchFilters {
             end_ts: Some(f.end_ts),
             duration: None,
             as_path: f.as_path,
-            otc: f.otc,
+            only_to_customer: f.only_to_customer,
             next_hop: f.next_hop,
             origin: f.origin,
             local_pref: f.local_pref,
