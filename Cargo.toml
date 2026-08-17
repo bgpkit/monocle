@@ -42,6 +42,11 @@ path = "examples/parse_lens.rs"
 required-features = ["lib"]
 
 [[example]]
+name = "only_to_customer"
+path = "examples/only_to_customer.rs"
+required-features = ["lib"]
+
+[[example]]
 name = "search_lens"
 path = "examples/search_lens.rs"
 required-features = ["lib"]

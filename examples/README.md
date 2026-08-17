@@ -16,6 +16,7 @@ cargo run --example <name> --features lib
 | `country_lens` | CountryLens | Country code/name lookup |
 | `ip_lens` | IpLens | IP address information (ASN, RPKI, geolocation) |
 | `parse_lens` | ParseLens | Parse MRT files with filters |
+| `only_to_customer` | ParseLens | Filter MRT data by only-to-customer ASN value / presence (RFC 9234) |
 | `search_lens` | SearchLens | Search BGP messages via broker |
 | `rpki_lens` | RpkiLens | RPKI validation for prefixes |
 | `pfx2as_lens` | Pfx2asLens | Prefix-to-ASN mapping lookups |
@@ -42,6 +43,25 @@ cargo run --example rpki_lens --features lib
 
 # Unified inspection
 cargo run --example inspect_lens --features lib
+
+# Only-to-customer (RFC 9234) filters and display
+cargo run --example only_to_customer --features lib
+```
+
+## Filtering and displaying only-to-customer (OTC, RFC 9234)
+
+Works in both `monocle parse` (single file) and `monocle search` (broker window).
+
+```bash
+# Match a concrete ASN value
+monocle parse <mrt-file> --only-to-customer 6777
+
+# Presence / absence wildcards (`*` = attribute present, `!*` = absent)
+monocle parse <mrt-file> --only-to-customer '*'
+monocle parse <mrt-file> --only-to-customer '!*'
+
+# Select the attribute as an output column (JSON key: only_to_customer)
+monocle parse <mrt-file> --fields timestamp,prefix,only-to-customer
 ```
 
 ## Common Pattern

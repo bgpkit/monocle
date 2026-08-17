@@ -13,18 +13,28 @@ All notable changes to this project will be documented in this file.
   also recognizes the `YYYY-MM-DD-HHMM` component in route-views snapshot
   filenames, using the embedded time of day.
   ([#145](https://github.com/bgpkit/monocle/issues/145))
-* Added nine bgpkit-parser v0.19 extended element filters to `monocle search`
-  and `monocle parse`: `--otc`, `--next-hop`, `--origin`, `--local-pref`,
-  `--med`, `--atomic-aggregate`, `--aggr-asn`, `--aggr-ip`, and
-  `--peer-bgp-id`. Optional-attribute filters support `*` (present) and `!*`
-  (absent) presence wildcards. The SSE `SearchStreamFilters` DTO exposes the
-  same fields for programmatic access.
+* Added nine bgpkit-parser extended element filters to `monocle search`
+  and `monocle parse`: `--only-to-customer` (alias `--otc`), `--next-hop`,
+  `--origin`, `--local-pref`, `--med`, `--atomic-aggregate`, `--aggr-asn`,
+  `--aggr-ip`, and `--peer-bgp-id`. Optional-attribute filters support `*`
+  (present) and `!*` (absent) presence wildcards. The SSE `SearchStreamFilters`
+  DTO exposes the same fields for programmatic access.
   ([#148](https://github.com/bgpkit/monocle/pull/148))
+* `monocle parse`, `monocle search`, and `monocle rib` accept
+  `only-to-customer` as a selectable output field: `--fields only-to-customer`
+  displays the RFC 9234 only-to-customer ASN in JSON, table, PSV, and markdown
+  formats (empty/null when the attribute is absent). The custom JSON
+  projection emits the `only_to_customer` key to match the native element
+  serialization. The local RIB store (`monocle rib`) now persists the OTC
+  attribute for both reconstructed RIB states and the incremental updates
+  table. A runnable example (`cargo run --example only_to_customer --features
+  lib`) demonstrates value, `*` presence, and `!*` absence filters on real
+  Route Views data.
 
 ### Bug Fixes
 
 * Fixed `bgpkit-parser` dev-dependency version conflict: `[dev-dependencies]`
-  pinned v0.18.0 while the main dependency used v0.19.0, causing
+  pinned an older version while the main dependency used a newer one, causing
   `E0464: multiple candidates for rlib` on `cargo test --all-features`.
   ([#148](https://github.com/bgpkit/monocle/pull/148))
 

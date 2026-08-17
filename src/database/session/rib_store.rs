@@ -52,6 +52,8 @@ pub struct StoredRibEntry {
     pub path_id: Option<u32>,
     pub as_path: Option<String>,
     pub origin_asns: Option<Vec<u32>>,
+    /// RFC 9234 only-to-customer ASN, when the attribute is present
+    pub only_to_customer: Option<u32>,
 }
 
 impl StoredRibEntry {
@@ -67,6 +69,7 @@ impl StoredRibEntry {
             origin_asns: elem
                 .origin_asns
                 .map(|asns| asns.into_iter().map(|asn| asn.to_u32()).collect::<Vec<_>>()),
+            only_to_customer: elem.only_to_customer.map(|asn| asn.to_u32()),
         }
     }
 
@@ -99,6 +102,8 @@ pub struct StoredRibUpdate {
     pub path_id: Option<u32>,
     pub as_path: Option<String>,
     pub origin_asns: Option<Vec<u32>>,
+    /// RFC 9234 only-to-customer ASN, when the attribute is present
+    pub only_to_customer: Option<u32>,
     /// The type of BGP message (ANNOUNCE or WITHDRAW)
     pub elem_type: ElemType,
 }
@@ -117,6 +122,7 @@ impl StoredRibUpdate {
             origin_asns: elem
                 .origin_asns
                 .map(|asns| asns.into_iter().map(|asn| asn.to_u32()).collect::<Vec<_>>()),
+            only_to_customer: elem.only_to_customer.map(|asn| asn.to_u32()),
             elem_type,
         }
     }
@@ -242,7 +248,8 @@ impl RibSqliteStore {
                     prefix TEXT NOT NULL,
                     path_id INTEGER,
                     as_path TEXT,
-                    origin_asns TEXT
+                    origin_asns TEXT,
+                    only_to_customer INTEGER
                 );
 
                 -- Filtered BGP updates used to build 2nd and later RIB snapshots
@@ -258,6 +265,7 @@ impl RibSqliteStore {
                     path_id INTEGER,
                     as_path TEXT,
                     origin_asns TEXT,
+                    only_to_customer INTEGER,
                     elem_type TEXT NOT NULL
                 );
                 "#,
@@ -290,9 +298,9 @@ impl RibSqliteStore {
                 .prepare_cached(
                     r#"
                     INSERT INTO ribs (
-                        rib_ts, timestamp, collector, peer_ip, peer_asn, 
-                        prefix, path_id, as_path, origin_asns
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                        rib_ts, timestamp, collector, peer_ip, peer_asn,
+                        prefix, path_id, as_path, origin_asns, only_to_customer
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                     "#,
                 )
                 .map_err(|e| anyhow!("Failed to prepare ribs insert statement: {}", e))?;
@@ -309,6 +317,7 @@ impl RibSqliteStore {
                         entry.path_id,
                         entry.as_path,
                         entry.origin_asns_string(),
+                        entry.only_to_customer,
                     ])
                     .map_err(|e| anyhow!("Failed to insert into ribs table: {}", e))?;
                 Ok(())
@@ -322,8 +331,8 @@ impl RibSqliteStore {
                     r#"
                     INSERT INTO updates (
                         rib_ts, timestamp, collector, peer_ip, peer_asn,
-                        prefix, path_id, as_path, origin_asns, elem_type
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                        prefix, path_id, as_path, origin_asns, only_to_customer, elem_type
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                     "#,
                 )
                 .map_err(|e| anyhow!("Failed to prepare updates insert statement: {}", e))?;
@@ -345,6 +354,7 @@ impl RibSqliteStore {
                         update.path_id,
                         update.as_path,
                         update.origin_asns_string(),
+                        update.only_to_customer,
                         elem_type_str,
                     ])
                     .map_err(|e| anyhow!("Failed to insert into updates table: {}", e))?;

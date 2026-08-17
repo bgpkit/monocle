@@ -23,6 +23,7 @@ const DEFAULT_FIELDS_RIB: &[&str] = &[
     "prefix",
     "as_path",
     "origin_asns",
+    "only-to-customer",
 ];
 
 pub fn run(config: &MonocleConfig, args: RibArgs, output_format: OutputFormat, no_update: bool) {
@@ -228,10 +229,21 @@ fn build_json_object(entry: &StoredRibEntry, fields: &[&str]) -> serde_json::Val
                 .map_or(serde_json::Value::Null, |values| {
                     json!(values.iter().map(u32::to_string).collect::<Vec<_>>())
                 }),
+            "only-to-customer" => entry
+                .only_to_customer
+                .map_or(serde_json::Value::Null, |value| json!(value)),
             _ => serde_json::Value::Null,
         };
 
-        obj.insert((*field).to_string(), value);
+        // The CLI field name uses the "only-to-customer" kebab-case spelling,
+        // but the JSON key follows the BgpElem serde field name (only_to_customer)
+        // so custom projection matches the native element serialization.
+        let key = if *field == "only-to-customer" {
+            "only_to_customer"
+        } else {
+            *field
+        };
+        obj.insert(key.to_string(), value);
     }
 
     serde_json::Value::Object(obj)
@@ -246,6 +258,10 @@ fn entry_field_value(entry: &StoredRibEntry, field: &str) -> String {
         "prefix" => entry.prefix.to_string(),
         "as_path" => entry.as_path.clone().unwrap_or_default(),
         "origin_asns" => entry.origin_asns_string().unwrap_or_default(),
+        "only-to-customer" => entry
+            .only_to_customer
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
         _ => String::new(),
     }
 }
