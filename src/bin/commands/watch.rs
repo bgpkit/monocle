@@ -32,11 +32,9 @@ pub(crate) struct WatchArgs {
     #[clap(long, short = 'H', value_name = "HOST")]
     pub host: Option<String>,
 
-    /// Accept an unfiltered full feed. Without this flag, watch refuses to run
-    /// when no server-side scope (host, prefix, or peer) is given: an
-    /// unscoped live stream is heavy for both the client and RIPE's servers,
-    /// and client-only filters (peer ASN, community, AS path, elem type) do
-    /// not reduce what the server sends.
+    /// Accept the full unfiltered feed. Required only when no filter is
+    /// given at all; filters without a server-side scope (host/prefix/peer)
+    /// still receive the full feed but are applied client-side.
     #[clap(long)]
     pub all: bool,
 
@@ -98,9 +96,12 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
         }
     };
 
-    // Firehose guard: only a server-side scope (host, prefix, or peer)
-    // reduces what RIS Live sends. Client-only filters still receive the full
-    // feed, so they do not count without --all.
+    // Firehose guard: measured against the live feed, the full stream is
+    // ~5.2k messages/s and a steady ~28 MB RSS, so client-side filtering is
+    // viable. Any filter dimension is therefore allowed without --all; only a
+    // completely bare invocation (which most users hit by accident) still
+    // requires the explicit opt-in. Server-side scope (--host/--prefix/
+    // --peer-ip) remains worthwhile to cut bandwidth and RIPE-side load.
     let plan = match args.filters.to_subscription_plan(args.host.as_deref()) {
         Ok(p) => p,
         Err(e) => {
@@ -108,11 +109,11 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
             std::process::exit(2);
         }
     };
-    if !args.all && !plan.report.has_server_scope() {
+    if !args.all && args.filters.is_empty() && args.host.is_none() {
         eprintln!(
-            "watch: refusing an unscoped live stream: client-side filters alone do not reduce \
-             what the server sends. Pass a server-side scope (--host, --prefix, or --peer-ip) \
-             or use --all to accept the full feed"
+            "watch: no filter given; pass at least one filter (e.g. --origin-asn, --prefix, \
+             --peer-asn, or --host to also cut server-side traffic) or use --all to accept \
+             the full feed"
         );
         std::process::exit(2);
     }
