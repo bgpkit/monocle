@@ -7,20 +7,27 @@ All notable changes to this project will be documented in this file.
 ### New Features
 
 * Added `monocle watch`: stream live BGP messages from RIPE RIS Live with the
-  same filter semantics as `monocle parse`. Host, prefixes, peer IPs, and elem
-  type are pushed down to the RIS Live subscription to reduce traffic; origin
-  ASN, peer ASN, community, and AS-path predicates always run client-side
-  with parser semantics (the RIS `path` pattern cannot express AS_SET
-  origins, and every element predicate is re-checked locally because RIS
-  selects whole UPDATE messages). Watch refuses a completely
-  unfiltered invocation unless `--firehose` is passed; any filter is
-  accepted, with server-side scope (`--host`/`--prefix`/`--peer-ip`)
-  recommended to cut bandwidth. Multi-value prefixes
-  and peer IPs expand to one subscription per combination.
-  `--record PATH` writes the filtered stream to an MRT updates file
-  (BGP4MP) for offline replay with `monocle parse`. Reconnects with backoff on
-  abnormal disconnects; live vantage is RIS collectors only, not global
-  visibility.
+  same filter semantics as `monocle parse`:
+
+  ```console
+  monocle watch --origin-asn 400644
+  monocle watch --host rrc00 --prefix 45.57.60.0/24 -S --record incident.mrt.bz2
+  monocle watch --origin-asn 13335 --json | jq -c 'select(.prefix|contains("2400:cb00"))'
+  ```
+
+  Host, prefixes, peer IPs, and elem type are pushed down to the RIS Live
+  subscription to reduce traffic; origin ASN, peer ASN, community, and
+  AS-path predicates always run client-side with parser semantics (the RIS
+  `path` pattern cannot express AS_SET origins, and every element predicate
+  is re-checked locally because RIS selects whole UPDATE messages).
+  Multi-value prefixes and peer IPs expand to one subscription per
+  combination. Any filter is accepted; a completely unfiltered invocation
+  requires `--firehose` to drink the full stream (~5k msgs/s measured);
+  server-side scope (`--host`/`--prefix`/`--peer-ip`) is recommended to cut
+  bandwidth. `--record PATH` writes the filtered stream to an MRT updates
+  file (BGP4MP) for offline replay with `monocle parse`. Reconnects with
+  backoff on abnormal disconnects; live vantage is RIS collectors only, not
+  global visibility.
 
 ## v1.5.0 - 2026-08-17
 
