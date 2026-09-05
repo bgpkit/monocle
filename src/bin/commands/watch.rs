@@ -225,9 +225,16 @@ async fn run_async(
         let mut lock = stdout.lock();
         if let Some(h) = get_header(out_format, &fields) {
             if let Err(e) = writeln!(lock, "{h}") {
-                if e.kind() != std::io::ErrorKind::BrokenPipe {
-                    return Err(anyhow!("stdout write failed: {e}"));
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    // The reader is already gone (e.g. `| head` exited before
+                    // any element): nothing was streamed or recorded, just
+                    // finalize (flush) the empty recorder and stop.
+                    if let Some(rec) = recorder.as_mut() {
+                        rec.finish()?;
+                    }
+                    return Ok(());
                 }
+                return Err(anyhow!("stdout write failed: {e}"));
             }
         }
         let _ = lock.flush();
@@ -424,25 +431,20 @@ async fn run_async(
     // Finalize the recording on every exit path (success, Ctrl-C, fatal
     // error) so buffered elements are never lost; the finalization error,
     // if any, does not mask the original fatal error.
+    let result = match fatal {
+        Some(e) => Err(e),
+        None => Ok(()),
+    };
     if let Some(rec) = recorder.as_mut() {
         match rec.finish() {
             Ok(()) => {
                 eprintln!("recorded {} elements to {:?}", stats.recorded, rec.path);
             }
-            Err(e) => {
-                if fatal.is_none() {
-                    fatal = Some(e);
-                } else {
-                    eprintln!("record finalization also failed: {e}");
-                }
-            }
+            Err(e) if result.is_ok() => return Err(e),
+            Err(e) => eprintln!("record finalization also failed: {e}"),
         }
     }
-
-    match fatal {
-        Some(e) => Err(e),
-        None => Ok(()),
-    }
+    result
 }
 
 #[derive(Default)]
