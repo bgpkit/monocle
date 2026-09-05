@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased changes
 
+### New Features
+
+* Added `monocle watch`: stream live BGP messages from RIPE RIS Live with the
+  same filter semantics as `monocle parse`. Filters are pushed down to the RIS
+  Live subscription (host, origin ASN as `path` pattern, prefix, peer IP, and
+  elem type via `require`); dimensions the API cannot express run client-side.
+  Watch refuses an unfiltered subscription unless `--all` is passed.
+  `--record PATH` writes the filtered stream to an MRT updates file
+  (BGP4MP) for offline replay with `monocle parse`. Reconnects with backoff on
+  abnormal disconnects; live vantage is RIS collectors only, not global
+  visibility.
+
 ## v1.5.0 - 2026-08-17
 
 ### New Features

@@ -22,6 +22,7 @@ use commands::rib::RibArgs;
 use commands::rpki::RpkiCommands;
 use commands::search::SearchArgs;
 use commands::time::TimeArgs;
+use commands::watch::WatchArgs;
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -96,6 +97,13 @@ enum Commands {
 
     /// Show monocle configuration, data paths, and database management.
     Config(ConfigArgs),
+
+    /// Watch live BGP messages from RIPE RIS Live, with filter pushdown to the
+    /// subscription and optional MRT recording for offline replay.
+    ///
+    /// Live vantage is RIS collectors only, not global visibility. Watch
+    /// refuses an unfiltered stream unless --all is passed.
+    Watch(WatchArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -266,5 +274,6 @@ fn main() {
             commands::pfx2as::run(&config, args, output_format, cli.no_update)
         }
         Commands::Config(args) => commands::config::run(&config, args, output_format),
+        Commands::Watch(args) => commands::watch::run(args, streaming_output_format),
     }
 }

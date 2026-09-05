@@ -11,3 +11,4 @@ pub mod rpki;
 pub mod search;
 pub mod search_remote;
 pub mod time;
+pub mod watch;

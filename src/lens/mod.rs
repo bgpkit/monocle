@@ -97,3 +97,5 @@ pub mod as2rel;
 // InspectLens - unified AS and prefix information lookup
 #[cfg(feature = "lib")]
 pub mod inspect;
+#[cfg(feature = "watch")]
+pub mod watch;
