@@ -33,8 +33,10 @@ pub(crate) struct WatchArgs {
     pub host: Option<String>,
 
     /// Accept an unfiltered full feed. Without this flag, watch refuses to run
-    /// when no filter is given: an unfiltered live stream is heavy for both
-    /// the client and RIPE's servers.
+    /// when no server-side scope (host, prefix, or peer) is given: an
+    /// unscoped live stream is heavy for both the client and RIPE's servers,
+    /// and client-only filters (peer ASN, community, AS path) do not reduce
+    /// what the server sends.
     #[clap(long)]
     pub all: bool,
 
@@ -69,17 +71,8 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
     // via reqwest); pick ring once so TLS setup cannot fail ambiguously.
     install_crypto_provider();
 
-    // 1. Firehose guard: an unscoped subscription is heavy for both ends.
-    if !args.all && args.filters.is_empty() && args.host.is_none() {
-        eprintln!(
-            "watch: refusing to open an unfiltered live stream: pass at least one filter \
-             (e.g. --origin-asn, --prefix, --peer-asn, --host) or use --all to accept the full feed"
-        );
-        std::process::exit(2);
-    }
-
-    // 2. Table output cannot stream (format_elem returns None for it); reject
-    //    before touching any file or network.
+    // Table output cannot stream (format_elem returns None for it); reject
+    // before touching any file or network.
     if !args.pretty && output_format == OutputFormat::Table {
         eprintln!(
             "watch: --format table is not supported for an unbounded stream; \
@@ -88,8 +81,8 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
         std::process::exit(2);
     }
 
-    // 3. Validate filters and parse fields before opening the record file, so
-    //    an invalid invocation cannot truncate an existing recording.
+    // Validate filters and parse fields before opening the record file, so
+    // an invalid invocation cannot truncate an existing recording.
     let client_filters = match args.filters.compile_client_filters() {
         Ok(f) => f,
         Err(e) => {
@@ -105,9 +98,28 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
         }
     };
 
-    // 4. Open the record writer before entering the async runtime: oneio wraps
-    //    reqwest::blocking, whose internal tokio runtime must not be created
-    //    or dropped from within an async context.
+    // Firehose guard: only a server-side scope (host, prefix, or peer)
+    // reduces what RIS Live sends. Client-only filters still receive the full
+    // feed, so they do not count without --all.
+    let plan = match args.filters.to_subscription_plan(args.host.as_deref()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("watch: {e}");
+            std::process::exit(2);
+        }
+    };
+    if !args.all && !plan.report.has_server_scope() {
+        eprintln!(
+            "watch: refusing an unscoped live stream: client-side filters alone do not reduce \
+             what the server sends. Pass a server-side scope (--host, --prefix, or --peer-ip) \
+             or use --all to accept the full feed"
+        );
+        std::process::exit(2);
+    }
+
+    // Open the record writer before entering the async runtime: oneio wraps
+    // reqwest::blocking, whose internal tokio runtime must not be created
+    // or dropped from within an async context.
     let recorder = match args.record.take() {
         Some(path) => match MrtRecorder::new(path) {
             Ok(r) => Some(r),
@@ -128,6 +140,7 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
     };
     if let Err(e) = rt.block_on(run_async(
         args,
+        plan,
         recorder,
         client_filters,
         fields,
@@ -151,13 +164,13 @@ fn install_crypto_provider() {
 
 async fn run_async(
     args: WatchArgs,
+    plan: monocle::lens::watch::SubscriptionPlan,
     mut recorder: Option<MrtRecorder>,
     client_filters: Vec<bgpkit_parser::parser::filter::Filter>,
     fields: Vec<&'static str>,
     output_format: OutputFormat,
 ) -> Result<()> {
     let WatchArgs {
-        host,
         no_reconnect,
         pretty,
         time_format,
@@ -165,23 +178,29 @@ async fn run_async(
         ..
     } = args;
 
-    let (mut subscribe, report) = filters.to_ris_subscribe(host.as_deref())?;
     // Request raw BGP bytes and a subscription acknowledgement: raw parsing
     // preserves all path attributes, and the ack distinguishes an accepted
     // subscription from a silently rejected one.
-    subscribe = subscribe.include_raw(true).acknowledge(true);
+    let subscriptions: Vec<_> = plan
+        .subscriptions
+        .into_iter()
+        .map(|s| s.include_raw(true).acknowledge(true))
+        .collect();
 
     eprintln!("source: RIPE RIS Live ({RIS_LIVE_URL})");
-    if let Some(h) = &report.host {
+    if let Some(h) = &plan.report.host {
         eprintln!("  host: {h}");
     }
-    if !report.prefixes.is_empty() {
-        eprintln!("  server-side prefixes: {}", report.prefixes.join(", "));
+    if !plan.report.prefixes.is_empty() {
+        eprintln!(
+            "  server-side prefixes: {}",
+            plan.report.prefixes.join(", ")
+        );
     }
-    if !report.peers.is_empty() {
-        eprintln!("  server-side peers: {}", report.peers.join(", "));
+    if !plan.report.peers.is_empty() {
+        eprintln!("  server-side peers: {}", plan.report.peers.join(", "));
     }
-    if let Some(req) = &report.require {
+    if let Some(req) = &plan.report.require {
         eprintln!("  server-side require: {req}");
     }
     if !client_filters.is_empty() {
@@ -193,7 +212,8 @@ async fn run_async(
     eprintln!("  live vantage is RIS collectors only, not global visibility");
     eprintln!("press Ctrl-C to stop");
 
-    let out_format = if pretty {
+    // Match parse: --pretty only upgrades compact JSON to pretty JSON.
+    let out_format = if pretty && output_format == OutputFormat::Json {
         OutputFormat::JsonPretty
     } else {
         output_format
@@ -204,39 +224,72 @@ async fn run_async(
 
     let mut running = true;
     let mut stats = WatchStats::default();
+    // One signal future for the whole session: once created, Tokio keeps
+    // SIGINT registered process-wide, so Ctrl-C must be awaited during
+    // connect, subscribe send, and backoff too, not only while reading.
+    let mut sig = std::pin::pin!(tokio::signal::ctrl_c());
 
     loop {
-        let (ws_stream, _) = match connect_async(RIS_LIVE_URL).await {
-            Ok(c) => c,
-            Err(e) => {
-                if running && !no_reconnect {
-                    eprintln!("connection failed ({e}); retrying in {RECONNECT_BACKOFF:?}s");
-                    tokio::time::sleep(RECONNECT_BACKOFF).await;
-                    continue;
+        let (ws_stream, _) = tokio::select! {
+            c = connect_async(RIS_LIVE_URL) => match c {
+                Ok(c) => c,
+                Err(e) => {
+                    if running && !no_reconnect {
+                        eprintln!("connection failed ({e}); retrying in {RECONNECT_BACKOFF:?}s");
+                        tokio::select! {
+                            _ = &mut sig => running = false,
+                            _ = tokio::time::sleep(RECONNECT_BACKOFF) => {}
+                        }
+                        if running {
+                            continue;
+                        }
+                        break;
+                    }
+                    return Err(anyhow!("connection failed: {e}"));
                 }
-                return Err(anyhow!("connection failed: {e}"));
-            }
+            },
+            _ = &mut sig => break,
         };
+        if !running {
+            break;
+        }
 
         eprintln!("connected");
         let (mut write, mut read) = ws_stream.split();
 
-        let sub_msg = subscribe.to_json_string();
-        if let Err(e) = write.send(Message::Text(sub_msg.clone().into())).await {
-            if running && !no_reconnect {
-                eprintln!("subscribe send failed ({e}); reconnecting");
-                tokio::time::sleep(RECONNECT_BACKOFF).await;
-                continue;
+        let mut subscribed_ok = false;
+        for sub in &subscriptions {
+            let sub_msg = sub.to_json_string();
+            let send = write.send(Message::Text(sub_msg.clone().into()));
+            tokio::select! {
+                res = send => {
+                    if let Err(e) = res {
+                        if running && !no_reconnect {
+                            eprintln!("subscribe send failed ({e}); reconnecting");
+                            tokio::select! {
+                                _ = &mut sig => running = false,
+                                _ = tokio::time::sleep(RECONNECT_BACKOFF) => {}
+                            }
+                            if running {
+                                break;
+                            }
+                            return Err(anyhow!("subscribe send failed: {e}"));
+                        }
+                        return Err(anyhow!("subscribe send failed: {e}"));
+                    }
+                    eprintln!("subscribed: {sub_msg}");
+                    continue;
+                }
+                _ = &mut sig => {
+                    running = false;
+                    break;
+                }
             }
-            return Err(anyhow!("subscribe send failed: {e}"));
         }
-        eprintln!("subscribed: {sub_msg}");
 
         let mut stdout = std::io::stdout();
-        let mut sig = std::pin::pin!(tokio::signal::ctrl_c());
-        let mut subscribed_ok = false;
 
-        loop {
+        while running {
             let msg = tokio::select! {
                 m = read.next() => match m {
                     Some(Ok(m)) => m,
@@ -296,20 +349,17 @@ async fn run_async(
                             time_format,
                         ) {
                             if let Err(e) = writeln!(stdout, "{line}") {
-                                if e.kind() != std::io::ErrorKind::BrokenPipe {
-                                    eprintln!("ERROR: {e}");
+                                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                                    // e.g. `| head`: stop cleanly.
+                                    running = false;
+                                } else {
+                                    return Err(anyhow!("stdout write failed: {e}"));
                                 }
-                                // Broken pipe (e.g. `| head`): stop cleanly.
-                                running = false;
                                 break;
                             }
                         }
                     }
                 }
-            }
-
-            if !running {
-                break;
             }
         }
 
@@ -327,7 +377,10 @@ async fn run_async(
             break;
         }
         eprintln!("reconnecting in {RECONNECT_BACKOFF:?}s");
-        tokio::time::sleep(RECONNECT_BACKOFF).await;
+        tokio::select! {
+            _ = &mut sig => running = false,
+            _ = tokio::time::sleep(RECONNECT_BACKOFF) => {}
+        }
     }
 
     if let Some(rec) = recorder.as_mut() {

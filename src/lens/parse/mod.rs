@@ -544,7 +544,7 @@ impl ParseFilters {
 
     /// Convert a validated community pattern (`A:B` or `A:B:C`) into a strict regex body.
     /// `*` is translated to `\d+` and each community is matched with exact colon positions.
-    fn community_pattern_to_regex_body(pattern: &str) -> Result<String> {
+    pub(crate) fn community_pattern_to_regex_body(pattern: &str) -> Result<String> {
         Self::validate_community(pattern)?;
         let value = pattern.strip_prefix('!').unwrap_or(pattern);
         let parts: Vec<&str> = value.split(':').collect();
@@ -592,7 +592,7 @@ impl ParseFilters {
     }
 
     /// Check that all values in a filter are either all positive or all negative
-    fn check_negation_consistency(values: &[String], field_name: &str) -> Result<()> {
+    pub(crate) fn check_negation_consistency(values: &[String], field_name: &str) -> Result<()> {
         if values.len() > 1 {
             let negated_count = values.iter().filter(|v| v.starts_with('!')).count();
             if negated_count > 0 && negated_count < values.len() {

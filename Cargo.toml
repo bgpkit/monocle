@@ -89,11 +89,8 @@ default = ["cli"]
 
 # Library feature - includes all database operations, lenses, and display
 lib = [
-    # Live stream (RIS Live websocket)
+    # Live stream (RIS Live websocket) element parsing
     "bgpkit-parser/rislive",
-    "dep:futures-util",
-    "dep:tokio-tungstenite",
-    "dep:rustls",
     # Database
     "dep:oneio",
     "dep:ipnet",
@@ -129,6 +126,11 @@ server = [
 cli = [
     "lib",
     "server",
+    # Live-stream transport for `monocle watch`
+    "dep:futures-util",
+    "dep:tokio",
+    "dep:tokio-tungstenite",
+    "dep:rustls",
     "dep:clap",
     "dep:indicatif",
     "dep:tracing-subscriber",
