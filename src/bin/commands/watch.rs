@@ -15,6 +15,7 @@ use bgpkit_parser::encoder::MrtUpdatesEncoder;
 use bgpkit_parser::RisLiveClientMessage;
 use clap::Args;
 use futures_util::{SinkExt, StreamExt};
+use std::future::Future;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -71,8 +72,9 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
     install_crypto_provider();
 
     // Table output cannot stream (format_elem returns None for it); reject
-    // before touching any file or network.
-    if !args.pretty && output_format == OutputFormat::Table {
+    // before touching any file or network. --pretty only upgrades compact
+    // JSON, so it does not make Table streamable either.
+    if output_format == OutputFormat::Table {
         eprintln!(
             "watch: --format table is not supported for an unbounded stream; \
              use the default PSV, JSON, or --pretty"
@@ -119,9 +121,18 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
         std::process::exit(2);
     }
 
-    // Open the record writer before entering the async runtime: oneio wraps
-    // reqwest::blocking, whose internal tokio runtime must not be created
-    // or dropped from within an async context.
+    // Create the runtime first: if it fails, nothing has been opened or
+    // truncated yet. Then open the record writer before entering the async
+    // runtime, because oneio wraps reqwest::blocking, whose internal tokio
+    // runtime must not be created or dropped from within an async context.
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Failed to create async runtime: {e}");
+            std::process::exit(1);
+        }
+    };
+
     let recorder = match args.record.take() {
         Some(path) => match MrtRecorder::new(path) {
             Ok(r) => Some(r),
@@ -131,14 +142,6 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
             }
         },
         None => None,
-    };
-
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("Failed to create async runtime: {e}");
-            std::process::exit(1);
-        }
     };
     if let Err(e) = rt.block_on(run_async(
         args,
@@ -261,14 +264,10 @@ async fn run_async(
                 Err(e) => {
                     if running && !no_reconnect {
                         eprintln!("connection failed ({e}); retrying in {RECONNECT_BACKOFF:?}s");
-                        tokio::select! {
-                            _ = &mut sig => running = false,
-                            _ = tokio::time::sleep(RECONNECT_BACKOFF) => {}
+                        if fut_select_sig_or_sleep(&mut sig).await {
+                            break;
                         }
-                        if running {
-                            continue 'session;
-                        }
-                        break;
+                        continue 'session;
                     }
                     fatal = Some(anyhow!("connection failed: {e}"));
                     break;
@@ -292,16 +291,13 @@ async fn run_async(
                     if let Err(e) = res {
                         if running && !no_reconnect {
                             eprintln!("subscribe send failed ({e}); reconnecting");
-                            tokio::select! {
-                                _ = &mut sig => running = false,
-                                _ = tokio::time::sleep(RECONNECT_BACKOFF) => {}
+                            // Restart the whole connection, not just the
+                            // subscription loop: the socket is unusable.
+                            if fut_select_sig_or_sleep(&mut sig).await {
+                                running = false;
+                                break;
                             }
-                            if running {
-                                // Restart the whole connection, not just the
-                                // subscription loop: the socket is unusable.
-                                continue 'session;
-                            }
-                            break;
+                            continue 'session;
                         }
                         fatal = Some(anyhow!("subscribe send failed: {e}"));
                         break;
@@ -326,10 +322,18 @@ async fn run_async(
                     Some(Ok(m)) => m,
                     Some(Err(e)) => {
                         eprintln!("stream error: {e}");
+                        // Without reconnection an interrupted stream is a
+                        // failure: keep it fatal so scripts see a nonzero exit.
+                        if no_reconnect {
+                            fatal = Some(anyhow!("stream error: {e}"));
+                        }
                         break;
                     }
                     None => {
                         eprintln!("stream closed by server");
+                        if no_reconnect {
+                            fatal = Some(anyhow!("stream closed by server"));
+                        }
                         break;
                     }
                 },
@@ -424,9 +428,10 @@ async fn run_async(
             break;
         }
         eprintln!("reconnecting in {RECONNECT_BACKOFF:?}s");
-        tokio::select! {
-            _ = &mut sig => running = false,
-            _ = tokio::time::sleep(RECONNECT_BACKOFF) => {}
+        // A completed ctrl_c future must not be polled again; break the
+        // session loop here instead of relying on the `running` check.
+        if fut_select_sig_or_sleep(&mut sig).await {
+            break;
         }
     }
 
@@ -447,6 +452,22 @@ async fn run_async(
         }
     }
     result
+}
+
+/// Await Ctrl-C (returns true) or the reconnect backoff (returns false).
+///
+/// Wraps the one-shot `ctrl_c` future so that once it has completed it is
+/// never polled again (re-polling a completed future panics); callers must
+/// treat `true` as terminal.
+async fn fut_select_sig_or_sleep<F: Future<Output = std::io::Result<()>> + Unpin>(
+    sig: &mut F,
+) -> bool {
+    let slept = tokio::time::sleep(RECONNECT_BACKOFF);
+    tokio::pin!(slept);
+    tokio::select! {
+        _ = sig => true,
+        _ = &mut slept => false,
+    }
 }
 
 #[derive(Default)]

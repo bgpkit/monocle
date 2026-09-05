@@ -336,10 +336,14 @@ pub struct LiveMessage {
 /// Classify and parse a raw RIS Live websocket text frame.
 ///
 /// Data frames are parsed from the raw BGP message bytes (the subscription
-/// requests `includeRaw`), preserving all path attributes; the JSON-projected
-/// parser drops attributes such as large communities. Element parse failures
-/// are returned as `Err` so the caller can report them instead of silently
-/// dropping live updates.
+/// requests `includeRaw`), so every attribute the `BgpElem` model carries is
+/// populated — including large communities, which the JSON-projected parser
+/// drops. Attributes outside the `BgpElem` model (e.g. ORIGINATOR_ID,
+/// CLUSTER_LIST) are still not represented downstream; recordings are
+/// `BgpElem`-faithful (exactly what filtering and output see), not
+/// byte-faithful to the original UPDATE. Element parse failures are returned
+/// as `Err` so the caller can report them instead of silently dropping live
+/// updates.
 pub fn parse_live_frame(msg_str: &str) -> Result<LiveFrame> {
     match extract_string_field(msg_str, "type").as_deref() {
         Some("ris_subscribe_ok") => return Ok(LiveFrame::SubscribeOk),

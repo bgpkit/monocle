@@ -102,7 +102,7 @@ enum Commands {
     /// subscription and optional MRT recording for offline replay.
     ///
     /// Live vantage is RIS collectors only, not global visibility. Watch
-    /// refuses an unfiltered stream unless --all is passed.
+    /// requires --firehose for an unfiltered stream.
     Watch(WatchArgs),
 }
 
