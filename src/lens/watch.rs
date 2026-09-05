@@ -109,16 +109,6 @@ pub struct PushdownReport {
     pub require: Option<String>,
 }
 
-impl PushdownReport {
-    /// True when the server-side subscription carries a scope that actually
-    /// reduces the feed (host, prefixes, or peers). `require` does not count:
-    /// it only trims element types, not the message volume, so an elem-type
-    /// filter alone is still the full firehose for the guard's purpose.
-    pub fn has_server_scope(&self) -> bool {
-        self.host.is_some() || !self.prefixes.is_empty() || !self.peers.is_empty()
-    }
-}
-
 /// A single RIS Live subscription to send after connecting.
 ///
 /// `RisSubscribe` holds single `prefix`/`peer` values, so multi-value filters
@@ -406,24 +396,11 @@ mod tests {
             ..Default::default()
         };
         let plan = filters.to_subscription_plan(None).unwrap();
-        assert!(!plan.report.has_server_scope());
         assert_eq!(plan.subscriptions.len(), 1);
         assert!(!plan.subscriptions[0].to_json_string().contains("path"));
         // but the client-side filter carries it
         let client = filters.compile_client_filters().unwrap();
         assert!(!client.is_empty());
-    }
-
-    #[test]
-    fn test_client_only_filters_have_no_server_scope() {
-        // peer-asn/community/as-path run client-side only; the firehose guard
-        // must treat them as unscoped.
-        let filters = WatchFilters {
-            peer_asn: vec!["13335".to_string()],
-            ..Default::default()
-        };
-        let plan = filters.to_subscription_plan(None).unwrap();
-        assert!(!plan.report.has_server_scope());
     }
 
     #[test]
@@ -500,9 +477,6 @@ mod tests {
         };
         let plan = filters.to_subscription_plan(None).unwrap();
         assert_eq!(plan.report.require.as_deref(), Some("announcements"));
-        // require only trims element types, not message volume: it must not
-        // satisfy the firehose guard.
-        assert!(!plan.report.has_server_scope());
         // elem type also re-checked client-side (mixed UPDATEs)
         assert!(!filters.compile_client_filters().unwrap().is_empty());
     }
