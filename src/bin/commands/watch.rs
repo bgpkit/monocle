@@ -173,7 +173,7 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
         match finish_res {
             Ok(()) => {
                 eprintln!(
-                    "recorded {} elements to {:?} (verified)",
+                    "recorded {} elements to {:?} (count-verified)",
                     stats.recorded, rec.path
                 );
             }
@@ -623,6 +623,10 @@ impl MrtRecorder {
 
     /// Verify the finished recording replays to exactly the recorded count.
     ///
+    /// Count-level only: the MRT encoder rebuilds messages from the
+    /// `BgpElem` projection, and attributes outside that model (e.g.
+    /// ORIGINATOR_ID, and ATOMIC_AGGREGATE in parser 0.20) do not survive
+    /// the round trip, so per-attribute equality cannot be claimed.
     /// Must run OUTSIDE the async runtime: parsing goes through oneio, whose
     /// reqwest::blocking client creates its own tokio runtime.
     fn verify_replayable(&self) -> Result<()> {
