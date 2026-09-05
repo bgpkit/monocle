@@ -32,11 +32,12 @@ pub(crate) struct WatchArgs {
     #[clap(long, short = 'H', value_name = "HOST")]
     pub host: Option<String>,
 
-    /// Accept the full unfiltered feed. Required only when no filter is
-    /// given at all; filters without a server-side scope (host/prefix/peer)
-    /// still receive the full feed but are applied client-side.
+    /// Drink from the full unfiltered stream (~5k msgs/s). Required only
+    /// when no filter is given at all; filters without a server-side scope
+    /// (host/prefix/peer) still receive the full feed but are applied
+    /// client-side.
     #[clap(long)]
-    pub all: bool,
+    pub firehose: bool,
 
     /// Disable automatic reconnection on abnormal disconnects
     #[clap(long)]
@@ -98,9 +99,9 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
 
     // Firehose guard: measured against the live feed, the full stream is
     // ~5.2k messages/s and a steady ~28 MB RSS, so client-side filtering is
-    // viable. Any filter dimension is therefore allowed without --all; only a
-    // completely bare invocation (which most users hit by accident) still
-    // requires the explicit opt-in. Server-side scope (--host/--prefix/
+    // viable. Any filter dimension is therefore allowed without --firehose;
+    // only a completely bare invocation (which most users hit by accident)
+    // still requires the explicit opt-in. Server-side scope (--host/--prefix/
     // --peer-ip) remains worthwhile to cut bandwidth and RIPE-side load.
     let plan = match args.filters.to_subscription_plan(args.host.as_deref()) {
         Ok(p) => p,
@@ -109,11 +110,11 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
             std::process::exit(2);
         }
     };
-    if !args.all && args.filters.is_empty() && args.host.is_none() {
+    if !args.firehose && args.filters.is_empty() && args.host.is_none() {
         eprintln!(
             "watch: no filter given; pass at least one filter (e.g. --origin-asn, --prefix, \
-             --peer-asn, or --host to also cut server-side traffic) or use --all to accept \
-             the full feed"
+             --peer-asn, or --host to also cut server-side traffic) or pass --firehose to \
+             drink the full stream (~5k msgs/s)"
         );
         std::process::exit(2);
     }

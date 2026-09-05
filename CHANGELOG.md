@@ -13,9 +13,9 @@ All notable changes to this project will be documented in this file.
   with parser semantics (the RIS `path` pattern cannot express AS_SET
   origins, and every element predicate is re-checked locally because RIS
   selects whole UPDATE messages). Watch refuses a completely
-  unfiltered invocation unless `--all` is passed; any filter is accepted,
-  with server-side scope (`--host`/`--prefix`/`--peer-ip`) recommended to
-  cut bandwidth. Multi-value prefixes
+  unfiltered invocation unless `--firehose` is passed; any filter is
+  accepted, with server-side scope (`--host`/`--prefix`/`--peer-ip`)
+  recommended to cut bandwidth. Multi-value prefixes
   and peer IPs expand to one subscription per combination.
   `--record PATH` writes the filtered stream to an MRT updates file
   (BGP4MP) for offline replay with `monocle parse`. Reconnects with backoff on
