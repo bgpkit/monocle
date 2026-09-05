@@ -12,14 +12,14 @@
 //! pushdown is only an optimization: RIS selects whole UPDATE messages while
 //! elements expand per prefix, and some predicates (e.g. origin ASN with
 //! AS_SET origins) have no equivalent server-side pattern. Every element-level
-//! predicate therefore also runs client-side with bgpkit-parser semantics, so
-//! watch matches exactly what `monocle parse` would match.
+//! predicate also runs client-side with bgpkit-parser semantics, so watch
+//! matches exactly what `monocle parse` would match.
 
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use bgpkit_parser::parser::filter::Filterable;
 use bgpkit_parser::{parse_ris_live_message_raw, BgpElem, RisSubscribe};
 use ipnet::IpNet;
@@ -34,9 +34,9 @@ pub const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
 /// Live-stream filters for the watch command.
 ///
 /// A subset of [`crate::lens::parse::ParseFilters`] dimensions that have a
-/// meaningful live interpretation. Time-window filters are intentionally
-/// absent: a live stream has no archive window; use `monocle parse` or
-/// `monocle search` for historical ranges.
+/// meaningful live interpretation, with the same option names and semantics.
+/// Time-window filters are intentionally absent: a live stream has no archive
+/// window; use `monocle parse` or `monocle search` for historical ranges.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 pub struct WatchFilters {
@@ -71,7 +71,17 @@ pub struct WatchFilters {
     pub peer_asn: Vec<String>,
 
     /// Filter by BGP community value(s), comma-separated (`A:B` or `A:B:C`).
-    #[cfg_attr(feature = "cli", clap(short = 'C', long, value_delimiter = ','))]
+    /// Each part can be a number or `*` wildcard (e.g., `*:100`, `13335:*`, `57866:104:31`).
+    /// Prefix with ! to exclude.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'C',
+            long = "community",
+            visible_alias = "communities",
+            value_delimiter = ','
+        )
+    )]
     #[serde(default)]
     pub communities: Vec<String>,
 
@@ -93,10 +103,34 @@ pub struct PushdownReport {
     pub host: Option<String>,
     /// Prefix subscriptions sent (one subscription per prefix)
     pub prefixes: Vec<String>,
-    /// Peer IPs sent as `peer`
+    /// Peer IPs sent (one subscription per peer)
     pub peers: Vec<String>,
     /// `require` value sent (`announcements`/`withdrawals`)
     pub require: Option<String>,
+}
+
+impl PushdownReport {
+    /// True when the server-side subscription carries at least one scope
+    /// beyond the firehose (host, prefixes, peers, or require).
+    pub fn has_server_scope(&self) -> bool {
+        self.host.is_some()
+            || !self.prefixes.is_empty()
+            || !self.peers.is_empty()
+            || self.require.is_some()
+    }
+}
+
+/// A single RIS Live subscription to send after connecting.
+///
+/// `RisSubscribe` holds single `prefix`/`peer` values, so multi-value filters
+/// need one subscription per combination; each combination is sent as its own
+/// `ris_subscribe` on the same socket (RIS Live semantics: subscriptions add
+/// up as OR).
+#[derive(Debug)]
+pub struct SubscriptionPlan {
+    /// One subscription per prefix (or the single no-prefix subscription).
+    pub subscriptions: Vec<RisSubscribe>,
+    pub report: PushdownReport,
 }
 
 impl WatchFilters {
@@ -112,62 +146,91 @@ impl WatchFilters {
             && self.as_path.is_none()
     }
 
-    /// Build the server-side RIS Live subscription from these filters.
+    /// Build the server-side RIS Live subscription plan from these filters.
     ///
-    /// `host` scopes the subscription to a single RRC. Only dimensions that
+    /// `host` scopes every subscription to a single RRC. Only dimensions that
     /// reduce traffic without changing match semantics are pushed down:
-    /// `host`, `prefix`, `peer`, and `require`. Origin ASNs are NOT pushed
-    /// down: the RIS `path` pattern `N$` does not match AS_SET origins, so a
-    /// pushdown could discard updates that client-side semantics accept.
-    /// Every pushed dimension is still re-checked client-side per element
-    /// because RIS selects whole UPDATE messages while elements expand per
-    /// prefix.
-    pub fn to_ris_subscribe(&self, host: Option<&str>) -> Result<(RisSubscribe, PushdownReport)> {
-        let mut sub = RisSubscribe::new();
+    /// `host`, `prefix`, `peer`, and `require`:
+    ///
+    /// - Origin ASNs are NOT pushed down: the RIS `path` pattern `N$` does
+    ///   not match AS_SET origins, so pushdown could discard updates that
+    ///   client-side semantics accept.
+    /// - Negative prefixes are NOT pushed down (no server-side negation);
+    ///   they are enforced by the client-side filters.
+    /// - Because `RisSubscribe` holds single `prefix`/`peer` values, the plan
+    ///   carries one subscription per (prefix, peer) combination.
+    /// - Both specificity flags are always set explicitly: RIS defaults
+    ///   `moreSpecific` to true when omitted, which would silently widen an
+    ///   exact-match `--prefix`.
+    pub fn to_subscription_plan(&self, host: Option<&str>) -> Result<SubscriptionPlan> {
         let mut report = PushdownReport::default();
-
         if let Some(h) = host {
-            sub = sub.host(h);
             report.host = Some(h.to_string());
         }
 
-        // prefix -> per-prefix subscriptions. Both specificity flags are set
-        // explicitly: RIS defaults moreSpecific to true when omitted, which
-        // would silently widen an exact-match --prefix.
-        for value in &self.prefix {
-            let (raw, negated) = strip_negation(value);
-            let net = IpNet::from_str(&raw).map_err(|e| anyhow!("invalid prefix '{raw}': {e}"))?;
-            if negated {
-                bail!(
-                    "negative prefix filters are not supported for live subscriptions: '{value}'"
-                );
-            }
-            sub = sub
-                .prefix(net)
-                .more_specific(self.include_sub)
-                .less_specific(self.include_super);
-            report.prefixes.push(raw);
+        let positive_prefixes: Vec<&String> = self
+            .prefix
+            .iter()
+            .filter(|p| !p.trim_start().starts_with('!'))
+            .collect();
+        let mut prefix_nets = Vec::new();
+        for value in &positive_prefixes {
+            let net = IpNet::from_str(value.trim())
+                .map_err(|e| anyhow!("invalid prefix '{}': {e}", value.trim()))?;
+            prefix_nets.push(net);
+            report.prefixes.push(value.trim().to_string());
         }
 
-        // peer_ip -> peer (server-side)
         for peer in &self.peer_ip {
-            sub = sub.peer(*peer);
             report.peers.push(peer.to_string());
         }
 
-        // elem_type -> require (server-side). RIS selects whole UPDATEs, so a
-        // mixed update carrying both announcements and withdrawals still
-        // arrives; the elem-type filter also runs client-side.
         if let Some(t) = &self.elem_type {
-            let require = match t {
-                crate::lens::parse::ParseElemType::A => "announcements",
-                crate::lens::parse::ParseElemType::W => "withdrawals",
-            };
-            sub = sub.require(require);
-            report.require = Some(require.to_string());
+            report.require = Some(match t {
+                crate::lens::parse::ParseElemType::A => "announcements".to_string(),
+                crate::lens::parse::ParseElemType::W => "withdrawals".to_string(),
+            });
         }
 
-        Ok((sub, report))
+        // Cross product of prefix x peer (empty = absent dimension).
+        let prefixes: Vec<Option<IpNet>> = if prefix_nets.is_empty() {
+            vec![None]
+        } else {
+            prefix_nets.into_iter().map(Some).collect()
+        };
+        let peers: Vec<Option<IpAddr>> = if self.peer_ip.is_empty() {
+            vec![None]
+        } else {
+            self.peer_ip.iter().copied().map(Some).collect()
+        };
+
+        let mut subscriptions = Vec::new();
+        for pfx in &prefixes {
+            for peer in &peers {
+                let mut sub = RisSubscribe::new();
+                if let Some(h) = host {
+                    sub = sub.host(h);
+                }
+                if let Some(net) = pfx {
+                    sub = sub
+                        .prefix(*net)
+                        .more_specific(self.include_sub)
+                        .less_specific(self.include_super);
+                }
+                if let Some(ip) = peer {
+                    sub = sub.peer(*ip);
+                }
+                if let Some(req) = &report.require {
+                    sub = sub.require(req);
+                }
+                subscriptions.push(sub);
+            }
+        }
+
+        Ok(SubscriptionPlan {
+            subscriptions,
+            report,
+        })
     }
 
     /// Compile the complete client-side element filters.
@@ -209,9 +272,11 @@ impl WatchFilters {
             filters.push(Filter::new("peer_asns", &self.peer_asn.join(","))?);
         }
 
-        for value in &self.communities {
-            let (raw, negated) = strip_negation(value);
-            let spec = if negated { format!("!{raw}") } else { raw };
+        // Community filtering reuses parse's canonical conversion (wildcards,
+        // negation consistency, OR within the dimension) instead of
+        // per-value predicates, which match_filters would combine with AND.
+        if !self.communities.is_empty() {
+            let spec = self.canonical_community_spec()?;
             filters.push(Filter::new("community", &spec)?);
         }
 
@@ -226,6 +291,29 @@ impl WatchFilters {
         Ok(filters)
     }
 
+    /// Canonical community filter spec, identical to parse's semantics
+    /// (single filter value, OR across alternatives, `*` wildcards,
+    /// consistent negation).
+    fn canonical_community_spec(&self) -> Result<String> {
+        use crate::lens::parse::ParseFilters;
+        ParseFilters::check_negation_consistency(&self.communities, "community")?;
+        let is_negated = self
+            .communities
+            .first()
+            .map(|v| v.starts_with('!'))
+            .unwrap_or(false);
+        let mut pattern_bodies = Vec::with_capacity(self.communities.len());
+        for pattern in &self.communities {
+            pattern_bodies.push(ParseFilters::community_pattern_to_regex_body(pattern)?);
+        }
+        let regex = format!("^(?:{})$", pattern_bodies.join("|"));
+        if is_negated {
+            Ok(format!("!{regex}"))
+        } else {
+            Ok(regex)
+        }
+    }
+
     /// Apply client-side filters to a parsed element.
     pub fn matches(
         &self,
@@ -236,21 +324,12 @@ impl WatchFilters {
     }
 }
 
-fn strip_negation(value: &str) -> (String, bool) {
-    let v = value.trim();
-    if let Some(stripped) = v.strip_prefix('!') {
-        (stripped.trim().to_string(), true)
-    } else {
-        (v.to_string(), false)
-    }
-}
-
 /// A parsed live websocket frame.
 #[derive(Debug)]
 pub enum LiveFrame {
     /// A data frame carrying zero or more elements plus the RRC host.
     Data(LiveMessage),
-    /// `ris_subscribe_ok`: the server accepted the subscription.
+    /// `ris_subscribe_ok`: the server accepted a subscription.
     SubscribeOk,
     /// `ris_error` with its message text.
     Error(String),
@@ -273,7 +352,7 @@ pub struct LiveMessage {
 /// are returned as `Err` so the caller can report them instead of silently
 /// dropping live updates.
 pub fn parse_live_frame(msg_str: &str) -> Result<LiveFrame> {
-    match frame_type(msg_str).as_deref() {
+    match extract_string_field(msg_str, "type").as_deref() {
         Some("ris_subscribe_ok") => return Ok(LiveFrame::SubscribeOk),
         Some("ris_error") => {
             return Ok(LiveFrame::Error(
@@ -290,10 +369,6 @@ pub fn parse_live_frame(msg_str: &str) -> Result<LiveFrame> {
         Ok(elems) => Ok(LiveFrame::Data(LiveMessage { host, elems })),
         Err(e) => Err(anyhow!("failed to parse RIS Live message: {e}")),
     }
-}
-
-fn frame_type(msg_str: &str) -> Option<String> {
-    extract_string_field(msg_str, "type")
 }
 
 fn extract_string_field(msg_str: &str, field: &str) -> Option<String> {
@@ -331,12 +406,25 @@ mod tests {
             origin_asn: vec!["2906".to_string()],
             ..Default::default()
         };
-        let (sub, report) = filters.to_ris_subscribe(None).unwrap();
-        assert!(report.prefixes.is_empty() && report.peers.is_empty());
-        assert!(!sub.to_json_string().contains("path"));
+        let plan = filters.to_subscription_plan(None).unwrap();
+        assert!(!plan.report.has_server_scope());
+        assert_eq!(plan.subscriptions.len(), 1);
+        assert!(!plan.subscriptions[0].to_json_string().contains("path"));
         // but the client-side filter carries it
         let client = filters.compile_client_filters().unwrap();
         assert!(!client.is_empty());
+    }
+
+    #[test]
+    fn test_client_only_filters_have_no_server_scope() {
+        // peer-asn/community/as-path run client-side only; the firehose guard
+        // must treat them as unscoped.
+        let filters = WatchFilters {
+            peer_asn: vec!["13335".to_string()],
+            ..Default::default()
+        };
+        let plan = filters.to_subscription_plan(None).unwrap();
+        assert!(!plan.report.has_server_scope());
     }
 
     #[test]
@@ -346,10 +434,10 @@ mod tests {
             include_sub: true,
             ..Default::default()
         };
-        let (sub, report) = filters.to_ris_subscribe(Some("rrc00")).unwrap();
-        assert_eq!(report.host.as_deref(), Some("rrc00"));
-        assert_eq!(report.prefixes, vec!["1.1.1.0/24".to_string()]);
-        let json = sub.to_json_string();
+        let plan = filters.to_subscription_plan(Some("rrc00")).unwrap();
+        assert_eq!(plan.report.host.as_deref(), Some("rrc00"));
+        assert_eq!(plan.report.prefixes, vec!["1.1.1.0/24".to_string()]);
+        let json = plan.subscriptions[0].to_json_string();
         assert!(json.contains("rrc00"));
         assert!(json.contains("1.1.1.0/24"));
         assert!(json.contains("\"moreSpecific\":true"));
@@ -363,19 +451,46 @@ mod tests {
             prefix: vec!["1.1.1.0/24".to_string()],
             ..Default::default()
         };
-        let (sub, _) = filters.to_ris_subscribe(None).unwrap();
-        let json = sub.to_json_string();
+        let plan = filters.to_subscription_plan(None).unwrap();
+        let json = plan.subscriptions[0].to_json_string();
         assert!(json.contains("\"moreSpecific\":false"));
         assert!(json.contains("\"lessSpecific\":false"));
     }
 
     #[test]
-    fn test_negative_prefix_rejected() {
+    fn test_multi_prefix_multi_peer_expands_subscriptions() {
+        let filters = WatchFilters {
+            prefix: vec!["1.1.1.0/24".to_string(), "8.8.8.0/24".to_string()],
+            peer_ip: vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
+            ..Default::default()
+        };
+        let plan = filters.to_subscription_plan(None).unwrap();
+        assert_eq!(plan.subscriptions.len(), 4);
+        assert_eq!(plan.report.prefixes.len(), 2);
+        assert_eq!(plan.report.peers.len(), 2);
+        let jsons: Vec<String> = plan
+            .subscriptions
+            .iter()
+            .map(|s| s.to_json_string())
+            .collect();
+        assert!(jsons
+            .iter()
+            .any(|j| j.contains("1.1.1.0/24") && j.contains("192.0.2.1")));
+        assert!(jsons
+            .iter()
+            .any(|j| j.contains("8.8.8.0/24") && j.contains("192.0.2.2")));
+    }
+
+    #[test]
+    fn test_negative_prefix_client_side_only() {
         let filters = WatchFilters {
             prefix: vec!["!1.1.1.0/24".to_string()],
             ..Default::default()
         };
-        assert!(filters.to_ris_subscribe(None).is_err());
+        let plan = filters.to_subscription_plan(None).unwrap();
+        assert!(plan.report.prefixes.is_empty());
+        // enforced client-side instead
+        assert!(!filters.compile_client_filters().unwrap().is_empty());
     }
 
     #[test]
@@ -384,8 +499,8 @@ mod tests {
             elem_type: Some(crate::lens::parse::ParseElemType::A),
             ..Default::default()
         };
-        let (_, report) = filters.to_ris_subscribe(None).unwrap();
-        assert_eq!(report.require.as_deref(), Some("announcements"));
+        let plan = filters.to_subscription_plan(None).unwrap();
+        assert_eq!(plan.report.require.as_deref(), Some("announcements"));
         // elem type also re-checked client-side (mixed UPDATEs)
         assert!(!filters.compile_client_filters().unwrap().is_empty());
     }
@@ -412,6 +527,29 @@ mod tests {
     fn test_mixed_positive_negative_origin_rejected() {
         let filters = WatchFilters {
             origin_asn: vec!["13335".to_string(), "!15169".to_string()],
+            ..Default::default()
+        };
+        assert!(filters.compile_client_filters().is_err());
+    }
+
+    #[test]
+    fn test_community_spec_or_semantics() {
+        // multiple communities must yield ONE filter with OR semantics,
+        // matching parse behavior, not one filter per value (AND).
+        let filters = WatchFilters {
+            communities: vec!["13335:100".to_string(), "15169:*".to_string()],
+            ..Default::default()
+        };
+        let compiled = filters.compile_client_filters().unwrap();
+        assert_eq!(compiled.len(), 1);
+        let spec = filters.canonical_community_spec().unwrap();
+        assert!(spec.contains("|"));
+    }
+
+    #[test]
+    fn test_mixed_community_negation_rejected() {
+        let filters = WatchFilters {
+            communities: vec!["13335:100".to_string(), "!15169:1".to_string()],
             ..Default::default()
         };
         assert!(filters.compile_client_filters().is_err());
