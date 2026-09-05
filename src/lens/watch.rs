@@ -303,7 +303,10 @@ pub fn parse_live_frame(msg_str: &str) -> Result<LiveFrame> {
                 extract_string_field(msg_str, "message").unwrap_or_else(|| "unknown error".into()),
             ))
         }
-        Some(_) if msg_str.contains("\"raw\"") => {}
+        // Data frames parse through the raw-bytes parser even when the raw
+        // member is unexpectedly absent: the parser reports the missing
+        // payload as an error instead of silently dropping an update.
+        Some("ris_message") => {}
         Some(_) => return Ok(LiveFrame::Other),
         None => {}
     }
