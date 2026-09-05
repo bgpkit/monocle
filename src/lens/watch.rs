@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use bgpkit_parser::parser::filter::Filterable;
-use bgpkit_parser::{parse_ris_live_message_raw, BgpElem, RisSubscribe};
+use bgpkit_parser::{parse_ris_live_message_raw, BgpElem, RisSubscribe, RisSubscribeType};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
@@ -196,7 +196,9 @@ impl WatchFilters {
         let mut subscriptions = Vec::new();
         for pfx in &prefixes {
             for peer in &peers {
-                let mut sub = RisSubscribe::new();
+                // UPDATE messages only: watch emits UPDATE-derived elements,
+                // so transporting OPEN/KEEPALIVE/NOTIFICATION frames is waste.
+                let mut sub = RisSubscribe::new().data_type(RisSubscribeType::UPDATE);
                 if let Some(h) = host {
                     sub = sub.host(h);
                 }
@@ -224,83 +226,32 @@ impl WatchFilters {
 
     /// Compile the complete client-side element filters.
     ///
-    /// These carry the actual match semantics (identical to `monocle parse`)
-    /// and validate all values: invalid ASNs, communities, or prefixes fail
-    /// here before any connection is made. Call before opening a recording
-    /// file or subscribing.
+    /// Delegates to [`crate::lens::parse::ParseFilters`] for both validation
+    /// and conversion, so input semantics and matching cannot drift from
+    /// `monocle parse`. Call before opening a recording file or subscribing;
+    /// invalid values fail here, before any connection is made.
     pub fn compile_client_filters(&self) -> Result<Vec<bgpkit_parser::parser::filter::Filter>> {
-        use bgpkit_parser::parser::filter::Filter;
-
-        let mut filters = Vec::new();
-
-        if !self.origin_asn.is_empty() {
-            filters.push(Filter::new("origin_asns", &self.origin_asn.join(","))?);
-        }
-
-        if !self.prefix.is_empty() {
-            let key = match (self.include_super, self.include_sub) {
-                (false, false) => "prefixes",
-                (true, false) => "prefixes_super",
-                (false, true) => "prefixes_sub",
-                (true, true) => "prefixes_super_sub",
-            };
-            filters.push(Filter::new(key, &self.prefix.join(","))?);
-        }
-
-        if !self.peer_ip.is_empty() {
-            let value = self
-                .peer_ip
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            filters.push(Filter::new("peer_ips", &value)?);
-        }
-
-        if !self.peer_asn.is_empty() {
-            filters.push(Filter::new("peer_asns", &self.peer_asn.join(","))?);
-        }
-
-        // Community filtering reuses parse's canonical conversion (wildcards,
-        // negation consistency, OR within the dimension) instead of
-        // per-value predicates, which match_filters would combine with AND.
-        if !self.communities.is_empty() {
-            let spec = self.canonical_community_spec()?;
-            filters.push(Filter::new("community", &spec)?);
-        }
-
-        if let Some(t) = &self.elem_type {
-            filters.push(Filter::new("type", &t.to_string())?);
-        }
-
-        if let Some(pattern) = &self.as_path {
-            filters.push(Filter::new("as_path", pattern)?);
-        }
-
-        Ok(filters)
+        self.to_parse_filters()?.to_filters()
     }
 
-    /// Canonical community filter spec, identical to parse's semantics
-    /// (single filter value, OR across alternatives, `*` wildcards,
-    /// consistent negation).
-    fn canonical_community_spec(&self) -> Result<String> {
-        use crate::lens::parse::ParseFilters;
-        ParseFilters::check_negation_consistency(&self.communities, "community")?;
-        let is_negated = self
-            .communities
-            .first()
-            .map(|v| v.starts_with('!'))
-            .unwrap_or(false);
-        let mut pattern_bodies = Vec::with_capacity(self.communities.len());
-        for pattern in &self.communities {
-            pattern_bodies.push(ParseFilters::community_pattern_to_regex_body(pattern)?);
-        }
-        let regex = format!("^(?:{})$", pattern_bodies.join("|"));
-        if is_negated {
-            Ok(format!("!{regex}"))
-        } else {
-            Ok(regex)
-        }
+    /// Project these filters onto a `ParseFilters` value for validation and
+    /// conversion. Time-window fields stay unset: a live stream has no
+    /// archive window.
+    pub fn to_parse_filters(&self) -> Result<crate::lens::parse::ParseFilters> {
+        let filters = crate::lens::parse::ParseFilters {
+            origin_asn: self.origin_asn.clone(),
+            prefix: self.prefix.clone(),
+            include_super: self.include_super,
+            include_sub: self.include_sub,
+            peer_ip: self.peer_ip.clone(),
+            peer_asn: self.peer_asn.clone(),
+            communities: self.communities.clone(),
+            elem_type: self.elem_type.clone(),
+            as_path: self.as_path.clone(),
+            ..Default::default()
+        };
+        filters.validate()?;
+        Ok(filters)
     }
 
     /// Apply client-side filters to a parsed element.
@@ -521,9 +472,8 @@ mod tests {
             ..Default::default()
         };
         let compiled = filters.compile_client_filters().unwrap();
+        // one filter per dimension, OR within the community value
         assert_eq!(compiled.len(), 1);
-        let spec = filters.canonical_community_spec().unwrap();
-        assert!(spec.contains("|"));
     }
 
     #[test]
@@ -540,6 +490,23 @@ mod tests {
         let frame = r#"{"type":"ris_message","data":{"timestamp":1700000000,"peer":"1.1.1.1","host":"rrc10","path":[1,2,3],"announcements":[]}}"#;
         assert_eq!(extract_host(frame).as_deref(), Some("rrc10"));
         assert!(extract_host("garbage").is_none());
+    }
+
+    #[test]
+    fn test_data_frame_parses_elements_and_host() {
+        // Real RIS Live frame (rrc10 UPDATE, includeRaw) from
+        // bgpkit-parser's ris_live_raw_full example.
+        let frame = r#"{"type":"ris_message","data":{"timestamp":1636245154.8,"peer":"2001:7f8:b:100:1d1:a520:1333:74","peer_asn":"201333","id":"10-183678-175313836","host":"rrc10","type":"UPDATE","raw":"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0086020000006F4001010040021202040003127500001A6A000000AE00004FF980040400000000C008081A6A001E1A6A3840800E4100020120200107F8000B010001D1A52013330074FE800000000000000217A3FFFEFE290500302A0E97C70000302A0E97C600FE302A10CC4217B7302A10CC421FEB"}}"#;
+        match parse_live_frame(frame).unwrap() {
+            LiveFrame::Data(msg) => {
+                assert_eq!(msg.host.as_deref(), Some("rrc10"));
+                assert!(!msg.elems.is_empty());
+                let elem = &msg.elems[0];
+                assert_eq!(elem.peer_asn.to_u32(), 201333);
+                assert!(elem.prefix.prefix.addr().is_ipv6());
+            }
+            other => panic!("expected data frame, got {other:?}"),
+        }
     }
 
     #[test]
