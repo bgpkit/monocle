@@ -8,24 +8,25 @@
 //! # Filter pushdown
 //!
 //! RIS Live supports server-side subscription filters (`RisSubscribe`). Watch
-//! translates user filters into the subscription wherever possible so the
-//! server sends only relevant messages; filters the API cannot express are
-//! still applied client-side. See `WatchFilters::to_ris_subscribe`.
+//! pushes down `host`, `prefix`, `peer`, and `require` to reduce traffic, but
+//! pushdown is only an optimization: RIS selects whole UPDATE messages while
+//! elements expand per prefix, and some predicates (e.g. origin ASN with
+//! AS_SET origins) have no equivalent server-side pattern. Every element-level
+//! predicate therefore also runs client-side with bgpkit-parser semantics, so
+//! watch matches exactly what `monocle parse` would match.
 
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
-use bgpkit_parser::parse_ris_live_message;
 use bgpkit_parser::parser::filter::Filterable;
-use bgpkit_parser::BgpElem;
-use bgpkit_parser::RisSubscribe;
+use bgpkit_parser::{parse_ris_live_message_raw, BgpElem, RisSubscribe};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
-/// Public RIS Live websocket endpoint.
-pub const RIS_LIVE_URL: &str = "ws://ris-live.ripe.net/v1/ws/?client=monocle";
+/// Public RIS Live websocket endpoint (TLS).
+pub const RIS_LIVE_URL: &str = "wss://ris-live.ripe.net/v1/ws/?client=monocle";
 
 /// Reconnect backoff after an abnormal websocket close or IO error.
 pub const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
@@ -79,8 +80,7 @@ pub struct WatchFilters {
     #[serde(default)]
     pub elem_type: Option<crate::lens::parse::ParseElemType>,
 
-    /// Filter by AS path regex string (applied client-side; RIS Live path
-    /// patterns are not regular expressions)
+    /// Filter by AS path regex string
     #[cfg_attr(feature = "cli", clap(short = 'a', long))]
     #[serde(default)]
     pub as_path: Option<String>,
@@ -89,10 +89,8 @@ pub struct WatchFilters {
 /// Which filters were pushed down to the RIS Live subscription, for display.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushdownReport {
-    /// RRC host filter (`--collector`/`--host`)
+    /// RRC host filter (`--host`)
     pub host: Option<String>,
-    /// Origin ASN patterns sent as `path` (e.g. `2906$`)
-    pub origin_path_patterns: Vec<String>,
     /// Prefix subscriptions sent (one subscription per prefix)
     pub prefixes: Vec<String>,
     /// Peer IPs sent as `peer`
@@ -116,10 +114,14 @@ impl WatchFilters {
 
     /// Build the server-side RIS Live subscription from these filters.
     ///
-    /// `host` scopes the subscription to a single RRC (server-side). Returns
-    /// the subscription plus a report of which filter dimensions were pushed
-    /// down. Dimensions the RIS Live API cannot express are omitted here and
-    /// must be applied client-side via [`WatchFilters::compile_client_filters`].
+    /// `host` scopes the subscription to a single RRC. Only dimensions that
+    /// reduce traffic without changing match semantics are pushed down:
+    /// `host`, `prefix`, `peer`, and `require`. Origin ASNs are NOT pushed
+    /// down: the RIS `path` pattern `N$` does not match AS_SET origins, so a
+    /// pushdown could discard updates that client-side semantics accept.
+    /// Every pushed dimension is still re-checked client-side per element
+    /// because RIS selects whole UPDATE messages while elements expand per
+    /// prefix.
     pub fn to_ris_subscribe(&self, host: Option<&str>) -> Result<(RisSubscribe, PushdownReport)> {
         let mut sub = RisSubscribe::new();
         let mut report = PushdownReport::default();
@@ -129,19 +131,9 @@ impl WatchFilters {
             report.host = Some(h.to_string());
         }
 
-        // origin_asn -> path pattern "N$" (server-side)
-        for value in &self.origin_asn {
-            let (asn, negated) = strip_negation(value);
-            let pattern = if negated {
-                format!("!{asn}$")
-            } else {
-                format!("{asn}$")
-            };
-            sub = sub.path(&pattern);
-            report.origin_path_patterns.push(pattern);
-        }
-
-        // prefix -> per-prefix subscriptions (server-side, with more/less-specific)
+        // prefix -> per-prefix subscriptions. Both specificity flags are set
+        // explicitly: RIS defaults moreSpecific to true when omitted, which
+        // would silently widen an exact-match --prefix.
         for value in &self.prefix {
             let (raw, negated) = strip_negation(value);
             let net = IpNet::from_str(&raw).map_err(|e| anyhow!("invalid prefix '{raw}': {e}"))?;
@@ -150,14 +142,10 @@ impl WatchFilters {
                     "negative prefix filters are not supported for live subscriptions: '{value}'"
                 );
             }
-            let mut p = sub.prefix(net);
-            if self.include_sub {
-                p = p.more_specific(true);
-            }
-            if self.include_super {
-                p = p.less_specific(true);
-            }
-            sub = p;
+            sub = sub
+                .prefix(net)
+                .more_specific(self.include_sub)
+                .less_specific(self.include_super);
             report.prefixes.push(raw);
         }
 
@@ -167,7 +155,9 @@ impl WatchFilters {
             report.peers.push(peer.to_string());
         }
 
-        // elem_type -> require (server-side)
+        // elem_type -> require (server-side). RIS selects whole UPDATEs, so a
+        // mixed update carrying both announcements and withdrawals still
+        // arrives; the elem-type filter also runs client-side.
         if let Some(t) = &self.elem_type {
             let require = match t {
                 crate::lens::parse::ParseElemType::A => "announcements",
@@ -180,20 +170,43 @@ impl WatchFilters {
         Ok((sub, report))
     }
 
-    /// Compile the filters that must run client-side into parser `Filter`s.
+    /// Compile the complete client-side element filters.
     ///
-    /// Pushed-down dimensions are excluded: the server already applied them.
-    /// Applied client-side: peer_asn, communities, as_path regex, and negative
-    /// origin filters (RIS Live `!` path patterns are unreliable across
-    /// deployments, so we keep exact semantics locally).
+    /// These carry the actual match semantics (identical to `monocle parse`)
+    /// and validate all values: invalid ASNs, communities, or prefixes fail
+    /// here before any connection is made. Call before opening a recording
+    /// file or subscribing.
     pub fn compile_client_filters(&self) -> Result<Vec<bgpkit_parser::parser::filter::Filter>> {
         use bgpkit_parser::parser::filter::Filter;
 
         let mut filters = Vec::new();
 
-        for value in &self.peer_asn {
-            let v = strip_negation(value);
-            filters.push(Filter::new("peer_asns", &v.0)?);
+        if !self.origin_asn.is_empty() {
+            filters.push(Filter::new("origin_asns", &self.origin_asn.join(","))?);
+        }
+
+        if !self.prefix.is_empty() {
+            let key = match (self.include_super, self.include_sub) {
+                (false, false) => "prefixes",
+                (true, false) => "prefixes_super",
+                (false, true) => "prefixes_sub",
+                (true, true) => "prefixes_super_sub",
+            };
+            filters.push(Filter::new(key, &self.prefix.join(","))?);
+        }
+
+        if !self.peer_ip.is_empty() {
+            let value = self
+                .peer_ip
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            filters.push(Filter::new("peer_ips", &value)?);
+        }
+
+        if !self.peer_asn.is_empty() {
+            filters.push(Filter::new("peer_asns", &self.peer_asn.join(","))?);
         }
 
         for value in &self.communities {
@@ -202,17 +215,12 @@ impl WatchFilters {
             filters.push(Filter::new("community", &spec)?);
         }
 
-        if let Some(pattern) = &self.as_path {
-            filters.push(Filter::new("as_path", pattern)?);
+        if let Some(t) = &self.elem_type {
+            filters.push(Filter::new("type", &t.to_string())?);
         }
 
-        // Negative origin filters: server pushdown used "!N$" path patterns for
-        // them, but we additionally apply an exact client-side filter to keep
-        // semantics identical to parse/search.
-        for value in &self.origin_asn {
-            if strip_negation(value).1 {
-                filters.push(Filter::new("origin_asns", &strip_negation(value).0)?);
-            }
+        if let Some(pattern) = &self.as_path {
+            filters.push(Filter::new("as_path", pattern)?);
         }
 
         Ok(filters)
@@ -237,31 +245,62 @@ fn strip_negation(value: &str) -> (String, bool) {
     }
 }
 
-/// A parsed live message: zero or more elements plus the RRC host it came from.
+/// A parsed live websocket frame.
+#[derive(Debug)]
+pub enum LiveFrame {
+    /// A data frame carrying zero or more elements plus the RRC host.
+    Data(LiveMessage),
+    /// `ris_subscribe_ok`: the server accepted the subscription.
+    SubscribeOk,
+    /// `ris_error` with its message text.
+    Error(String),
+    /// Any other control frame (e.g. `ris_rrc_list`, `pong`).
+    Other,
+}
+
+/// A parsed live data message.
 #[derive(Debug)]
 pub struct LiveMessage {
     pub host: Option<String>,
     pub elems: Vec<BgpElem>,
 }
 
-/// Parse a raw RIS Live websocket text frame into elements.
+/// Classify and parse a raw RIS Live websocket text frame.
 ///
-/// Non-data frames (errors, `ris_subscribe_ok`, state messages) return an
-/// empty element list rather than an error, matching the feed's best-effort
-/// nature.
-pub fn parse_live_frame(msg_str: &str) -> Result<LiveMessage> {
-    // Extract the originating host without a full serde pass of every frame
-    // shape; parse_ris_live_message handles the heavy lifting.
+/// Data frames are parsed from the raw BGP message bytes (the subscription
+/// requests `includeRaw`), preserving all path attributes; the JSON-projected
+/// parser drops attributes such as large communities. Element parse failures
+/// are returned as `Err` so the caller can report them instead of silently
+/// dropping live updates.
+pub fn parse_live_frame(msg_str: &str) -> Result<LiveFrame> {
+    match frame_type(msg_str).as_deref() {
+        Some("ris_subscribe_ok") => return Ok(LiveFrame::SubscribeOk),
+        Some("ris_error") => {
+            return Ok(LiveFrame::Error(
+                extract_string_field(msg_str, "message").unwrap_or_else(|| "unknown error".into()),
+            ))
+        }
+        Some(_) if msg_str.contains("\"raw\"") => {}
+        Some(_) => return Ok(LiveFrame::Other),
+        None => {}
+    }
+
     let host = extract_host(msg_str);
-    let elems = parse_ris_live_message(msg_str).unwrap_or_default();
-    Ok(LiveMessage { host, elems })
+    match parse_ris_live_message_raw(msg_str) {
+        Ok(elems) => Ok(LiveFrame::Data(LiveMessage { host, elems })),
+        Err(e) => Err(anyhow!("failed to parse RIS Live message: {e}")),
+    }
 }
 
-fn extract_host(msg_str: &str) -> Option<String> {
-    // RIS Live data frames carry "data": { "host": "rrcXX", ... }. A cheap
-    // substring scan avoids rejecting frames whose outer shape changes.
-    let marker = "\"host\"";
-    let idx = msg_str.find(marker)?;
+fn frame_type(msg_str: &str) -> Option<String> {
+    extract_string_field(msg_str, "type")
+}
+
+fn extract_string_field(msg_str: &str, field: &str) -> Option<String> {
+    // Cheap scans avoid a full serde pass per frame and tolerate outer-shape
+    // changes. Frames are small, so two scans are not a hotspot.
+    let marker = format!("\"{field}\"");
+    let idx = msg_str.find(&marker)?;
     let rest = &msg_str[idx + marker.len()..];
     let colon = rest.find(':')?;
     let after = rest[colon + 1..].trim_start();
@@ -269,6 +308,10 @@ fn extract_host(msg_str: &str) -> Option<String> {
     let value = &after[quote + 1..];
     let end = value.find('"')?;
     Some(value[..end].to_string())
+}
+
+fn extract_host(msg_str: &str) -> Option<String> {
+    extract_string_field(msg_str, "host")
 }
 
 #[cfg(test)]
@@ -283,14 +326,17 @@ mod tests {
     }
 
     #[test]
-    fn test_pushdown_origin_asn() {
+    fn test_origin_not_pushed_down() {
         let filters = WatchFilters {
             origin_asn: vec!["2906".to_string()],
             ..Default::default()
         };
         let (sub, report) = filters.to_ris_subscribe(None).unwrap();
-        assert!(report.origin_path_patterns.contains(&"2906$".to_string()));
-        assert!(!sub.to_json_string().is_empty());
+        assert!(report.prefixes.is_empty() && report.peers.is_empty());
+        assert!(!sub.to_json_string().contains("path"));
+        // but the client-side filter carries it
+        let client = filters.compile_client_filters().unwrap();
+        assert!(!client.is_empty());
     }
 
     #[test]
@@ -310,6 +356,20 @@ mod tests {
     }
 
     #[test]
+    fn test_prefix_specificity_set_explicitly() {
+        // RIS defaults moreSpecific=true when omitted; exact-match --prefix
+        // must send moreSpecific=false explicitly.
+        let filters = WatchFilters {
+            prefix: vec!["1.1.1.0/24".to_string()],
+            ..Default::default()
+        };
+        let (sub, _) = filters.to_ris_subscribe(None).unwrap();
+        let json = sub.to_json_string();
+        assert!(json.contains("\"moreSpecific\":false"));
+        assert!(json.contains("\"lessSpecific\":false"));
+    }
+
+    #[test]
     fn test_negative_prefix_rejected() {
         let filters = WatchFilters {
             prefix: vec!["!1.1.1.0/24".to_string()],
@@ -319,23 +379,42 @@ mod tests {
     }
 
     #[test]
-    fn test_elem_type_pushdown() {
+    fn test_elem_type_pushdown_and_client_filter() {
         let filters = WatchFilters {
             elem_type: Some(crate::lens::parse::ParseElemType::A),
             ..Default::default()
         };
         let (_, report) = filters.to_ris_subscribe(None).unwrap();
         assert_eq!(report.require.as_deref(), Some("announcements"));
+        // elem type also re-checked client-side (mixed UPDATEs)
+        assert!(!filters.compile_client_filters().unwrap().is_empty());
     }
 
     #[test]
-    fn test_negative_origin_keeps_client_filter() {
+    fn test_invalid_origin_rejected_at_compile() {
         let filters = WatchFilters {
-            origin_asn: vec!["!13335".to_string()],
+            origin_asn: vec!["bogus".to_string()],
             ..Default::default()
         };
-        let filters_compiled = filters.compile_client_filters().unwrap();
-        assert!(!filters_compiled.is_empty());
+        assert!(filters.compile_client_filters().is_err());
+    }
+
+    #[test]
+    fn test_invalid_prefix_rejected_at_compile() {
+        let filters = WatchFilters {
+            prefix: vec!["not-a-prefix".to_string()],
+            ..Default::default()
+        };
+        assert!(filters.compile_client_filters().is_err());
+    }
+
+    #[test]
+    fn test_mixed_positive_negative_origin_rejected() {
+        let filters = WatchFilters {
+            origin_asn: vec!["13335".to_string(), "!15169".to_string()],
+            ..Default::default()
+        };
+        assert!(filters.compile_client_filters().is_err());
     }
 
     #[test]
@@ -346,10 +425,18 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_live_frame_non_data() {
-        // Error frames parse to empty element lists, not errors.
-        let frame = r#"{"type":"ris_error","data":{"message":"bad subscription"}}"#;
-        let msg = parse_live_frame(frame).unwrap();
-        assert!(msg.elems.is_empty());
+    fn test_control_frames_classified() {
+        let ok = parse_live_frame(r#"{"type":"ris_subscribe_ok","data":{}}"#).unwrap();
+        assert!(matches!(ok, LiveFrame::SubscribeOk));
+
+        let err = parse_live_frame(r#"{"type":"ris_error","data":{"message":"bad subscription"}}"#)
+            .unwrap();
+        match err {
+            LiveFrame::Error(msg) => assert_eq!(msg, "bad subscription"),
+            other => panic!("expected error frame, got {other:?}"),
+        }
+
+        let other = parse_live_frame(r#"{"type":"pong","data":null}"#).unwrap();
+        assert!(matches!(other, LiveFrame::Other));
     }
 }
