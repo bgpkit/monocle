@@ -154,14 +154,38 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
         },
         None => None,
     };
-    if let Err(e) = rt.block_on(run_async(
+    let mut recorder = recorder;
+    let mut stats = WatchStats::default();
+    let result = rt.block_on(run_async(
         args,
         plan,
-        recorder,
+        &mut recorder,
+        &mut stats,
         client_filters,
         fields,
         output_format,
-    )) {
+    ));
+    // Finalize and verify the recording from a sync context: the compression
+    // footer drops here, and replay verification goes through oneio, whose
+    // reqwest::blocking client must not run inside the async runtime.
+    if let Some(rec) = recorder.as_mut() {
+        let finish_res = rec.finish().and_then(|()| rec.verify_replayable());
+        match finish_res {
+            Ok(()) => {
+                eprintln!(
+                    "recorded {} elements to {:?} (verified)",
+                    stats.recorded, rec.path
+                );
+            }
+            Err(e) => {
+                eprintln!("watch: recording verification failed: {e}");
+                if result.is_ok() {
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    if let Err(e) = result {
         eprintln!("watch: {e}");
         std::process::exit(1);
     }
@@ -181,7 +205,8 @@ fn install_crypto_provider() {
 async fn run_async(
     args: WatchArgs,
     plan: monocle::lens::watch::SubscriptionPlan,
-    mut recorder: Option<MrtRecorder>,
+    recorder: &mut Option<MrtRecorder>,
+    stats: &mut WatchStats,
     client_filters: Vec<bgpkit_parser::parser::filter::Filter>,
     fields: Vec<&'static str>,
     output_format: OutputFormat,
@@ -243,11 +268,8 @@ async fn run_async(
             if let Err(e) = writeln!(lock, "{h}") {
                 if e.kind() == std::io::ErrorKind::BrokenPipe {
                     // The reader is already gone (e.g. `| head` exited before
-                    // any element): nothing was streamed or recorded, just
-                    // finalize (flush) the empty recorder and stop.
-                    if let Some(rec) = recorder.as_mut() {
-                        rec.finish()?;
-                    }
+                    // any element): nothing was streamed or recorded. Sync
+                    // cleanup in run() finalizes and verifies the recording.
                     return Ok(());
                 }
                 return Err(anyhow!("stdout write failed: {e}"));
@@ -255,9 +277,6 @@ async fn run_async(
         }
         if let Err(e) = lock.flush() {
             if e.kind() == std::io::ErrorKind::BrokenPipe {
-                if let Some(rec) = recorder.as_mut() {
-                    rec.finish()?;
-                }
                 return Ok(());
             }
             return Err(anyhow!("stdout flush failed: {e}"));
@@ -265,7 +284,6 @@ async fn run_async(
     }
 
     let mut running = true;
-    let mut stats = WatchStats::default();
     // One signal future for the whole session: once created, Tokio keeps
     // SIGINT registered process-wide, so Ctrl-C must be awaited during
     // connect, subscribe send, and backoff too, not only while reading.
@@ -454,23 +472,10 @@ async fn run_async(
         }
     }
 
-    // Finalize the recording on every exit path (success, Ctrl-C, fatal
-    // error) so buffered elements are never lost; the finalization error,
-    // if any, does not mask the original fatal error.
-    let result = match fatal {
+    match fatal {
         Some(e) => Err(e),
         None => Ok(()),
-    };
-    if let Some(rec) = recorder.as_mut() {
-        match rec.finish() {
-            Ok(()) => {
-                eprintln!("recorded {} elements to {:?}", stats.recorded, rec.path);
-            }
-            Err(e) if result.is_ok() => return Err(e),
-            Err(e) => eprintln!("record finalization also failed: {e}"),
-        }
     }
-    result
 }
 
 /// Await Ctrl-C (returns true) or the reconnect backoff (returns false).
@@ -554,7 +559,7 @@ struct WatchStats {
 struct MrtRecorder {
     path: PathBuf,
     encoder: MrtUpdatesEncoder,
-    writer: Box<dyn Write>,
+    writer: Option<Box<dyn Write>>,
     count: u64,
 }
 
@@ -570,7 +575,7 @@ impl MrtRecorder {
         Ok(Self {
             path,
             encoder: MrtUpdatesEncoder::new(),
-            writer,
+            writer: Some(writer),
             count: 0,
         })
     }
@@ -590,9 +595,10 @@ impl MrtRecorder {
             .export_bytes()
             .map_err(|e| anyhow!("MRT encode failed: {e}"))?;
         if !bytes.is_empty() {
-            self.writer
-                .write_all(&bytes)
-                .map_err(|e| anyhow!("record write failed: {e}"))?;
+            if let Some(w) = self.writer.as_mut() {
+                w.write_all(&bytes)
+                    .map_err(|e| anyhow!("record write failed: {e}"))?;
+            }
         }
         self.encoder.reset();
         Ok(())
@@ -600,9 +606,39 @@ impl MrtRecorder {
 
     fn finish(&mut self) -> Result<()> {
         self.flush()?;
-        self.writer
-            .flush()
-            .map_err(|e| anyhow!("record flush failed: {e}"))?;
+        if let Some(w) = self.writer.as_mut() {
+            w.flush().map_err(|e| anyhow!("record flush failed: {e}"))?;
+        }
+        // Compressed writers (e.g. bzip2) write their stream footer on drop,
+        // and a drop-time encoder failure cannot propagate through
+        // `Box<dyn Write>`. Drop the writer explicitly, then verify the
+        // recording is replayable so silent corruption becomes a detected
+        // error instead of a successful exit with a corrupt file.
+        // Explicit drop: the compression footer is written here. A footer
+        // failure cannot propagate through `Box<dyn Write>`; callers verify
+        // replayability from a sync context (`verify_replayable`).
+        drop(self.writer.take());
+        Ok(())
+    }
+
+    /// Verify the finished recording replays to exactly the recorded count.
+    ///
+    /// Must run OUTSIDE the async runtime: parsing goes through oneio, whose
+    /// reqwest::blocking client creates its own tokio runtime.
+    fn verify_replayable(&self) -> Result<()> {
+        let path_str = self
+            .path
+            .to_str()
+            .ok_or_else(|| anyhow!("record path is not valid UTF-8"))?;
+        let parser = bgpkit_parser::BgpkitParser::new(path_str)
+            .map_err(|e| anyhow!("recorded file is not parseable: {e}"))?;
+        let replayed = parser.into_iter().count();
+        if replayed != self.count as usize {
+            return Err(anyhow!(
+                "recorded file verification failed: wrote {} elements but replayed {replayed}",
+                self.count
+            ));
+        }
         Ok(())
     }
 }
