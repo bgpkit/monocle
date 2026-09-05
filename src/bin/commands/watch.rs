@@ -88,7 +88,7 @@ pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
     if output_format == OutputFormat::Table {
         eprintln!(
             "watch: --format table is not supported for an unbounded stream; \
-             use the default PSV, JSON, or --pretty"
+             use the default PSV, --json, or --format json-line"
         );
         std::process::exit(2);
     }
@@ -253,7 +253,15 @@ async fn run_async(
                 return Err(anyhow!("stdout write failed: {e}"));
             }
         }
-        let _ = lock.flush();
+        if let Err(e) = lock.flush() {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                if let Some(rec) = recorder.as_mut() {
+                    rec.finish()?;
+                }
+                return Ok(());
+            }
+            return Err(anyhow!("stdout flush failed: {e}"));
+        }
     }
 
     let mut running = true;
