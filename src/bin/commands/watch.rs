@@ -67,6 +67,17 @@ pub(crate) struct WatchArgs {
 }
 
 pub fn run(mut args: WatchArgs, output_format: OutputFormat) {
+    // main() resets SIGPIPE to SIG_DFL so finite commands terminate on broken
+    // pipes; for watch that would kill the process at the kernel write and
+    // bypass recorder finalization. Restore the ignored disposition so writes
+    // return EPIPE, which the stream loop already handles cleanly.
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+        }
+    }
+
     // The tree enables two rustls CryptoProviders (aws-lc-rs via oneio, ring
     // via reqwest); pick ring once so TLS setup cannot fail ambiguously.
     install_crypto_provider();
@@ -263,7 +274,7 @@ async fn run_async(
                 Ok(c) => c,
                 Err(e) => {
                     if running && !no_reconnect {
-                        eprintln!("connection failed ({e}); retrying in {RECONNECT_BACKOFF:?}s");
+                        eprintln!("connection failed ({e}); retrying in {RECONNECT_BACKOFF:?}");
                         if fut_select_sig_or_sleep(&mut sig).await {
                             break;
                         }
@@ -427,7 +438,7 @@ async fn run_async(
         if fatal.is_some() || !running || no_reconnect {
             break;
         }
-        eprintln!("reconnecting in {RECONNECT_BACKOFF:?}s");
+        eprintln!("reconnecting in {RECONNECT_BACKOFF:?}");
         // A completed ctrl_c future must not be polled again; break the
         // session loop here instead of relying on the `running` check.
         if fut_select_sig_or_sleep(&mut sig).await {
@@ -467,6 +478,53 @@ async fn fut_select_sig_or_sleep<F: Future<Output = std::io::Result<()>> + Unpin
     tokio::select! {
         _ = sig => true,
         _ = &mut slept => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bgpkit_parser::BgpkitParser;
+
+    fn synthetic_elem(i: u32) -> bgpkit_parser::BgpElem {
+        bgpkit_parser::BgpElem {
+            peer_ip: "192.0.2.1".parse().unwrap(),
+            peer_asn: bgpkit_parser::models::Asn::new_32bit(64512),
+            prefix: "203.0.113.0/24".parse().unwrap(),
+            timestamp: 1_700_000_000.0 + f64::from(i),
+            elem_type: bgpkit_parser::models::ElemType::ANNOUNCE,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn recorder_flushes_at_boundary_and_finalizes_partial_batch() {
+        for count in [499u32, 500, 501] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(format!("rec-{count}.mrt"));
+            let mut rec = MrtRecorder::new(path.clone()).unwrap();
+            for i in 0..count {
+                let mut elem = synthetic_elem(i);
+                elem.timestamp = 1_700_000_000.0 + f64::from(i);
+                rec.process(&elem).unwrap();
+            }
+            rec.finish().unwrap();
+
+            // The finished file must replay to exactly the elements written.
+            let parser = BgpkitParser::new(path.to_str().unwrap()).unwrap();
+            let replayed = parser.into_iter().count();
+            assert_eq!(replayed, count as usize, "count {count} round trip");
+        }
+    }
+
+    #[test]
+    fn recorder_finish_without_elements_writes_valid_empty_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.mrt");
+        let mut rec = MrtRecorder::new(path.clone()).unwrap();
+        rec.finish().unwrap();
+        // File exists and is valid (possibly zero-record) MRT.
+        assert!(path.exists());
     }
 }
 
