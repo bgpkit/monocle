@@ -110,13 +110,12 @@ pub struct PushdownReport {
 }
 
 impl PushdownReport {
-    /// True when the server-side subscription carries at least one scope
-    /// beyond the firehose (host, prefixes, peers, or require).
+    /// True when the server-side subscription carries a scope that actually
+    /// reduces the feed (host, prefixes, or peers). `require` does not count:
+    /// it only trims element types, not the message volume, so an elem-type
+    /// filter alone is still the full firehose for the guard's purpose.
     pub fn has_server_scope(&self) -> bool {
-        self.host.is_some()
-            || !self.prefixes.is_empty()
-            || !self.peers.is_empty()
-            || self.require.is_some()
+        self.host.is_some() || !self.prefixes.is_empty() || !self.peers.is_empty()
     }
 }
 
@@ -501,6 +500,9 @@ mod tests {
         };
         let plan = filters.to_subscription_plan(None).unwrap();
         assert_eq!(plan.report.require.as_deref(), Some("announcements"));
+        // require only trims element types, not message volume: it must not
+        // satisfy the firehose guard.
+        assert!(!plan.report.has_server_scope());
         // elem type also re-checked client-side (mixed UPDATEs)
         assert!(!filters.compile_client_filters().unwrap().is_empty());
     }

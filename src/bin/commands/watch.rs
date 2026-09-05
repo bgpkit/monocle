@@ -35,8 +35,8 @@ pub(crate) struct WatchArgs {
     /// Accept an unfiltered full feed. Without this flag, watch refuses to run
     /// when no server-side scope (host, prefix, or peer) is given: an
     /// unscoped live stream is heavy for both the client and RIPE's servers,
-    /// and client-only filters (peer ASN, community, AS path) do not reduce
-    /// what the server sends.
+    /// and client-only filters (peer ASN, community, AS path, elem type) do
+    /// not reduce what the server sends.
     #[clap(long)]
     pub all: bool,
 
@@ -218,8 +218,19 @@ async fn run_async(
     } else {
         output_format
     };
-    if let Some(h) = get_header(out_format, &fields) {
-        println!("{h}");
+    // Write the header through Write with BrokenPipe handling: println!
+    // panics on a broken pipe (e.g. `watch --format markdown | head`).
+    {
+        let stdout = std::io::stdout();
+        let mut lock = stdout.lock();
+        if let Some(h) = get_header(out_format, &fields) {
+            if let Err(e) = writeln!(lock, "{h}") {
+                if e.kind() != std::io::ErrorKind::BrokenPipe {
+                    return Err(anyhow!("stdout write failed: {e}"));
+                }
+            }
+        }
+        let _ = lock.flush();
     }
 
     let mut running = true;
@@ -229,7 +240,12 @@ async fn run_async(
     // connect, subscribe send, and backoff too, not only while reading.
     let mut sig = std::pin::pin!(tokio::signal::ctrl_c());
 
-    loop {
+    // Errors inside the session set `fatal` and break out to the recorder
+    // finalization below, so accepted elements are never lost from the
+    // recorder buffer on an error path.
+    let mut fatal: Option<anyhow::Error> = None;
+
+    'session: loop {
         let (ws_stream, _) = tokio::select! {
             c = connect_async(RIS_LIVE_URL) => match c {
                 Ok(c) => c,
@@ -241,11 +257,12 @@ async fn run_async(
                             _ = tokio::time::sleep(RECONNECT_BACKOFF) => {}
                         }
                         if running {
-                            continue;
+                            continue 'session;
                         }
                         break;
                     }
-                    return Err(anyhow!("connection failed: {e}"));
+                    fatal = Some(anyhow!("connection failed: {e}"));
+                    break;
                 }
             },
             _ = &mut sig => break,
@@ -271,20 +288,25 @@ async fn run_async(
                                 _ = tokio::time::sleep(RECONNECT_BACKOFF) => {}
                             }
                             if running {
-                                break;
+                                // Restart the whole connection, not just the
+                                // subscription loop: the socket is unusable.
+                                continue 'session;
                             }
-                            return Err(anyhow!("subscribe send failed: {e}"));
+                            break;
                         }
-                        return Err(anyhow!("subscribe send failed: {e}"));
+                        fatal = Some(anyhow!("subscribe send failed: {e}"));
+                        break;
                     }
                     eprintln!("subscribed: {sub_msg}");
-                    continue;
                 }
                 _ = &mut sig => {
                     running = false;
                     break;
                 }
             }
+        }
+        if !running || fatal.is_some() {
+            break;
         }
 
         let mut stdout = std::io::stdout();
@@ -316,7 +338,14 @@ async fn run_async(
             };
 
             stats.messages += 1;
-            match parse_live_frame(text)? {
+            let frame = match parse_live_frame(text) {
+                Ok(f) => f,
+                Err(e) => {
+                    fatal = Some(e);
+                    break;
+                }
+            };
+            match frame {
                 LiveFrame::SubscribeOk => {
                     if !subscribed_ok {
                         eprintln!("subscription acknowledged by server");
@@ -324,7 +353,8 @@ async fn run_async(
                     }
                 }
                 LiveFrame::Error(err_text) => {
-                    return Err(anyhow!("RIS Live rejected the subscription: {err_text}"));
+                    fatal = Some(anyhow!("RIS Live rejected the subscription: {err_text}"));
+                    break;
                 }
                 LiveFrame::Other => {}
                 LiveFrame::Data(live) => {
@@ -338,7 +368,10 @@ async fn run_async(
                         }
                         stats.elems += 1;
                         if let Some(rec) = recorder.as_mut() {
-                            rec.process(&elem)?;
+                            if let Err(e) = rec.process(&elem) {
+                                fatal = Some(e);
+                                break;
+                            }
                             stats.recorded += 1;
                         }
                         if let Some(line) = format_elem(
@@ -353,11 +386,14 @@ async fn run_async(
                                     // e.g. `| head`: stop cleanly.
                                     running = false;
                                 } else {
-                                    return Err(anyhow!("stdout write failed: {e}"));
+                                    fatal = Some(anyhow!("stdout write failed: {e}"));
                                 }
                                 break;
                             }
                         }
+                    }
+                    if fatal.is_some() {
+                        break;
                     }
                 }
             }
@@ -365,7 +401,9 @@ async fn run_async(
 
         // Flush recorder before deciding on reconnect.
         if let Some(rec) = recorder.as_mut() {
-            rec.flush()?;
+            if let Err(e) = rec.flush() {
+                fatal = Some(e);
+            }
         }
 
         eprintln!(
@@ -373,7 +411,7 @@ async fn run_async(
             stats.messages, stats.elems
         );
 
-        if !running || no_reconnect {
+        if fatal.is_some() || !running || no_reconnect {
             break;
         }
         eprintln!("reconnecting in {RECONNECT_BACKOFF:?}s");
@@ -383,11 +421,28 @@ async fn run_async(
         }
     }
 
+    // Finalize the recording on every exit path (success, Ctrl-C, fatal
+    // error) so buffered elements are never lost; the finalization error,
+    // if any, does not mask the original fatal error.
     if let Some(rec) = recorder.as_mut() {
-        rec.finish()?;
-        eprintln!("recorded {} elements to {:?}", stats.recorded, rec.path);
+        match rec.finish() {
+            Ok(()) => {
+                eprintln!("recorded {} elements to {:?}", stats.recorded, rec.path);
+            }
+            Err(e) => {
+                if fatal.is_none() {
+                    fatal = Some(e);
+                } else {
+                    eprintln!("record finalization also failed: {e}");
+                }
+            }
+        }
     }
-    Ok(())
+
+    match fatal {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 #[derive(Default)]
