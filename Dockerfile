@@ -50,4 +50,9 @@ ENV MONOCLE_DATA_DIR=/data/monocle \
     HOME=/home/monocle
 
 EXPOSE 8080
-ENTRYPOINT ["monocle", "server"]
+
+# `monocle` as the entrypoint with `server` as the default command: a bare
+# `docker run` still starts the server, while any other subcommand runs with
+# `docker run IMAGE <command> [...]` (e.g. `docker run IMAGE watch --host rrc00`).
+ENTRYPOINT ["monocle"]
+CMD ["server"]

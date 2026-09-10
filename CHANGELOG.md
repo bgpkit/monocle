@@ -29,6 +29,14 @@ All notable changes to this project will be documented in this file.
   backoff on abnormal disconnects; live vantage is RIS collectors only, not
   global visibility.
 
+### Bug Fixes
+
+* Fixed the Docker image entrypoint, which hard-coded `monocle server` and made
+  the documented `docker run bgpkit/monocle <command>` usage fail. The
+  entrypoint is now `monocle` with `server` as the default command, so a bare
+  `docker run` still starts the server while other subcommands run directly,
+  e.g. `docker run --rm bgpkit/monocle:latest watch --host rrc00`.
+
 ## v1.5.0 - 2026-08-17
 
 ### New Features
