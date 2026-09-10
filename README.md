@@ -80,15 +80,19 @@ Run monocle commands:
 
 ```bash
 # Show help
-docker run --rm bgpkit/monocle:latest
+docker run --rm bgpkit/monocle:latest --help
 
 # Run a command (e.g., inspect an ASN)
 docker run --rm bgpkit/monocle:latest inspect 13335
 
+# Stream live BGP messages from RIS Live
+docker run --rm bgpkit/monocle:latest watch --host rrc00 --origin-asn 13335
+
 # Run with persistent data directory
 docker run --rm -v monocle-data:/data bgpkit/monocle:latest inspect 13335
 
-# Start the HTTP/SSE server
+# Start the HTTP/SSE server; `server` is also the default command, so
+# `docker run -p 8080:8080 -v monocle-data:/data bgpkit/monocle:latest` is equivalent
 docker run --rm -p 8080:8080 -v monocle-data:/data bgpkit/monocle:latest server --address 0.0.0.0 --port 8080
 
 # Using docker compose for server mode
