@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased changes
+## v1.6.0 - 2026-09-11
 
 ### New Features
 
@@ -28,6 +28,7 @@ All notable changes to this project will be documented in this file.
   file (BGP4MP) for offline replay with `monocle parse`. Reconnects with
   backoff on abnormal disconnects; live vantage is RIS collectors only, not
   global visibility.
+  ([#154](https://github.com/bgpkit/monocle/pull/154))
 
 ### Bug Fixes
 
@@ -36,6 +37,7 @@ All notable changes to this project will be documented in this file.
   entrypoint is now `monocle` with `server` as the default command, so a bare
   `docker run` still starts the server while other subcommands run directly,
   e.g. `docker run --rm bgpkit/monocle:latest watch --host rrc00`.
+  ([#155](https://github.com/bgpkit/monocle/pull/155))
 
 ## v1.5.0 - 2026-08-17
 

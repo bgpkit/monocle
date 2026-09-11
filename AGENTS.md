@@ -117,7 +117,8 @@ src/
 │   ├── parse/          # MRT parsing
 │   ├── search/         # BGP search
 │   ├── rpki/           # RPKI validation
-│   └── inspect/        # Unified inspection
+│   ├── inspect/        # Unified inspection
+│   └── watch.rs        # Live RIS Live streaming (`monocle watch`)
 ├── server/             # HTTP/SSE server (requires `server` feature)
 │   ├── http.rs         # REST router, API error types
 │   ├── search.rs       # SSE search streaming handler

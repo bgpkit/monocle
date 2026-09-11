@@ -22,6 +22,7 @@ See through all Border Gateway Protocol (BGP) data with a monocle.
     - [Output Format](#output-format)
     - [Filter Files](#filter-files)
   - [`monocle search`](#monocle-search)
+  - [`monocle watch`](#monocle-watch)
   - [`monocle rib`](#monocle-rib)
   - [`monocle time`](#monocle-time)
   - [`monocle inspect`](#monocle-inspect)
@@ -818,6 +819,125 @@ If the remote server has auth enabled, provide the token with `--remote-token`:
 ```
 
 Output is formatted using the same formatters as local search (`--format`, `--json`, etc.).
+
+### `monocle watch`
+
+Stream live BGP messages from [RIPE RIS Live](https://ris-live.ripe.net/) with the same filter semantics as `monocle parse`, and optionally record the filtered stream to an MRT updates file for offline replay.
+
+```text
+➜  monocle watch --help
+Watch live BGP messages from RIPE RIS Live, with filter pushdown to the subscription and optional MRT recording for offline replay.
+
+Live vantage is RIS collectors only, not global visibility. Watch requires --firehose for an unfiltered stream.
+
+Usage: monocle watch [OPTIONS]
+
+Options:
+  -H, --host <HOST>
+          RRC host to subscribe to (e.g. rrc00). All active RRCs if omitted
+
+      --debug
+          Print debug information
+
+      --firehose
+          Drink from the full unfiltered stream (~5k msgs/s). Required only when no filter is given at all; filters without a server-side scope (host/prefix/peer) still receive the full feed but are applied client-side
+
+      --format <FORMAT>
+          Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
+
+      --no-reconnect
+          Disable automatic reconnection on abnormal disconnects
+
+      --json
+          Output as JSON objects (shortcut for --format json-pretty)
+
+  -M, --record <PATH>
+          Record the filtered stream to an MRT updates file for offline replay (e.g. `monocle parse out.mrt.bz2`)
+
+      --no-update
+          Disable automatic database updates (use existing cached data only)
+
+      --pretty
+          Pretty-print JSON output
+
+  -f, --fields <FIELDS>
+          Comma-separated list of fields to output
+
+      --time-format <TIME_FORMAT>
+          Timestamp output format (unix or rfc3339)
+
+          Possible values:
+          - unix:    Unix timestamp (integer or float) - default for backward compatibility
+          - rfc3339: RFC3339/ISO 8601 format (e.g., "2023-10-11T15:00:00Z")
+          
+          [default: unix]
+
+  -o, --origin-asn <ORIGIN_ASN>
+          Filter by origin AS Number(s), comma-separated. Prefix with ! to exclude
+
+  -p, --prefix <PREFIX>
+          Filter by network prefix(es), comma-separated. Prefix with ! to exclude
+
+  -s, --include-super
+          Include super-prefixes when filtering
+
+  -S, --include-sub
+          Include sub-prefixes when filtering
+
+  -j, --peer-ip <PEER_IP>
+          Filter by peer IP address(es)
+
+  -J, --peer-asn <PEER_ASN>
+          Filter by peer ASN(s), comma-separated. Prefix with ! to exclude
+
+  -C, --community <COMMUNITIES>
+          Filter by BGP community value(s), comma-separated (`A:B` or `A:B:C`). Each part can be a number or `*` wildcard (e.g., `*:100`, `13335:*`, `57866:104:31`). Prefix with ! to exclude
+          
+          [alias: --communities]
+
+  -m, --elem-type <ELEM_TYPE>
+          Filter by elem type: announce (a) or withdraw (w)
+
+          Possible values:
+          - a: BGP announcement
+          - w: BGP withdrawal
+
+  -a, --as-path <AS_PATH>
+          Filter by AS path regex string
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+Filters mirror `monocle parse`: `--origin-asn`, `--prefix` with `-s`/`-S`, `--peer-ip`, `--peer-asn`, `--community`, `--as-path`, `--elem-type`, plus `-f/--fields` and `--format`. Host, prefixes, peer IPs, and elem type are pushed down to the RIS Live subscription to reduce traffic; origin ASN, peer ASN, community, and AS-path predicates always run client-side with parser semantics (the RIS Live `path` pattern cannot express AS_SET origins, and every element predicate is re-checked locally because RIS selects whole UPDATE messages). Multi-value prefixes and peer IPs expand to one subscription per combination.
+
+Examples:
+
+```console
+# Watch everything originated by Cloudflare
+monocle watch --origin-asn 13335
+
+# Scope to one collector and a prefix including sub-prefixes, and record the stream
+monocle watch --host rrc00 --prefix 45.57.60.0/24 -S --record incident.mrt.bz2
+
+# JSON output, filtered with jq
+monocle watch --origin-asn 13335 --json | jq -c 'select(.prefix|contains("2400:cb00"))'
+```
+
+Recordings are MRT updates files (BGP4MP) and replay offline through the regular parse pipeline with the same filters:
+
+```console
+monocle parse incident.mrt.bz2 --origin-asn 2906
+```
+
+Notes:
+
+- A completely unfiltered invocation requires `--firehose` (~5k msgs/s measured). Prefer `--host`, `--prefix`, or `--peer-ip` to cut bandwidth; those are applied server-side.
+- Reconnects automatically with backoff on abnormal disconnects. Pass `--no-reconnect` to make stream errors fatal with a nonzero exit, e.g. in scripts.
+- The live vantage is RIS Live collectors only, not global visibility.
 
 ### `monocle rib`
 

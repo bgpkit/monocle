@@ -29,7 +29,7 @@ Returns server metadata as JSON:
 
 ```json
 {
-  "server_version": "1.5.0",
+  "server_version": "1.6.0",
   "api_version": "v1",
   "endpoints": ["/health", "/api/v1/system/info", "/api/v1/search/stream", ...]
 }
