@@ -253,9 +253,9 @@ dependencies = [
 
 [[package]]
 name = "bgpkit-parser"
-version = "0.20.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c58fcccfe233d986f01f79d34af0dc17fb29174b8d3ca0af72436f2a08af9e0"
+checksum = "f26438a146a77e493f9a59fca58e7a29face3581d8c2d8ba4b7f5e3c49639cc0"
 dependencies = [
  "bitflags",
  "bytes",
@@ -265,7 +265,7 @@ dependencies = [
  "itertools 0.15.0",
  "log",
  "num_enum",
- "oneio 0.25.0",
+ "oneio 0.26.1",
  "regex",
  "serde",
  "serde_json",
@@ -1614,7 +1614,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "suppaftp",
+ "suppaftp 7.1.0",
  "thiserror",
  "xz2",
  "zstd",
@@ -1622,16 +1622,16 @@ dependencies = [
 
 [[package]]
 name = "oneio"
-version = "0.25.0"
+version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c4968f8ba9447244a5297118fa1e1c9753bb4fd09d3069fdce188fde0db4f9a"
+checksum = "8d77cbb0c450f4324612bc361ad472ee632dc4fb86d8ebe3275949f4321a5b6b"
 dependencies = [
  "bzip2",
  "dotenvy",
  "flate2",
  "reqwest",
  "rustls",
- "suppaftp",
+ "suppaftp 12.2.1",
  "thiserror",
  "zstd",
 ]
@@ -2430,6 +2430,19 @@ checksum = "69a15b325bbe0a1f85de3dbf988a3a14e9cd321537dffcbf6641381dd6d7586f"
 dependencies = [
  "chrono",
  "futures-lite",
+ "lazy-regex",
+ "log",
+ "rustls",
+ "thiserror",
+]
+
+[[package]]
+name = "suppaftp"
+version = "12.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b58fcf921745cca6f0127c9f822069947da8c6dbeff52e9004750bcc448171f"
+dependencies = [
+ "chrono",
  "lazy-regex",
  "log",
  "rustls",
