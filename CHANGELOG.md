@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased changes
+
+### Bug Fixes
+
+* `search` fails instead of reporting success when the broker API returns an error
+  * The paged file lookup collapsed a broker error into "no more pages", so an HTTP 500 from the API produced no output at all (an `info!` line under `--debug`) and exited 0; a failed page now aborts the search, prints the broker error, and exits 1
+  * Regression test serves an HTTP 500 from a local listener and asserts the page iterator yields one error before ending
+
 ## v1.6.0 - 2026-09-11
 
 ### New Features
