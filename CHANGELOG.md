@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased changes
+
+### Dependencies
+
+* Updated `bgpkit-broker` from 0.10.1 to 0.14.2
+  * `search` now reports the broker API's own message on a failed query, for example `broker API returned HTTP 500 Internal Server Error: {"error":"Failed to fetch search results", ...}`, instead of the client's `error decoding response body`
+  * The client's `BgpkitBroker` API used here is unchanged across the range; the 0.14 line adds a PostgreSQL backend and an optional NATS notifier used by the server side
+
 ## v1.6.1 - 2026-11-02
 
 ### Bug Fixes
