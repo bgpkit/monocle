@@ -464,6 +464,37 @@ mod broker_cache {
     }
 }
 
+/// Iterate broker result pages, surfacing a failed page as a single `Err`.
+///
+/// Callers must be able to tell "the broker API failed" apart from "there are
+/// no more files": collapsing the error into the end of the iterator made an
+/// API outage (HTTP 500) look like an empty result set, so `monocle search`
+/// printed nothing and exited 0.
+fn broker_page_iter(
+    broker: bgpkit_broker::BgpkitBroker,
+) -> impl Iterator<Item = Result<Vec<bgpkit_broker::BrokerItem>, String>> {
+    let mut current_page = 1i64;
+    let mut failed = false;
+    std::iter::from_fn(move || {
+        if failed {
+            return None;
+        }
+        match broker.clone().page(current_page).query_single_page() {
+            Ok(items) => {
+                if items.is_empty() {
+                    return None;
+                }
+                current_page += 1;
+                Some(Ok(items))
+            }
+            Err(e) => {
+                failed = true;
+                Some(Err(e.to_string()))
+            }
+        }
+    })
+}
+
 /// Fetches broker items, using cache if available and appropriate.
 /// Returns (items, used_cache) tuple.
 fn fetch_broker_items_cached(
@@ -1031,7 +1062,11 @@ fn run_inner(config: &MonocleConfig, args: SearchArgs, output_format: OutputForm
     // Determine if we're using cached items or pagination
     let use_pagination = all_items.is_none();
     let mut page = 1i64;
-    let items_iter: Box<dyn Iterator<Item = Vec<bgpkit_broker::BrokerItem>>> =
+    // A failed broker query must abort the search. Collapsing the error into
+    // `None` used to end the iterator silently, so an API outage (e.g. HTTP 500)
+    // looked exactly like "no files matched" and the command exited 0.
+    let mut broker_error: Option<String> = None;
+    let items_iter: Box<dyn Iterator<Item = Result<Vec<bgpkit_broker::BrokerItem>, String>>> =
         if let Some(items) = all_items {
             // Process all items in batches of 1000 (same as pagination page size)
             let total_items = items.len();
@@ -1042,24 +1077,20 @@ fn run_inner(config: &MonocleConfig, args: SearchArgs, output_format: OutputForm
                 total_items,
                 batches.len()
             );
-            Box::new(batches.into_iter())
+            Box::new(batches.into_iter().map(Ok))
         } else {
             // Use pagination iterator
-            Box::new(std::iter::from_fn({
-                let broker = base_broker.clone();
-                let mut current_page = 1i64;
-                move || {
-                    let items = broker.clone().page(current_page).query_single_page().ok()?;
-                    if items.is_empty() {
-                        return None;
-                    }
-                    current_page += 1;
-                    Some(items)
-                }
-            }))
+            Box::new(broker_page_iter(base_broker.clone()))
         };
 
-    for items in items_iter {
+    for page_items in items_iter {
+        let items = match page_items {
+            Ok(items) => items,
+            Err(e) => {
+                broker_error = Some(format!("page {}: {}", page, e));
+                break;
+            }
+        };
         if items.is_empty() {
             info!("Reached empty batch, finishing");
             break;
@@ -1222,7 +1253,7 @@ fn run_inner(config: &MonocleConfig, args: SearchArgs, output_format: OutputForm
         pb.finish_with_message(final_message);
     }
 
-    if !show_progress {
+    if !show_progress && broker_error.is_none() {
         let unit = if use_pagination { "pages" } else { "batches" };
         info!("Completed processing across {} {}", page - 1, unit);
     }
@@ -1408,6 +1439,11 @@ fn run_inner(config: &MonocleConfig, args: SearchArgs, output_format: OutputForm
 
     if let Err(e) = progress_thread.join() {
         eprintln!("Progress thread failed: {:?}", e);
+    }
+
+    if let Some(e) = broker_error {
+        eprintln!("Error: broker query failed ({}); search aborted.", e);
+        std::process::exit(1);
     }
 }
 
@@ -1599,5 +1635,49 @@ mod tests {
         let (start_ts, end_ts) = remote_search_time_bounds(&filters).expect("valid time bounds");
         assert_eq!(start_ts, "1767225600");
         assert_eq!(end_ts, "1767229200");
+    }
+
+    /// A broker that answers a page with HTTP 500 must end the page iterator
+    /// with an error, not with a silent end-of-results that the caller reads
+    /// as "no files matched".
+    #[test]
+    fn test_broker_page_iter_surfaces_http_error() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+                let mut request_line = String::new();
+                let _ = reader.read_line(&mut request_line);
+                let body = r#"{"error":"Failed to fetch search results"}"#;
+                let response = format!(
+                    "HTTP/1.1 500 Internal Server Error\r\n\
+                     Content-Type: application/json\r\n\
+                     Content-Length: {}\r\n\
+                     Connection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let broker = bgpkit_broker::BgpkitBroker::new()
+            .broker_url(format!("http://{}", addr))
+            .page_size(10);
+        let mut pages = broker_page_iter(broker);
+
+        let first = pages.next().expect("failed page must be reported");
+        assert!(first.is_err(), "expected an error page, got {first:?}");
+        assert!(
+            pages.next().is_none(),
+            "iterator must stop after reporting the error"
+        );
+
+        let _ = server.join();
     }
 }
