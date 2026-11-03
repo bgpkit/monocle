@@ -22,6 +22,7 @@ use tracing::{info, warn};
 
 use super::elem_format::{
     available_fields_help, format_elem, format_elems_table, get_header, parse_fields, sort_elems,
+    DEFAULT_FIELDS_SEARCH,
 };
 
 /// Arguments for the Search command
@@ -48,7 +49,7 @@ pub struct SearchArgs {
     pub broker_files: bool,
 
     /// Comma-separated list of fields to output
-    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help())]
+    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help(DEFAULT_FIELDS_SEARCH))]
     pub fields: Option<String>,
 
     /// Order output by field (enables buffering)

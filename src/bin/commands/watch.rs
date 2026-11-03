@@ -24,7 +24,9 @@ use monocle::lens::watch::{
 };
 use monocle::utils::{OutputFormat, TimestampFormat};
 
-use super::elem_format::{format_elem, get_header, parse_fields};
+use super::elem_format::{
+    available_fields_help, format_elem, get_header, parse_fields, DEFAULT_FIELDS_PARSE,
+};
 
 /// Arguments for the Watch command
 #[derive(Args)]
@@ -54,7 +56,7 @@ pub(crate) struct WatchArgs {
     pub pretty: bool,
 
     /// Comma-separated list of fields to output
-    #[clap(long, short = 'f', value_name = "FIELDS")]
+    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help(DEFAULT_FIELDS_PARSE))]
     pub fields: Option<String>,
 
     /// Timestamp output format (unix or rfc3339)
