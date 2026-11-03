@@ -13,6 +13,7 @@ use monocle::utils::{OrderByField, OrderDirection, OutputFormat, TimestampFormat
 
 use super::elem_format::{
     available_fields_help, format_elem, format_elems_table, get_header, parse_fields, sort_elems,
+    DEFAULT_FIELDS_PARSE,
 };
 
 /// Arguments for the Parse command
@@ -37,7 +38,7 @@ pub(crate) struct ParseArgs {
     pub mrt_type: Option<MrtType>,
 
     /// Comma-separated list of fields to output
-    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help())]
+    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help(DEFAULT_FIELDS_PARSE, true))]
     pub fields: Option<String>,
 
     /// Order output by field (enables buffering)

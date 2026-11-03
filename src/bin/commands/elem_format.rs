@@ -94,12 +94,49 @@ pub fn format_elems_table(
     table.to_string()
 }
 
-/// Generate help text for the fields argument
-pub fn available_fields_help() -> String {
+/// Generate help text for the fields argument.
+///
+/// `defaults` is the field set used when the option is omitted. It is rendered
+/// as a delta against `AVAILABLE_FIELDS` because clap does not wrap help text
+/// (the `wrap_help` feature is off), so repeating the whole default list would
+/// put a several-hundred-character line into `--help`.
+///
+/// `native_json` marks commands whose JSON output emits the native element
+/// fields instead of the projection when the default set is selected (see
+/// `build_json_object`).
+pub fn available_fields_help(defaults: &[&str], native_json: bool) -> String {
+    let json_note = if native_json {
+        "; JSON: all fields but collector"
+    } else {
+        ""
+    };
     format!(
-        "Comma-separated list of fields to output. Available fields: {}",
-        AVAILABLE_FIELDS.join(", ")
+        "Comma-separated list of fields to output. Available fields: {}\n\n[default: {}{}]",
+        AVAILABLE_FIELDS.join(", "),
+        default_fields_summary(defaults),
+        json_note
     )
+}
+
+/// Summarize a default field set as "fields as listed, except ..."
+/// when naming the omissions is shorter than listing the defaults themselves.
+fn default_fields_summary(defaults: &[&str]) -> String {
+    if defaults.is_empty() {
+        return "none".to_string();
+    }
+    let missing: Vec<&str> = AVAILABLE_FIELDS
+        .iter()
+        .copied()
+        .filter(|field| !defaults.contains(field))
+        .collect();
+    let defaults_are_available = defaults
+        .iter()
+        .all(|field| AVAILABLE_FIELDS.contains(field));
+    if defaults_are_available && !missing.is_empty() && missing.len() < defaults.len() {
+        format!("fields as listed, except {}", missing.join(", "))
+    } else {
+        defaults.join(", ")
+    }
 }
 
 /// Parse and validate the fields argument
@@ -635,5 +672,59 @@ mod tests {
             parse_fields(&Some("only-to-customer".to_string()), false).unwrap(),
             vec!["only-to-customer"]
         );
+    }
+
+    #[test]
+    fn test_fields_help_states_default() {
+        let parse_help = available_fields_help(DEFAULT_FIELDS_PARSE, true);
+        let search_help = available_fields_help(DEFAULT_FIELDS_SEARCH, false);
+
+        // The default uses clap's `[default: ...]` style after an empty line.
+        // JSON output keeps the native element shape for the default field set,
+        // so parse and watch say so and search does not.
+        assert!(parse_help.ends_with(
+            "\n\n[default: fields as listed, except path_id, origin_asns, only-to-customer, collector; JSON: all fields but collector]"
+        ));
+        assert!(search_help.ends_with(
+            "\n\n[default: fields as listed, except path_id, origin_asns, only-to-customer]"
+        ));
+        assert_eq!(parse_help.lines().count(), 3);
+        assert_eq!(search_help.lines().count(), 3);
+    }
+
+    #[test]
+    fn test_fields_default_line_stays_short() {
+        // clap does not wrap help text, so the default is summarized as a delta;
+        // listing the fields themselves would exceed 250 characters on one line.
+        for (defaults, native_json) in
+            [(DEFAULT_FIELDS_PARSE, true), (DEFAULT_FIELDS_SEARCH, false)]
+        {
+            let help = available_fields_help(defaults, native_json);
+            for line in help.lines().skip(1) {
+                assert!(line.len() < 120, "help line too long: {line}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_default_fields_are_available() {
+        for field in DEFAULT_FIELDS_PARSE
+            .iter()
+            .chain(DEFAULT_FIELDS_SEARCH.iter())
+        {
+            assert!(
+                AVAILABLE_FIELDS.contains(field),
+                "{field} is not an available field"
+            );
+        }
+        assert!(DEFAULT_FIELDS_PARSE
+            .iter()
+            .all(|field| DEFAULT_FIELDS_SEARCH.contains(field)));
+    }
+
+    #[test]
+    fn test_default_fields_summary_falls_back_to_explicit_list() {
+        assert_eq!(default_fields_summary(&["timestamp"]), "timestamp");
+        assert_eq!(default_fields_summary(&[]), "none");
     }
 }

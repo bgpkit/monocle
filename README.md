@@ -315,7 +315,9 @@ Options:
           MRT output file path
 
   -f, --fields <FIELDS>
-          Comma-separated list of fields to output. Available fields: type, timestamp, peer_ip, peer_asn, prefix, as_path, origin, next_hop, local_pref, med, communities, atomic, aggr_asn, aggr_ip, collector
+          Comma-separated list of fields to output. Available fields: type, timestamp, peer_ip, peer_asn, prefix, path_id, as_path, origin_asns, origin, next_hop, local_pref, med, communities, atomic, aggr_asn, aggr_ip, only-to-customer, collector
+          
+          [default: fields as listed, except path_id, origin_asns, only-to-customer, collector; JSON: all fields but collector]
 
       --format <FORMAT>
           Output format: table, markdown, json, json-pretty, json-line, psv (default varies by command)
@@ -652,7 +654,9 @@ Options:
           Disable automatic database updates (use existing cached data only)
 
   -f, --fields <FIELDS>
-          Comma-separated list of fields to output. Available fields: type, timestamp, peer_ip, peer_asn, prefix, as_path, origin, next_hop, local_pref, med, communities, atomic, aggr_asn, aggr_ip, collector
+          Comma-separated list of fields to output. Available fields: type, timestamp, peer_ip, peer_asn, prefix, path_id, as_path, origin_asns, origin, next_hop, local_pref, med, communities, atomic, aggr_asn, aggr_ip, only-to-customer, collector
+          
+          [default: fields as listed, except path_id, origin_asns, only-to-customer]
 
       --order-by <ORDER_BY>
           Order output by field (enables buffering)
