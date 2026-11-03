@@ -105,21 +105,21 @@ pub fn format_elems_table(
 /// fields instead of the projection when the default set is selected (see
 /// `build_json_object`).
 pub fn available_fields_help(defaults: &[&str], native_json: bool) -> String {
-    let mut help = format!(
-        "Comma-separated list of fields to output. Available fields: {}\nDefault: {}",
+    let json_note = if native_json {
+        "; JSON: all fields but collector"
+    } else {
+        ""
+    };
+    format!(
+        "Comma-separated list of fields to output. Available fields: {}\n\n[default: {}{}]",
         AVAILABLE_FIELDS.join(", "),
-        default_fields_summary(defaults)
-    );
-    if native_json {
-        help.push_str(
-            "\nJSON output emits all native element fields when the default set is selected.",
-        );
-    }
-    help
+        default_fields_summary(defaults),
+        json_note
+    )
 }
 
-/// Summarize a default field set as "all fields except ..." when naming the
-/// omissions is shorter than listing the defaults themselves.
+/// Summarize a default field set as "fields as listed, except ..."
+/// when naming the omissions is shorter than listing the defaults themselves.
 fn default_fields_summary(defaults: &[&str]) -> String {
     if defaults.is_empty() {
         return "none".to_string();
@@ -133,7 +133,7 @@ fn default_fields_summary(defaults: &[&str]) -> String {
         .iter()
         .all(|field| AVAILABLE_FIELDS.contains(field));
     if defaults_are_available && !missing.is_empty() && missing.len() < defaults.len() {
-        format!("all fields except {}", missing.join(", "))
+        format!("fields as listed, except {}", missing.join(", "))
     } else {
         defaults.join(", ")
     }
@@ -679,21 +679,17 @@ mod tests {
         let parse_help = available_fields_help(DEFAULT_FIELDS_PARSE, true);
         let search_help = available_fields_help(DEFAULT_FIELDS_SEARCH, false);
 
-        assert_eq!(
-            parse_help.lines().nth(1),
-            Some("Default: all fields except path_id, origin_asns, only-to-customer, collector")
-        );
-        assert_eq!(
-            search_help.lines().nth(1),
-            Some("Default: all fields except path_id, origin_asns, only-to-customer")
-        );
+        // The default uses clap's `[default: ...]` style after an empty line.
         // JSON output keeps the native element shape for the default field set,
         // so parse and watch say so and search does not.
-        assert_eq!(
-            parse_help.lines().nth(2),
-            Some("JSON output emits all native element fields when the default set is selected.")
-        );
-        assert_eq!(search_help.lines().count(), 2);
+        assert!(parse_help.ends_with(
+            "\n\n[default: fields as listed, except path_id, origin_asns, only-to-customer, collector; JSON: all fields but collector]"
+        ));
+        assert!(search_help.ends_with(
+            "\n\n[default: fields as listed, except path_id, origin_asns, only-to-customer]"
+        ));
+        assert_eq!(parse_help.lines().count(), 3);
+        assert_eq!(search_help.lines().count(), 3);
     }
 
     #[test]
