@@ -56,7 +56,7 @@ pub(crate) struct WatchArgs {
     pub pretty: bool,
 
     /// Comma-separated list of fields to output
-    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help(DEFAULT_FIELDS_PARSE))]
+    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help(DEFAULT_FIELDS_PARSE, true))]
     pub fields: Option<String>,
 
     /// Timestamp output format (unix or rfc3339)

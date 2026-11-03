@@ -100,12 +100,22 @@ pub fn format_elems_table(
 /// as a delta against `AVAILABLE_FIELDS` because clap does not wrap help text
 /// (the `wrap_help` feature is off), so repeating the whole default list would
 /// put a several-hundred-character line into `--help`.
-pub fn available_fields_help(defaults: &[&str]) -> String {
-    format!(
+///
+/// `native_json` marks commands whose JSON output emits the native element
+/// fields instead of the projection when the default set is selected (see
+/// `build_json_object`).
+pub fn available_fields_help(defaults: &[&str], native_json: bool) -> String {
+    let mut help = format!(
         "Comma-separated list of fields to output. Available fields: {}\nDefault: {}",
         AVAILABLE_FIELDS.join(", "),
         default_fields_summary(defaults)
-    )
+    );
+    if native_json {
+        help.push_str(
+            "\nJSON output emits all native element fields when the default set is selected.",
+        );
+    }
+    help
 }
 
 /// Summarize a default field set as "all fields except ..." when naming the
@@ -666,27 +676,37 @@ mod tests {
 
     #[test]
     fn test_fields_help_states_default() {
-        let parse_help = available_fields_help(DEFAULT_FIELDS_PARSE);
-        let search_help = available_fields_help(DEFAULT_FIELDS_SEARCH);
+        let parse_help = available_fields_help(DEFAULT_FIELDS_PARSE, true);
+        let search_help = available_fields_help(DEFAULT_FIELDS_SEARCH, false);
 
-        assert!(parse_help.ends_with(
-            "Default: all fields except path_id, origin_asns, only-to-customer, collector"
-        ));
-        assert!(search_help
-            .ends_with("Default: all fields except path_id, origin_asns, only-to-customer"));
+        assert_eq!(
+            parse_help.lines().nth(1),
+            Some("Default: all fields except path_id, origin_asns, only-to-customer, collector")
+        );
+        assert_eq!(
+            search_help.lines().nth(1),
+            Some("Default: all fields except path_id, origin_asns, only-to-customer")
+        );
+        // JSON output keeps the native element shape for the default field set,
+        // so parse and watch say so and search does not.
+        assert_eq!(
+            parse_help.lines().nth(2),
+            Some("JSON output emits all native element fields when the default set is selected.")
+        );
+        assert_eq!(search_help.lines().count(), 2);
     }
 
     #[test]
     fn test_fields_default_line_stays_short() {
         // clap does not wrap help text, so the default is summarized as a delta;
         // listing the fields themselves would exceed 250 characters on one line.
-        for defaults in [DEFAULT_FIELDS_PARSE, DEFAULT_FIELDS_SEARCH] {
-            let help = available_fields_help(defaults);
-            let default_line = help.lines().nth(1).expect("help has a default line");
-            assert!(
-                default_line.len() < 120,
-                "default line too long: {default_line}"
-            );
+        for (defaults, native_json) in
+            [(DEFAULT_FIELDS_PARSE, true), (DEFAULT_FIELDS_SEARCH, false)]
+        {
+            let help = available_fields_help(defaults, native_json);
+            for line in help.lines().skip(1) {
+                assert!(line.len() < 120, "help line too long: {line}");
+            }
         }
     }
 

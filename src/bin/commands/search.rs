@@ -49,7 +49,7 @@ pub struct SearchArgs {
     pub broker_files: bool,
 
     /// Comma-separated list of fields to output
-    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help(DEFAULT_FIELDS_SEARCH))]
+    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help(DEFAULT_FIELDS_SEARCH, false))]
     pub fields: Option<String>,
 
     /// Order output by field (enables buffering)

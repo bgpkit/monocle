@@ -38,7 +38,7 @@ pub(crate) struct ParseArgs {
     pub mrt_type: Option<MrtType>,
 
     /// Comma-separated list of fields to output
-    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help(DEFAULT_FIELDS_PARSE))]
+    #[clap(long, short = 'f', value_name = "FIELDS", help = available_fields_help(DEFAULT_FIELDS_PARSE, true))]
     pub fields: Option<String>,
 
     /// Order output by field (enables buffering)
