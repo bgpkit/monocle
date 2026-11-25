@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased changes
+## v1.6.2 - 2026-11-25
+
+### Changed
+
+* `--fields help` in `parse`, `search` and `watch` now prints the field set used when `--fields` is omitted, as a delta against the available fields, and names the commands whose JSON output emits the native element fields instead of that projection. Before, the help listed every accepted field and left the default to be discovered. ([#161](https://github.com/bgpkit/monocle/pull/161))
 
 ### Dependencies
 
